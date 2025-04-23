@@ -221,7 +221,8 @@ void showCreateOrderSheetWithCustomer(BuildContext context, Customer customer) {
                         ),
                         const SizedBox(height: 8),
                         buildPaymentMethodSelector(
-                            setSheetState, _selectedPaymentMethod),
+                          setSheetState,
+                        ),
                         const SizedBox(height: 32),
                       ],
                     ),
@@ -1568,9 +1569,7 @@ Widget _buildOrderProductItem(
   );
 }
 
-
-Widget buildPaymentMethodSelector(
-    StateSetter setSheetState, String selectedPaymentMethod) {
+Widget buildPaymentMethodSelector(StateSetter setSheetState) {
   final List<Map<String, dynamic>> paymentMethods = [
     {'name': 'Invoice', 'icon': Icons.receipt_long, 'enabled': true},
     {'name': 'Cash', 'icon': Icons.money, 'enabled': true},
@@ -1605,32 +1604,32 @@ Widget buildPaymentMethodSelector(
           itemCount: paymentMethods.length,
           itemBuilder: (context, index) {
             final method = paymentMethods[index];
-            final isSelected = selectedPaymentMethod == method['name'];
+            final isSelected = _selectedPaymentMethod == method['name'];
             final isDisabled = !method['enabled'];
 
             return GestureDetector(
               onTap: isDisabled
                   ? null
                   : () {
-                setSheetState(() {
-                  selectedPaymentMethod = method['name'];
-                });
-              },
+                      setSheetState(() {
+                        _selectedPaymentMethod = method['name'];
+                      });
+                    },
               child: Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
                   color: isDisabled
                       ? Colors.grey[200]
                       : isSelected
-                      ? Theme.of(context).primaryColor.withOpacity(0.1)
-                      : Colors.white,
+                          ? Theme.of(context).primaryColor.withOpacity(0.1)
+                          : Colors.white,
                   borderRadius: BorderRadius.circular(10),
                   border: Border.all(
                     color: isDisabled
                         ? Colors.grey[400]!
                         : isSelected
-                        ? Theme.of(context).primaryColor
-                        : Colors.grey[300]!,
+                            ? Theme.of(context).primaryColor
+                            : Colors.grey[300]!,
                     width: isSelected ? 2 : 1,
                   ),
                 ),
@@ -1642,8 +1641,8 @@ Widget buildPaymentMethodSelector(
                       color: isDisabled
                           ? Colors.grey[500]
                           : isSelected
-                          ? Theme.of(context).primaryColor
-                          : Colors.grey[600],
+                              ? Theme.of(context).primaryColor
+                              : Colors.grey[600],
                       size: 28,
                     ),
                     const SizedBox(height: 8),
@@ -1653,10 +1652,10 @@ Widget buildPaymentMethodSelector(
                         color: isDisabled
                             ? Colors.grey[500]
                             : isSelected
-                            ? Theme.of(context).primaryColor
-                            : Colors.grey[700],
+                                ? Theme.of(context).primaryColor
+                                : Colors.grey[700],
                         fontWeight:
-                        isSelected ? FontWeight.bold : FontWeight.normal,
+                            isSelected ? FontWeight.bold : FontWeight.normal,
                         fontSize: 14,
                       ),
                       textAlign: TextAlign.center,
