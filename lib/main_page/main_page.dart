@@ -594,8 +594,7 @@ class _MainPageState extends State<MainPage> with TickerProviderStateMixin {
         onCustomerSelected: (Customer selectedCustomer) {
           Navigator.pop(context);
           // Then show the order creation sheet with the selected customer
-          showCreateOrderSheetWithCustomer(context, selectedCustomer);
-        },
+Navigator.push(context, SlidingPageTransitionRL(page: CreateOrderPage(customer: selectedCustomer)));        },
       ),
     );
   } // Handle FAB press based on selected index

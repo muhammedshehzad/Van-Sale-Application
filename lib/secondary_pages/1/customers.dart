@@ -14,7 +14,6 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:url_launcher/url_launcher_string.dart';
 import '../../assets/widgets and consts/order_utils.dart';
 import '../../authentication/cyllo_session_model.dart';
-import '../../main_page/main_page.dart';
 import '../../providers/order_picking_provider.dart';
 import '../../providers/sale_order_provider.dart';
 import '../customer_details_page.dart';
@@ -357,7 +356,7 @@ class _CustomersListState extends State<CustomersList> {
       log('Failed to create order: $e', error: e, stackTrace: stackTrace);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Failed to create order: $e'),
+          content: Text('Failed to create : $e'),
           backgroundColor: Colors.red,
           duration: const Duration(seconds: 5),
         ),

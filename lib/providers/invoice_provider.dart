@@ -43,7 +43,7 @@ class InvoiceProvider extends ChangeNotifier {
         lineFields
       ],
       'kwargs': {},
-    }).timeout(Duration(seconds: 5), onTimeout: () {
+    }).timeout(Duration(seconds: 3), onTimeout: () {
       throw Exception('Invoice lines fetch timed out');
     });
 
@@ -71,7 +71,7 @@ class InvoiceProvider extends ChangeNotifier {
         'amount_total',
         'amount_residual',
         'state',
-        'invoice_line_ids', // Keep IDs for later fetching
+        'invoice_line_ids',
         'partner_id',
         'amount_tax',
         'amount_untaxed',
@@ -80,6 +80,9 @@ class InvoiceProvider extends ChangeNotifier {
         'payment_state',
         'company_id',
         'narration',
+        'invoice_origin',
+        'ref',
+        'invoice_payment_term_id',
       ]);
 
       final domain = orderId != null && int.tryParse(orderId) != null
@@ -100,12 +103,35 @@ class InvoiceProvider extends ChangeNotifier {
         'method': 'search_read',
         'args': [domain, invoiceFields],
         'kwargs': {},
-      }).timeout(Duration(seconds: 10), onTimeout: () {
+      }).timeout(Duration(seconds: 5), onTimeout: () {
         throw Exception('Invoice fetch timed out');
       });
 
       _invoices = List<Map<String, dynamic>>.from(invoices);
-      debugPrint('InvoiceProvider: Raw Odoo response length=${invoices.length}, invoices=$invoices');
+      debugPrint('InvoiceProvider: Raw Odoo response length=${invoices.length}');
+
+      // Batch fetch all invoice lines
+      final allLineIds = _invoices
+          .expand((invoice) => List<int>.from(invoice['invoice_line_ids'] ?? []))
+          .toSet()
+          .toList(); // Remove duplicates
+      if (allLineIds.isNotEmpty) {
+        final lines = await _fetchInvoiceLines(allLineIds);
+        final lineMap = {for (var line in lines) line['id']: line};
+
+        // Assign lines to invoices
+        for (var invoice in _invoices) {
+          final lineIds = List<int>.from(invoice['invoice_line_ids'] ?? []);
+          invoice['line_details'] = lineIds
+              .map((id) => lineMap[id])
+              .where((line) => line != null)
+              .toList();
+        }
+      } else {
+        for (var invoice in _invoices) {
+          invoice['line_details'] = [];
+        }
+      }
 
       // Check for duplicates
       final invoiceIds = _invoices.map((i) => i['id']).toSet();
@@ -148,19 +174,26 @@ class InvoiceProvider extends ChangeNotifier {
     debugPrint('InvoiceProvider: Fetching valid fields for model=$model');
     final client = await SessionManager.getActiveClient();
     if (client == null) {
-      debugPrint('InvoiceProvider: No active client in _getValidFields');
       throw Exception('No active Odoo session found.');
     }
-    final availableFields = await client.callKw({
-      'model': model,
-      'method': 'fields_get',
-      'args': [],
-      'kwargs': {},
-    });
-    final validFields = requestedFields.where((field) => availableFields.containsKey(field)).toList();
-    _cachedFields[model] = validFields;
-    debugPrint('InvoiceProvider: Valid fields for $model: $validFields');
-    return validFields;
+    try {
+      final availableFields = await client.callKw({
+        'model': model,
+        'method': 'fields_get',
+        'args': [],
+        'kwargs': {'allfields': requestedFields},
+      }).timeout(Duration(seconds: 3), onTimeout: () {
+        throw Exception('Fields fetch timed out');
+      });
+      final validFields = requestedFields.where((field) => availableFields.containsKey(field)).toList();
+      _cachedFields[model] = validFields;
+      debugPrint('InvoiceProvider: Valid fields for $model: $validFields');
+      return validFields;
+    } catch (e) {
+      debugPrint('InvoiceProvider: Error fetching fields for $model: $e');
+      // Fallback to requested fields if fields_get fails
+      return requestedFields;
+    }
   }
 
   Future<void> createDraftInvoice(String orderId) async {
@@ -170,7 +203,6 @@ class InvoiceProvider extends ChangeNotifier {
     try {
       final client = await SessionManager.getActiveClient();
       if (client == null) {
-        debugPrint('InvoiceProvider: No active client for createDraftInvoice');
         throw Exception('No active Odoo session found.');
       }
       await client.callKw({
@@ -178,6 +210,8 @@ class InvoiceProvider extends ChangeNotifier {
         'method': 'action_invoice_create',
         'args': [[int.parse(orderId)]],
         'kwargs': {},
+      }).timeout(Duration(seconds: 5), onTimeout: () {
+        throw Exception('Draft invoice creation timed out');
       });
       debugPrint('InvoiceProvider: Draft invoice created, refetching invoices');
       await fetchInvoices(orderId: orderId);

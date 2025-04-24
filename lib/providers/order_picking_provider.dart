@@ -197,7 +197,6 @@ class OrderPickingProvider with ChangeNotifier {
 
   bool get isProductListVisible => _isProductListVisible;
 
-
   List<Customer> get customers => _customers;
 
   bool get isLoadingCustomers => _isLoadingCustomers;
@@ -238,6 +237,7 @@ class OrderPickingProvider with ChangeNotifier {
       }
     });
   }
+
   Future<void> initialize(BuildContext context) async {
     final provider = Provider.of<SalesOrderProvider>(context, listen: false);
     await provider.loadProducts();
@@ -368,9 +368,7 @@ class OrderPickingProvider with ChangeNotifier {
 
       Navigator.pushAndRemoveUntil(
         context,
-        SlidingPageTransitionRL(
-          page: MainPage()
-        ),
+        SlidingPageTransitionRL(page: MainPage()),
         (Route<dynamic> route) => false,
       );
     }).catchError((e) {

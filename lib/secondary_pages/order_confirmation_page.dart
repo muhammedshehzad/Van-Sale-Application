@@ -596,10 +596,20 @@ class OrderConfirmationPage extends StatelessWidget {
                         ),
                       ),
                       onPressed: () {
+                        print('1');
                         salesOrderProvider.clearOrder();
+                        print('2');
                         salesOrderProvider.resetInventory();
+                        print('3');
                         salesOrderProvider.notifyOrderConfirmed();
-                        Navigator.popUntil(context, (route) => route.isFirst);
+                        print('4');
+                        // Navigate to the home screen and clear the stack
+                        Navigator.pushNamedAndRemoveUntil(
+                          context,
+                          '/home', // Replace with your home screen's route name
+                          (route) => false, // Remove all previous routes
+                        );
+                        print('5');
                       },
                       child: const Text(
                         'Done',

@@ -532,19 +532,30 @@ class SalesOrderProvider with ChangeNotifier {
   }
 
   Future<void> createSaleOrderInOdoo(
-    BuildContext context,
-    Customer customer,
-    List<Product> selectedProducts,
-    Map<String, int> quantities,
-    Map<String, List<Map<String, dynamic>>> productAttributes,
-    String? orderNotes,
-    String? paymentMethod,
-  ) async {
+      BuildContext context,
+      Customer customer,
+      List<Product> selectedProducts,
+      Map<String, int> quantities,
+      Map<String, List<Map<String, dynamic>>> productAttributes,
+      String? orderNotes,
+      String? paymentMethod,
+      ) async {
     try {
       if (selectedProducts.isEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('Please select at least one product'),
+            backgroundColor: Colors.red,
+            duration: Duration(seconds: 3),
+          ),
+        );
+        return;
+      }
+
+      if (paymentMethod == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Please select a payment method'),
             backgroundColor: Colors.red,
             duration: Duration(seconds: 3),
           ),
@@ -560,22 +571,17 @@ class SalesOrderProvider with ChangeNotifier {
       _isLoading = true;
       notifyListeners();
 
-      // Show loading indicator
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (context) => const Center(
-          child: CircularProgressIndicator(),
-        ),
-      );
+      // showDialog(
+      //   context: context,
+      //   barrierDismissible: false,
+      //   builder: (context) => const Center(
+      //     child: CircularProgressIndicator(),
+      //   ),
+      // );
 
-      // Get next order sequence from Odoo
       final orderId = await _getNextOrderSequence(client);
-
-      // Check for existing draft order
       final existingDraftId = await _findExistingDraftOrder(orderId);
 
-      // Prepare order lines
       final orderLines = <dynamic>[];
       final orderDate = DateTime.now();
       for (var product in selectedProducts) {
@@ -585,10 +591,12 @@ class SalesOrderProvider with ChangeNotifier {
             final qty = combo['quantity'] as int;
             final attrsMap = combo['attributes'] as Map<String, String>;
             double extraCost = 0;
-            for (var attr in product.attributes!) {
-              final value = attrsMap[attr.name];
-              if (value != null && attr.extraCost != null) {
-                extraCost += attr.extraCost![value] ?? 0;
+            if (product.attributes != null) { // Add null check
+              for (var attr in product.attributes!) {
+                final value = attrsMap[attr.name];
+                if (value != null && attr.extraCost != null) {
+                  extraCost += attr.extraCost![value] ?? 0;
+                }
               }
             }
             final adjustedPrice = product.price + extraCost;
@@ -598,7 +606,7 @@ class SalesOrderProvider with ChangeNotifier {
               {
                 'product_id': int.parse(product.id),
                 'name':
-                    '${product.name} (${attrsMap.entries.map((e) => '${e.key}: ${e.value}').join(', ')})',
+                '${product.name} (${attrsMap.entries.map((e) => '${e.key}: ${e.value}').join(', ')})',
                 'product_uom_qty': qty,
                 'price_unit': adjustedPrice,
               }
@@ -621,12 +629,10 @@ class SalesOrderProvider with ChangeNotifier {
         }
       }
 
-      // Get payment term ID based on selected payment method
-      final paymentTermId = await _getPaymentTermId(client, paymentMethod!);
+      final paymentTermId = await _getPaymentTermId(client, paymentMethod);
 
       int saleOrderId;
       if (existingDraftId != null) {
-        // Update existing draft to confirmed state
         await client.callKw({
           'model': 'sale.order',
           'method': 'write',
@@ -635,7 +641,7 @@ class SalesOrderProvider with ChangeNotifier {
             {
               'order_line': [
                 [5, 0, 0]
-              ], // Clear existing lines
+              ],
             },
           ],
           'kwargs': {},
@@ -659,7 +665,6 @@ class SalesOrderProvider with ChangeNotifier {
         saleOrderId = existingDraftId;
         log('Draft sale order updated to confirmed: $orderId (Odoo ID: $saleOrderId)');
       } else {
-        // Create new confirmed order
         saleOrderId = await client.callKw({
           'model': 'sale.order',
           'method': 'create',
@@ -679,25 +684,22 @@ class SalesOrderProvider with ChangeNotifier {
         log('Sale order created: $orderId (Odoo ID: $saleOrderId)');
       }
 
-      // Create order items for local database
       final orderItems = selectedProducts
           .map((product) => OrderItem(
-                product: product,
-                quantity: quantities[product.id] ?? 1,
-                selectedAttributes:
-                    productAttributes[product.id]?.isNotEmpty ?? false
-                        ? productAttributes[product.id]!.first['attributes']
-                        : null,
-              ))
+        product: product,
+        quantity: quantities[product.id] ?? 1,
+        selectedAttributes:
+        productAttributes[product.id]?.isNotEmpty ?? false
+            ? productAttributes[product.id]!.first['attributes']
+            : null,
+      ))
           .toList();
 
-      // Confirm order in local database (Cyllo)
       await confirmOrderInCyllo(
         orderId: orderId,
         items: orderItems,
       );
 
-      // Calculate total amount
       double totalAmount = 0;
       for (var item in orderItems) {
         double itemPrice = item.product.price;
@@ -707,10 +709,12 @@ class SalesOrderProvider with ChangeNotifier {
             final qty = combo['quantity'] as int;
             final attrsMap = combo['attributes'] as Map<String, String>;
             double extraCost = 0;
-            for (var attr in item.product.attributes!) {
-              final value = attrsMap[attr.name];
-              if (value != null && attr.extraCost != null) {
-                extraCost += attr.extraCost![value] ?? 0;
+            if (item.product.attributes != null) { // Add null check
+              for (var attr in item.product.attributes!) {
+                final value = attrsMap[attr.name];
+                if (value != null && attr.extraCost != null) {
+                  extraCost += attr.extraCost![value] ?? 0;
+                }
               }
             }
             itemPrice += extraCost;
@@ -721,10 +725,8 @@ class SalesOrderProvider with ChangeNotifier {
         }
       }
 
-      // Close loading dialog
-      Navigator.pop(context);
+      Navigator.pop(context); // Close loading dialog
 
-      // Navigate to confirmation page
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(
@@ -740,18 +742,16 @@ class SalesOrderProvider with ChangeNotifier {
         ),
       );
 
-      // Clear draft data
       _draftOrderId = null;
       _draftSelectedProducts = [];
       _draftQuantities = {};
       _draftProductAttributes = {};
       notifyListeners();
     } catch (e) {
-      // Close loading dialog if open
       if (Navigator.canPop(context)) {
         Navigator.pop(context);
       }
-
+      log('Error creating sale order: $e');
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Failed to create order: $e'),
@@ -764,10 +764,12 @@ class SalesOrderProvider with ChangeNotifier {
       notifyListeners();
     }
   }
-
-  Future<int?> _getPaymentTermId(dynamic client, String paymentMethod) async {
+  Future<int?> _getPaymentTermId(dynamic client, String? paymentMethod) async {
     try {
-      // Map payment method to expected term name in Odoo
+      if (paymentMethod == null) {
+        return null; // Fallback to Odoo's default payment term
+      }
+
       String termName;
       switch (paymentMethod) {
         case 'Cash':
@@ -783,7 +785,6 @@ class SalesOrderProvider with ChangeNotifier {
           termName = 'Immediate Payment';
       }
 
-      // Search for payment term in Odoo
       final result = await client.callKw({
         'model': 'account.payment.term',
         'method': 'search_read',
@@ -802,13 +803,12 @@ class SalesOrderProvider with ChangeNotifier {
         return result[0]['id'];
       }
 
-      // If not found, return null (Odoo will use default)
-      return null;
+      return null; // Fallback to Odoo's default
     } catch (e) {
+      log('Error fetching payment term: $e');
       return null;
     }
   }
-
   Future<String> _getNextOrderSequence(dynamic client) async {
     try {
       final result = await client.callKw({

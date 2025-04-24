@@ -5,8 +5,10 @@ import 'package:provider/provider.dart';
 import 'package:shimmer/shimmer.dart';
 import '../../assets/widgets and consts/page_transition.dart';
 import '../../providers/sale_order_provider.dart';
+import '../assets/widgets and consts/create_sale_order_dialog.dart';
 import '../providers/order_picking_provider.dart';
-
+import '../../main_page/main_page.dart';
+import '../../assets/widgets and consts/order_utils.dart';
 
 class TodaysSalesPage extends StatefulWidget {
   final SalesOrderProvider provider;
@@ -53,7 +55,8 @@ class _TodaysSalesPageState extends State<TodaysSalesPage> {
 
   void _loadOrders() {
     if (_isFetching) {
-      debugPrint('TodaysSalesPage: Skipping fetchTodaysOrders, already in progress');
+      debugPrint(
+          'TodaysSalesPage: Skipping fetchTodaysOrders, already in progress');
       return;
     }
 
@@ -84,18 +87,22 @@ class _TodaysSalesPageState extends State<TodaysSalesPage> {
     });
   }
 
-  List<Map<String, dynamic>> _getFilteredOrders(List<Map<String, dynamic>> orders) {
+  List<Map<String, dynamic>> _getFilteredOrders(
+      List<Map<String, dynamic>> orders) {
     if (_searchQuery.isEmpty) {
       return orders;
     }
 
     return orders.where((order) {
       final orderNumber = order['name']?.toLowerCase() ?? '';
-      final customer = order['partner_id'] is List && order['partner_id'].length > 1
-          ? order['partner_id'][1].toString().toLowerCase()
-          : '';
+      final customer =
+          order['partner_id'] is List && order['partner_id'].length > 1
+              ? order['partner_id'][1].toString().toLowerCase()
+              : '';
       final state = order['state']?.toLowerCase() ?? '';
-      return orderNumber.contains(_searchQuery) || customer.contains(_searchQuery) || state.contains(_searchQuery);
+      return orderNumber.contains(_searchQuery) ||
+          customer.contains(_searchQuery) ||
+          state.contains(_searchQuery);
     }).toList();
   }
 
@@ -117,6 +124,25 @@ class _TodaysSalesPageState extends State<TodaysSalesPage> {
           icon: const Icon(Icons.arrow_back, color: Colors.white),
           onPressed: () => Navigator.of(context).pop(),
         ),
+        actions: [
+          IconButton(
+            tooltip: 'Create New Sale Order',
+            icon: const Icon(Icons.assignment_sharp, color: Colors.white),
+            onPressed: () {
+              debugPrint('TodaysSalesPage: Retry fetching orders');
+              showCreateOrderSheetGeneral(context);
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: primaryColor,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+              padding: const EdgeInsets.symmetric(vertical: 16),
+              elevation: 2,
+            ),
+          ),
+        ],
       ),
       body: Column(
         children: [
@@ -141,11 +167,11 @@ class _TodaysSalesPageState extends State<TodaysSalesPage> {
                   prefixIcon: Icon(Icons.search, color: Colors.grey[500]),
                   suffixIcon: _searchController.text.isNotEmpty
                       ? IconButton(
-                    icon: Icon(Icons.clear, color: Colors.grey[500]),
-                    onPressed: () {
-                      _searchController.clear();
-                    },
-                  )
+                          icon: Icon(Icons.clear, color: Colors.grey[500]),
+                          onPressed: () {
+                            _searchController.clear();
+                          },
+                        )
                       : null,
                   filled: true,
                   fillColor: Colors.white,
@@ -170,7 +196,7 @@ class _TodaysSalesPageState extends State<TodaysSalesPage> {
               builder: (context, provider, child) {
                 debugPrint(
                     'TodaysSalesPage: Consumer rebuild - isLoading=${provider.isLoading}, '
-                        'error=${provider.error}, todaysOrders.length=${provider.todaysOrders.length}');
+                    'error=${provider.error}, todaysOrders.length=${provider.todaysOrders.length}');
 
                 if (!_initialLoadComplete && provider.isLoading) {
                   return _buildShimmerLoading();
@@ -273,7 +299,8 @@ class _TodaysSalesPageState extends State<TodaysSalesPage> {
                 ),
                 if (provider.todaysOrders.isNotEmpty)
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                     decoration: BoxDecoration(
                       color: primaryColor.withOpacity(0.1),
                       borderRadius: BorderRadius.circular(20),
@@ -332,9 +359,10 @@ class _TodaysSalesPageState extends State<TodaysSalesPage> {
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton.icon(
-                  icon: const Icon(Icons.refresh, color: Colors.white),
+                  icon: const Icon(Icons.assignment_outlined,
+                      color: Colors.white),
                   label: const Text(
-                    'Retry',
+                    'Create Sale Order',
                     style: TextStyle(
                       color: Colors.white,
                       fontWeight: FontWeight.w600,
@@ -343,7 +371,7 @@ class _TodaysSalesPageState extends State<TodaysSalesPage> {
                   ),
                   onPressed: () {
                     debugPrint('TodaysSalesPage: Retry fetching orders');
-                    _loadOrders();
+                    showCreateOrderSheetGeneral(context);
                   },
                   style: ElevatedButton.styleFrom(
                     backgroundColor: primaryColor,
@@ -363,10 +391,26 @@ class _TodaysSalesPageState extends State<TodaysSalesPage> {
     );
   }
 
+  void showCreateOrderSheetGeneral(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (context) => CustomerSelectionDialog(
+        onCustomerSelected: (Customer selectedCustomer) {
+          Navigator.pop(context);
+          Navigator.push(
+              context,
+              SlidingPageTransitionRL(
+                  page: CreateOrderPage(customer: selectedCustomer)));
+        },
+      ),
+    );
+  }
+
   Widget _buildOrderList(BuildContext context, SalesOrderProvider provider) {
     final filteredOrders = _getFilteredOrders(provider.todaysOrders);
 
-    debugPrint('TodaysSalesPage: Building order list with ${filteredOrders.length} orders');
+    debugPrint(
+        'TodaysSalesPage: Building order list with ${filteredOrders.length} orders');
 
     if (filteredOrders.isEmpty) {
       return Card(
@@ -409,7 +453,8 @@ class _TodaysSalesPageState extends State<TodaysSalesPage> {
       itemCount: filteredOrders.length,
       itemBuilder: (context, index) {
         final order = filteredOrders[index];
-        debugPrint('TodaysSalesPage: Rendering order ${order['id']} at index $index');
+        debugPrint(
+            'TodaysSalesPage: Rendering order ${order['id']} at index $index');
         return _OrderCard(
           order: order,
           provider: provider,
@@ -435,9 +480,10 @@ class _OrderCard extends StatelessWidget {
     final orderDate = order['date_order'] != null
         ? DateTime.parse(order['date_order'] as String)
         : null;
-    final customer = order['partner_id'] is List && order['partner_id'].length > 1
-        ? order['partner_id'][1].toString()
-        : 'Unknown';
+    final customer =
+        order['partner_id'] is List && order['partner_id'].length > 1
+            ? order['partner_id'][1].toString()
+            : 'Unknown';
     final orderState = order['state'] ?? 'draft';
     final orderAmount = (order['amount_total'] as num?)?.toDouble() ?? 0.0;
 
@@ -512,7 +558,8 @@ class _OrderCard extends StatelessWidget {
                     ),
                   ),
                   onPressed: () {
-                    debugPrint('Navigating to SaleOrderDetailsPage with order: $order');
+                    debugPrint(
+                        'Navigating to SaleOrderDetailsPage with order: $order');
                     Navigator.push(
                       context,
                       SlidingPageTransitionRL(
@@ -542,8 +589,8 @@ class _OrderCard extends StatelessWidget {
     final statusColor = state == 'done'
         ? Colors.green
         : state == 'sale'
-        ? Colors.blue
-        : Colors.orange;
+            ? Colors.blue
+            : Colors.orange;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
       decoration: BoxDecoration(

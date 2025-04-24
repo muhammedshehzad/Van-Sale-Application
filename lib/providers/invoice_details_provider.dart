@@ -121,17 +121,16 @@ class InvoiceDetailsProvider extends ChangeNotifier {
     try {
       final client = await SessionManager.getActiveClient();
       if (client == null) {
-        _errorMessage = 'No active session';
-        _isLoading = false;
-        notifyListeners();
-        return;
+        throw Exception('No active session');
       }
 
       final result = await client.callKw({
         'model': 'account.move',
         'method': 'search_read',
         'args': [
-          [['id', '=', int.parse(invoiceId)]],
+          [
+            ['id', '=', int.parse(invoiceId)]
+          ],
           [
             'name',
             'state',
@@ -152,22 +151,37 @@ class InvoiceDetailsProvider extends ChangeNotifier {
           ],
         ],
         'kwargs': {},
+      }).timeout(Duration(seconds: 5), onTimeout: () {
+        throw Exception('Invoice details fetch timed out');
       });
 
       if (result.isNotEmpty) {
         final invoiceData = result[0] as Map<String, dynamic>;
-        // Fetch invoice lines separately
-        final lineIds = invoiceData['invoice_line_ids'] as List? ?? [];
+        // Fetch invoice lines
+        final lineIds = List<int>.from(invoiceData['invoice_line_ids'] ?? []);
         final lines = lineIds.isNotEmpty
             ? await client.callKw({
-          'model': 'account.move.line',
-          'method': 'search_read',
-          'args': [
-            [['id', 'in', lineIds]],
-            ['name', 'quantity', 'price_unit', 'price_subtotal', 'price_total', 'discount', 'tax_ids', 'product_id'],
-          ],
-          'kwargs': {},
-        })
+                'model': 'account.move.line',
+                'method': 'search_read',
+                'args': [
+                  [
+                    ['id', 'in', lineIds]
+                  ],
+                  [
+                    'name',
+                    'quantity',
+                    'price_unit',
+                    'price_subtotal',
+                    'price_total',
+                    'discount',
+                    'tax_ids',
+                    'product_id',
+                  ],
+                ],
+                'kwargs': {},
+              }).timeout(Duration(seconds: 3), onTimeout: () {
+                throw Exception('Invoice lines fetch timed out');
+              })
             : [];
         invoiceData['line_details'] = lines;
         setInvoiceData(invoiceData);
@@ -180,9 +194,7 @@ class InvoiceDetailsProvider extends ChangeNotifier {
     }
     _isLoading = false;
     notifyListeners();
-  }
-
-  // Helper methods
+  } // Helper methods
   String formatInvoiceState(String state, bool isFullyPaid) {
     if (isFullyPaid) return 'Paid';
     switch (state.toLowerCase()) {

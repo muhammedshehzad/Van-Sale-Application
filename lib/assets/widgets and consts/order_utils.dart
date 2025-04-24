@@ -6,450 +6,408 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 import 'package:intl/intl.dart';
-import 'package:latest_van_sale_application/assets/widgets%20and%20consts/page_transition.dart';
 import 'package:provider/provider.dart';
-
-import '../../authentication/cyllo_session_model.dart';
 import '../../providers/order_picking_provider.dart';
 import '../../providers/sale_order_provider.dart';
-import '../../secondary_pages/order_confirmation_page.dart';
-import '../../secondary_pages/sale_order_page.dart';
 import 'create_sale_order_dialog.dart';
 
 String _selectedPaymentMethod = 'Invoice';
 
-void showCreateOrderSheetWithCustomer(BuildContext context, Customer customer) {
+class CreateOrderPage extends StatefulWidget {
+  final Customer customer;
+
+  const CreateOrderPage({Key? key, required this.customer}) : super(key: key);
+
+  @override
+  _CreateOrderPageState createState() => _CreateOrderPageState();
+}
+
+class _CreateOrderPageState extends State<CreateOrderPage> {
   final List<Product> _selectedProducts = [];
   final Map<String, int> _quantities = {};
   final Map<String, List<Map<String, dynamic>>> _productAttributes = {};
   double _totalAmount = 0.0;
   String _orderNotes = '';
-  showModalBottomSheet(
-    context: context,
-    isScrollControlled: true,
-    backgroundColor: Colors.transparent,
-    builder: (context) => DraggableScrollableSheet(
-      initialChildSize: 0.9,
-      minChildSize: 0.5,
-      maxChildSize: 0.95,
-      builder: (context, scrollController) {
-        return StatefulBuilder(
-          builder: (context, setSheetState) {
-            bool _isLoading = false; // Add loading state
-            bool _isInitialized = false;
+  bool _isLoading = false;
+  bool _isInitialized = false;
+  String? _selectedPaymentMethod = 'Invoice'; // Default value
 
-            if (!_isInitialized) {
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                final productsProvider =
-                    Provider.of<ProductsProvider>(context, listen: false);
-                if (productsProvider.products.isEmpty &&
-                    !productsProvider.isLoading) {
-                  productsProvider.fetchProducts().catchError((e) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text('Failed to load products: $e'),
-                        backgroundColor: Colors.red,
-                      ),
-                    );
-                  });
-                }
-                setSheetState(() {
-                  _isInitialized = true;
-                });
-              });
-            }
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _initializeProducts();
+    });
+  }
 
-            // Function to clear selections
-            void clearSelections() {
-              setSheetState(() {
-                _selectedProducts.clear();
-                _quantities.clear();
-                _productAttributes.clear();
-                _totalAmount = 0.0;
-              });
-            }
+  Future<void> _initializeProducts() async {
+    final productsProvider =
+        Provider.of<ProductsProvider>(context, listen: false);
+    if (productsProvider.products.isEmpty && !productsProvider.isLoading) {
+      try {
+        await productsProvider.fetchProducts();
+      } catch (e) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to load products: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+    setState(() {
+      _isInitialized = true;
+    });
+  }
 
-            // Function to handle product addition
-            void onAddProduct(Product product, int quantity) {
-              setSheetState(() {
-                _quantities[product.id] = quantity;
-                if (!_selectedProducts.contains(product)) {
-                  _selectedProducts.add(product);
-                }
-              });
-            }
+  void _clearSelections() {
+    setState(() {
+      _selectedProducts.clear();
+      _quantities.clear();
+      _productAttributes.clear();
+      _totalAmount = 0.0;
+    });
+  }
 
-            return Container(
-              decoration: const BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.only(
-                  topLeft: Radius.circular(20),
-                  topRight: Radius.circular(20),
+  void _onAddProduct(Product product, int quantity) {
+    setState(() {
+      _quantities[product.id] = quantity;
+      if (!_selectedProducts.contains(product)) {
+        _selectedProducts.add(product);
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.white,
+      appBar: AppBar(
+        leading: IconButton(
+          icon: const Icon(Icons.close),
+          onPressed: () => Navigator.pop(context),
+        ),
+        title: const Text('Create New Order'),
+        elevation: 0,
+      ),
+      body: Column(
+        children: [
+          _buildCustomerInfo(),
+          const Divider(),
+          Expanded(
+            child: _buildOrderForm(),
+          ),
+          _buildBottomBar(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCustomerInfo() {
+    return Padding(
+      padding: const EdgeInsets.all(16.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Customer: ${widget.customer.name}',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w600,
+              color: Colors.grey[800],
+            ),
+          ),
+          const SizedBox(height: 4),
+          if (widget.customer.phone != null &&
+              widget.customer.phone!.isNotEmpty)
+            Text(
+              'Phone: ${widget.customer.phone}',
+              style: TextStyle(fontSize: 14, color: Colors.grey[600]),
+            ),
+          if (widget.customer.email != null &&
+              widget.customer.email!.isNotEmpty)
+            Text(
+              'Email: ${widget.customer.email}',
+              style: TextStyle(fontSize: 14, color: Colors.grey[600]),
+            ),
+          if (widget.customer.city != null && widget.customer.city!.isNotEmpty)
+            Text(
+              'City: ${widget.customer.city}',
+              style: TextStyle(fontSize: 14, color: Colors.grey[600]),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildOrderForm() {
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        const Text(
+          'Add Products',
+          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 8),
+        _buildProductSelector(
+          context,
+          setState,
+          _selectedProducts,
+          _quantities,
+          _productAttributes,
+          _totalAmount,
+        ),
+        const SizedBox(height: 16),
+        _buildSelectedProductsList(
+          context,
+          setState,
+          _selectedProducts,
+          _quantities,
+          _productAttributes,
+          _totalAmount,
+        ),
+        const SizedBox(height: 24),
+        const Text(
+          'Order Notes',
+          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          maxLines: 3,
+          decoration: InputDecoration(
+            hintText: 'Add any notes for this order...',
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(10),
+            ),
+          ),
+          onChanged: (value) {
+            _orderNotes = value;
+          },
+        ),
+        const SizedBox(height: 24),
+        const Text(
+          'Payment Method',
+          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 8),
+        _buildPaymentMethodSelector(),
+        const SizedBox(height: 32),
+      ],
+    );
+  }
+
+  Widget _buildPaymentMethodSelector() {
+    return DropdownButtonFormField<String>(
+      value: _selectedPaymentMethod,
+      hint: const Text('Select Payment Method'),
+      items: const [
+        DropdownMenuItem(value: 'Invoice', child: Text('Invoice')),
+        DropdownMenuItem(value: 'Cash', child: Text('Cash')),
+      ],
+      onChanged: (value) {
+        setState(() {
+          _selectedPaymentMethod = value;
+        });
+      },
+      validator: (value) =>
+          value == null ? 'Please select a payment method' : null,
+      decoration: InputDecoration(
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBottomBar() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.grey.withOpacity(0.2),
+            spreadRadius: 1,
+            blurRadius: 5,
+            offset: const Offset(0, -3),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: OutlinedButton(
+              onPressed: () => Navigator.pop(context),
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
                 ),
               ),
-              child: Column(
+              child: const Text('Cancel'),
+            ),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            flex: 2,
+            child: ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: primaryColor,
+                foregroundColor: Colors.white,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                minimumSize: const Size(0, 40),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(kBorderRadius),
+                ),
+              ),
+              onPressed: _isLoading ? null : _createOrder,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Container(
-                    margin: const EdgeInsets.only(top: 10),
-                    width: 40,
-                    height: 5,
-                    decoration: BoxDecoration(
-                      color: Colors.grey[300],
-                      borderRadius: BorderRadius.circular(10),
-                    ),
+                  const Text(
+                    'Create Sale Order',
+                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
                   ),
-                  Padding(
-                    padding: const EdgeInsets.all(16.0),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'Create New Order',
-                                style: const TextStyle(
-                                  fontSize: 20,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                              const SizedBox(height: 8),
-                              Text(
-                                'Customer: ${customer.name}',
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w600,
-                                  color: Colors.grey[800],
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              if (customer.phone != null &&
-                                  customer.phone!.isNotEmpty)
-                                Text(
-                                  'Phone: ${customer.phone}',
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    color: Colors.grey[600],
-                                  ),
-                                ),
-                              if (customer.email != null &&
-                                  customer.email!.isNotEmpty)
-                                Text(
-                                  'Email: ${customer.email}',
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    color: Colors.grey[600],
-                                  ),
-                                ),
-                              if (customer.city != null &&
-                                  customer.city!.isNotEmpty)
-                                Text(
-                                  'City: ${customer.city}',
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    color: Colors.grey[600],
-                                  ),
-                                ),
-                            ],
-                          ),
+                  Visibility(
+                    visible: _isLoading,
+                    child: const Padding(
+                      padding: EdgeInsets.only(left: 8),
+                      child: SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          valueColor:
+                              AlwaysStoppedAnimation<Color>(Colors.white),
                         ),
-                        IconButton(
-                          icon: const Icon(Icons.close),
-                          onPressed: () => Navigator.pop(context),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const Divider(),
-                  Expanded(
-                    child: ListView(
-                      controller: scrollController,
-                      padding: const EdgeInsets.all(16),
-                      children: [
-                        const Text(
-                          'Add Products',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        _buildProductSelector(
-                            context,
-                            setSheetState,
-                            _selectedProducts,
-                            _quantities,
-                            _productAttributes,
-                            _totalAmount),
-                        const SizedBox(height: 16),
-                        _buildSelectedProductsList(
-                            context,
-                            setSheetState,
-                            _selectedProducts,
-                            _quantities,
-                            _productAttributes,
-                            _totalAmount),
-                        const SizedBox(height: 24),
-                        const Text(
-                          'Order Notes',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        TextField(
-                          maxLines: 3,
-                          decoration: InputDecoration(
-                            hintText: 'Add any notes for this order...',
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                          ),
-                          onChanged: (value) {
-                            _orderNotes = value;
-                          },
-                        ),
-                        const SizedBox(height: 24),
-                        const Text(
-                          'Payment Method',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        buildPaymentMethodSelector(
-                          setSheetState,
-                        ),
-                        const SizedBox(height: 32),
-                      ],
-                    ),
-                  ),
-                  Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.grey.withOpacity(0.2),
-                          spreadRadius: 1,
-                          blurRadius: 5,
-                          offset: const Offset(0, -3),
-                        ),
-                      ],
-                    ),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: OutlinedButton(
-                            onPressed: () {
-                              Navigator.pop(context);
-                            },
-                            style: OutlinedButton.styleFrom(
-                              padding: const EdgeInsets.symmetric(vertical: 16),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                            ),
-                            child: const Text('Cancel'),
-                          ),
-                        ),
-                        const SizedBox(width: 16),
-                        Expanded(
-                          flex: 2,
-                          child: ElevatedButton(
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: primaryColor,
-                              foregroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 16, vertical: 12),
-                              minimumSize: const Size(0, 40),
-                              shape: RoundedRectangleBorder(
-                                borderRadius:
-                                    BorderRadius.circular(kBorderRadius),
-                              ),
-                            ),
-                            onPressed: _isLoading
-                                ? null
-                                : () async {
-                                    setSheetState(() {
-                                      _isLoading = true;
-                                    });
-
-                                    try {
-                                      // Validate selected products
-                                      final selected = _selectedProducts
-                                          .where((product) =>
-                                              _quantities[product.id] != null &&
-                                              _quantities[product.id]! > 0)
-                                          .toList();
-
-                                      if (selected.isEmpty) {
-                                        ScaffoldMessenger.of(context)
-                                            .showSnackBar(
-                                          SnackBar(
-                                            content: const Text(
-                                                'Please select at least one product!'),
-                                            backgroundColor: Colors.grey,
-                                            shape: RoundedRectangleBorder(
-                                              borderRadius:
-                                                  BorderRadius.circular(
-                                                      kBorderRadius),
-                                            ),
-                                            behavior: SnackBarBehavior.floating,
-                                            margin: const EdgeInsets.all(16),
-                                          ),
-                                        );
-                                        return;
-                                      }
-
-                                      Provider.of<OrderPickingProvider>(context,
-                                          listen: false);
-                                      Provider.of<SalesOrderProvider>(context,
-                                          listen: false);
-                                      List<Product> finalProducts = [];
-                                      Map<String, int> updatedQuantities =
-                                          Map.from(_quantities);
-
-                                      for (var product in selected) {
-                                        if (product.attributes != null &&
-                                            product.attributes!.isNotEmpty) {
-                                          if (!_productAttributes
-                                              .containsKey(product.id)) {
-                                            final combinations =
-                                                await showAttributeSelectionDialog(
-                                                    context, product,
-                                                    requestedQuantity:
-                                                        _quantities[
-                                                            product.id]);
-                                            if (combinations != null &&
-                                                combinations.isNotEmpty) {
-                                              _productAttributes[product.id] =
-                                                  combinations;
-                                            } else {
-                                              continue;
-                                            }
-                                          }
-                                          final combinations =
-                                              _productAttributes[product.id]!;
-                                          final totalAttributeQuantity =
-                                              combinations.fold<int>(
-                                                  0,
-                                                  (sum, comb) =>
-                                                      sum +
-                                                      (comb['quantity']
-                                                          as int));
-                                          updatedQuantities[product.id] =
-                                              totalAttributeQuantity;
-
-                                          double productTotal = 0;
-                                          for (var combo in combinations) {
-                                            final qty =
-                                                combo['quantity'] as int;
-                                            final attrs = combo['attributes']
-                                                as Map<String, String>;
-                                            double extraCost = 0;
-                                            for (var attr
-                                                in product.attributes!) {
-                                              final value = attrs[attr.name];
-                                              if (value != null &&
-                                                  attr.extraCost != null) {
-                                                extraCost +=
-                                                    attr.extraCost![value] ?? 0;
-                                              }
-                                            }
-                                            productTotal +=
-                                                (product.price + extraCost) *
-                                                    qty;
-                                          }
-                                          finalProducts.add(product);
-                                          onAddProduct(
-                                              product, totalAttributeQuantity);
-                                        } else {
-                                          final baseQuantity =
-                                              _quantities[product.id] ?? 0;
-                                          if (baseQuantity > 0) {
-                                            finalProducts.add(product);
-                                            onAddProduct(product, baseQuantity);
-                                          }
-                                        }
-                                      }
-
-                                      if (finalProducts.isEmpty) {
-                                        ScaffoldMessenger.of(context)
-                                            .showSnackBar(
-                                          const SnackBar(
-                                            content: Text(
-                                                'No valid products selected with quantities!'),
-                                            backgroundColor: Colors.red,
-                                            behavior: SnackBarBehavior.floating,
-                                            margin: EdgeInsets.all(16),
-                                          ),
-                                        );
-                                        return;
-                                      }
-
-                                      await Provider.of<SalesOrderProvider>(
-                                              context,
-                                              listen: false)
-                                          .createSaleOrderInOdoo(
-                                              context,
-                                              customer,
-                                              finalProducts,
-                                              updatedQuantities,
-                                              _productAttributes,
-                                              _orderNotes,
-                                              _selectedPaymentMethod);
-                                      // Remove this line: Navigator.pop(context);
-                                    } finally {
-                                      setSheetState(() {
-                                        _isLoading = false;
-                                      });
-                                    }
-                                  },
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                const Text(
-                                  'Create Sale Order',
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                                Visibility(
-                                  visible: _isLoading,
-                                  child: const Padding(
-                                    padding: EdgeInsets.only(left: 8),
-                                    child: SizedBox(
-                                      width: 16,
-                                      height: 16,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                        valueColor:
-                                            AlwaysStoppedAnimation<Color>(
-                                                Colors.white),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ],
+                      ),
                     ),
                   ),
                 ],
               ),
-            );
-          },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _createOrder() async {
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      final selected = _selectedProducts
+          .where((product) =>
+              _quantities[product.id] != null && _quantities[product.id]! > 0)
+          .toList();
+
+      if (selected.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Please select at least one product!'),
+            backgroundColor: Colors.grey,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(kBorderRadius),
+            ),
+            behavior: SnackBarBehavior.floating,
+            margin: const EdgeInsets.all(16),
+          ),
         );
-      },
-    ),
-  );
+        return;
+      }
+
+      if (_selectedPaymentMethod == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Please select a payment method!'),
+            backgroundColor: Colors.grey,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(kBorderRadius),
+            ),
+            behavior: SnackBarBehavior.floating,
+            margin: const EdgeInsets.all(16),
+          ),
+        );
+        return;
+      }
+
+      List<Product> finalProducts = [];
+      Map<String, int> updatedQuantities = Map.from(_quantities);
+
+      for (var product in selected) {
+        if (product.attributes != null && product.attributes!.isNotEmpty) {
+          if (!_productAttributes.containsKey(product.id)) {
+            final combinations = await showAttributeSelectionDialog(
+              context,
+              product,
+              requestedQuantity: _quantities[product.id],
+            );
+            if (combinations != null && combinations.isNotEmpty) {
+              _productAttributes[product.id] = combinations;
+            } else {
+              continue;
+            }
+          }
+          final combinations = _productAttributes[product.id]!;
+          final totalAttributeQuantity = combinations.fold<int>(
+              0, (sum, comb) => sum + (comb['quantity'] as int));
+          updatedQuantities[product.id] = totalAttributeQuantity;
+
+          double productTotal = 0;
+          for (var combo in combinations) {
+            final qty = combo['quantity'] as int;
+            final attrs = combo['attributes'] as Map<String, String>;
+            double extraCost = 0;
+            for (var attr in product.attributes!) {
+              final value = attrs[attr.name];
+              if (value != null && attr.extraCost != null) {
+                extraCost += attr.extraCost![value] ?? 0;
+              }
+            }
+            productTotal += (product.price + extraCost) * qty;
+          }
+          finalProducts.add(product);
+          _onAddProduct(product, totalAttributeQuantity);
+        } else {
+          final baseQuantity = _quantities[product.id] ?? 0;
+          if (baseQuantity > 0) {
+            finalProducts.add(product);
+            _onAddProduct(product, baseQuantity);
+          }
+        }
+      }
+
+      if (finalProducts.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('No valid products selected with quantities!'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+            margin: EdgeInsets.all(16),
+          ),
+        );
+        return;
+      }
+
+      await Provider.of<SalesOrderProvider>(context, listen: false)
+          .createSaleOrderInOdoo(
+        context,
+        widget.customer,
+        finalProducts,
+        updatedQuantities,
+        _productAttributes,
+        _orderNotes,
+        _selectedPaymentMethod,
+      );
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
 }
 
 Future<List<Map<String, dynamic>>?> showAttributeSelectionDialog(
@@ -1596,7 +1554,7 @@ Widget buildPaymentMethodSelector(StateSetter setSheetState) {
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
           gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: 2,
+            crossAxisCount: 3,
             crossAxisSpacing: 12,
             mainAxisSpacing: 12,
             childAspectRatio: 1.2,
@@ -1616,7 +1574,7 @@ Widget buildPaymentMethodSelector(StateSetter setSheetState) {
                       });
                     },
               child: Container(
-                padding: const EdgeInsets.all(12),
+                padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
                   color: isDisabled
                       ? Colors.grey[200]
@@ -1656,7 +1614,7 @@ Widget buildPaymentMethodSelector(StateSetter setSheetState) {
                                 : Colors.grey[700],
                         fontWeight:
                             isSelected ? FontWeight.bold : FontWeight.normal,
-                        fontSize: 14,
+                        fontSize: 11,
                       ),
                       textAlign: TextAlign.center,
                     ),
@@ -1665,7 +1623,7 @@ Widget buildPaymentMethodSelector(StateSetter setSheetState) {
                         '(Coming Soon)',
                         style: TextStyle(
                           color: Colors.grey[500],
-                          fontSize: 10,
+                          fontSize: 8,
                         ),
                       ),
                   ],
