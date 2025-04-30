@@ -125,6 +125,6 @@ class SessionManager {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('isLoggedIn', false);
 
-    // await prefs.clear();
+    await prefs.clear();
   }
 }

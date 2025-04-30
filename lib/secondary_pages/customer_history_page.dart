@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:latest_van_sale_application/assets/widgets%20and%20consts/page_transition.dart';
 import 'package:latest_van_sale_application/secondary_pages/sale_order_details_page.dart';
+import 'package:provider/provider.dart';
 import 'package:shimmer/shimmer.dart';
 import '../../authentication/cyllo_session_model.dart';
 import '../../providers/sale_order_provider.dart';
+import '../assets/widgets and consts/create_order_directly_page.dart';
 import '../providers/order_picking_provider.dart';
 
 class CustomerHistoryPage extends StatefulWidget {
@@ -24,6 +26,7 @@ class _CustomerHistoryPageState extends State<CustomerHistoryPage> {
   String _errorMessage = '';
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
+  List<Customer> _filteredCustomers = [];
 
   @override
   void initState() {
@@ -207,7 +210,7 @@ class _CustomerHistoryPageState extends State<CustomerHistoryPage> {
     return Scaffold(
       backgroundColor: Colors.grey[100],
       appBar: AppBar(
-        title: Text('${widget.customer.name}\'s Order History'),
+        title: Text('${widget.customer.name}\'s Order History',style: TextStyle(fontWeight: FontWeight.bold),),
         backgroundColor: primaryColor,
         foregroundColor: Colors.white,
         elevation: 0,
@@ -448,7 +451,15 @@ class _CustomerHistoryPageState extends State<CustomerHistoryPage> {
               const SizedBox(height: 12),
               TextButton(
                 onPressed: () {
-                  Navigator.pop(context);
+                  final orderPickingProvider =
+                      Provider.of<OrderPickingProvider>(context, listen: false);
+                  _filteredCustomers =
+                      List.from(orderPickingProvider.customers);
+
+                  final customer = _filteredCustomers
+                      .firstWhere((c) => c.id == widget.customer.id);
+
+                  showCreateOrderSheet(context, customer);
                 },
                 child: Text(
                   'Create New Order',
@@ -461,6 +472,16 @@ class _CustomerHistoryPageState extends State<CustomerHistoryPage> {
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  void showCreateOrderSheet(BuildContext context, Customer customer) {
+    FocusScope.of(context).unfocus(); // Add this line
+    Navigator.push(
+      context,
+      SlidingPageTransitionRL(
+        page: CreateOrderDirectlyPage(customer: customer),
       ),
     );
   }
@@ -550,7 +571,10 @@ class _CustomerHistoryPageState extends State<CustomerHistoryPage> {
                     ),
                   ),
                   const SizedBox(width: 8),
-                  _buildStatusBadge(order['state'] ?? 'unknown'),
+                  _buildStatusBadge(
+                    _getStatusLabel(order['state'] ?? 'unknown'),
+                    _getStatusColor(order['state'] ?? 'unknown'),
+                  ),
                 ],
               ),
               const SizedBox(height: 10),
@@ -565,15 +589,44 @@ class _CustomerHistoryPageState extends State<CustomerHistoryPage> {
                 'Customer',
                 widget.customer.name,
               ),
-              _buildInfoRow(
-                Icons.local_shipping,
-                'Delivery Status',
-                _formatStatus(order['delivery_status'] ?? 'none'),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Icon(Icons.local_shipping, size: 18, color: Colors.grey[600]),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Delivery Status: ',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: Colors.grey[700],
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  _buildStatusBadge(
+                    _formatStatus(order['delivery_status'] ?? 'none'),
+                    _getDeliveryStatusColor(order['delivery_status'] ?? 'none'),
+                  ),
+                ],
               ),
-              _buildInfoRow(
-                Icons.receipt,
-                'Invoice Status',
-                _formatStatus(order['invoice_status'] ?? 'none'),
+              const SizedBox(height: 8),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Icon(Icons.receipt, size: 18, color: Colors.grey[600]),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Invoice Status: ',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: Colors.grey[700],
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  _buildStatusBadge(
+                    _formatStatus(order['invoice_status'] ?? 'none'),
+                    _getInvoiceStatusColor(order['invoice_status'] ?? 'none'),
+                  ),
+                ],
               ),
               const Divider(height: 20, color: Colors.grey),
               _buildAmountRow(
@@ -623,23 +676,29 @@ class _CustomerHistoryPageState extends State<CustomerHistoryPage> {
     );
   }
 
-  Widget _buildStatusBadge(String state) {
-    final status = _getStatusLabel(state);
-    final statusColor = _getStatusColor(state);
+  Widget _buildStatusBadge(String status, Color color, {IconData? icon}) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: statusColor.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: statusColor, width: 1),
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(20),
       ),
-      child: Text(
-        status,
-        style: TextStyle(
-          fontSize: 12,
-          fontWeight: FontWeight.bold,
-          color: statusColor,
-        ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (icon != null) ...[
+            Icon(icon, size: 12, color: color),
+            const SizedBox(width: 4),
+          ],
+          Text(
+            status,
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: color,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -700,6 +759,39 @@ class _CustomerHistoryPageState extends State<CustomerHistoryPage> {
         ],
       ),
     );
+  }
+
+  Color _getDeliveryStatusColor(String status) {
+    switch (status.toLowerCase()) {
+      case 'full':
+        return Colors.green;
+      case 'partially':
+        return Colors.blue;
+      case 'to deliver':
+      case 'pending':
+        return Colors.orange;
+      case 'nothing':
+      case 'none':
+        return Colors.grey;
+      default:
+        return Colors.grey;
+    }
+  }
+
+  Color _getInvoiceStatusColor(String status) {
+    switch (status.toLowerCase()) {
+      case 'invoiced':
+        return Colors.green;
+      case 'to invoice':
+        return Colors.orange;
+      case 'upselling':
+        return Colors.blue;
+      case 'no':
+      case 'none':
+        return Colors.grey;
+      default:
+        return Colors.grey;
+    }
   }
 
   String _formatStatus(dynamic status) {

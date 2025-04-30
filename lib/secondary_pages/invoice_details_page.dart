@@ -23,8 +23,11 @@ class _InvoiceDetailsPageState extends State<InvoiceDetailsPage> {
   @override
   void initState() {
     super.initState();
-    debugPrint('InvoiceDetailsPage: Initializing with invoiceData = ${widget.invoiceData}');
-    final provider = Provider.of<InvoiceDetailsProvider>(context, listen: false);
+
+    debugPrint(
+        'InvoiceDetailsPage: Initializing with invoiceData = ${widget.invoiceData}');
+    final provider =
+        Provider.of<InvoiceDetailsProvider>(context, listen: false);
     provider.setInvoiceData(widget.invoiceData);
     // Fetch details only if line_details is missing or empty
     if (widget.invoiceData['id'] != null &&
@@ -33,6 +36,7 @@ class _InvoiceDetailsPageState extends State<InvoiceDetailsPage> {
       provider.fetchInvoiceDetails(widget.invoiceData['id'].toString());
     }
   }
+
   @override
   Widget build(BuildContext context) {
     return Consumer<InvoiceDetailsProvider>(
@@ -96,6 +100,7 @@ class _InvoiceDetailsPageState extends State<InvoiceDetailsPage> {
             const SizedBox(height: 24),
             ElevatedButton(
               onPressed: () {
+                print('${provider.errorMessage} Retry button pressed');
                 provider.fetchInvoiceDetails(
                     widget.invoiceData['id']?.toString() ?? '');
               },

@@ -4,7 +4,7 @@ import 'package:animated_custom_dropdown/custom_dropdown.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import 'package:latest_van_sale_application/assets/widgets%20and%20consts/customer_dialog.dart';
+import 'package:latest_van_sale_application/assets/widgets%20and%20consts/create_customer_page.dart';
 import 'package:latest_van_sale_application/assets/widgets%20and%20consts/page_transition.dart';
 import 'package:provider/provider.dart';
 import '../../authentication/cyllo_session_model.dart';

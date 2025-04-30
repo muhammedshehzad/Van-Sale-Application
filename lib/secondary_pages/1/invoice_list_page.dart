@@ -475,7 +475,7 @@ class _InvoiceListPageState extends State<InvoiceListPage> {
       itemBuilder: (context, index) {
         final invoice = filteredInvoices[index];
         debugPrint('InvoiceListPage: Rendering invoice ${invoice['id']} at index $index');
-        return _InvoiceCard(
+        return InvoiceCard(
           invoice: invoice,
           provider: provider,
         );
@@ -484,11 +484,11 @@ class _InvoiceListPageState extends State<InvoiceListPage> {
   }
 }
 
-class _InvoiceCard extends StatelessWidget {
+class InvoiceCard extends StatelessWidget {
   final Map<String, dynamic> invoice;
   final InvoiceProvider provider;
 
-  const _InvoiceCard({
+  const InvoiceCard({
     Key? key,
     required this.invoice,
     required this.provider,

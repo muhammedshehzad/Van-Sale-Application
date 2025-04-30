@@ -8,7 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../authentication/cyllo_session_model.dart';
 import 'dart:developer' as developer;
 
-import '../assets/widgets and consts/customer_dialog.dart';
+import '../assets/widgets and consts/create_customer_page.dart';
 import '../assets/widgets and consts/page_transition.dart';
 import '../secondary_pages/1/products.dart';
 
@@ -70,18 +70,10 @@ class LogoutService {
   static Future<void> logout(BuildContext context) async {
     try {
       // Show loading dialog
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (context) => const Center(
-          child: CircularProgressIndicator(),
-        ),
-      );
 
-      // Clear shared preferences data
       final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('url');
 
-      // Clear authentication related data
       await prefs.remove('isLoggedIn');
       await prefs.remove('userName');
       await prefs.remove('userLogin');
@@ -93,12 +85,9 @@ class LogoutService {
       await prefs.remove('partnerId');
       await prefs.remove('isSystem');
       await prefs.remove('userTimezone');
-
-      // Optional: If you want to keep the URL and database for convenience on next login
-      // If you want to completely clear all data, uncomment these lines
-      // await prefs.remove('urldata');
-      // await prefs.remove('database');
-      // await prefs.remove('selectedDatabase');
+      await prefs.remove('urldata');
+      await prefs.remove('database');
+      await prefs.remove('selectedDatabase');
 
       // Close the loading dialog
       Navigator.of(context).pop();
@@ -393,55 +382,90 @@ class OrderPickingProvider with ChangeNotifier {
 
     try {
       final client = await SessionManager.getActiveClient();
-      if (client != null) {
-        final result = await client.callKw({
-          'model': 'res.partner',
-          'method': 'search_read',
-          'args': [],
-          'kwargs': {
-            'fields': [
-              'id',
-              'name',
-              'phone',
-              'email',
-              'city',
-              'company_id',
-            ],
-          },
-        });
+      if (client == null) {
+        developer.log("Error: No active client found");
+        return;
+      }
 
-        final List<Customer> fetchedCustomers =
-            (result as List).map((customerData) {
-          return Customer(
-            id: customerData['id'].toString(),
-            name: customerData['name'] ?? 'Unnamed Customer',
-            phone:
-                customerData['phone'] is String ? customerData['phone'] : null,
-            email:
-                customerData['email'] is String ? customerData['email'] : null,
-            city: customerData['city'] is String ? customerData['city'] : null,
-            companyId: customerData['company_id'] ?? false,
-          );
-        }).toList();
+      developer.log("Fetching customers from Odoo...");
+      final result = await client.callKw({
+        'model': 'res.partner',
+        'method': 'search_read',
+        'args': [],
+        'kwargs': {
+          'fields': [
+            'id',
+            'name',
+            'phone',
+            'mobile',
+            'email',
+            'street',
+            'street2',
+            'city',
+            'zip',
+            'country_id',
+            'state_id',
+            'vat',
+            'ref',
+            'company_id',
+            'is_company',
+            'parent_id',
+            'partner_latitude',
+            'partner_longitude',
+            'image_1920', // Ensure this field is fetched
+          ],
+        },
+      });
 
-        fetchedCustomers.sort((a, b) => a.name.compareTo(b.name));
-        _customers = fetchedCustomers;
+      if (result is! List) {
+        developer.log("Error: Expected List but got ${result.runtimeType}");
+        return;
+      }
 
-        log("Successfully fetched ${fetchedCustomers.length} customers");
-        if (_customers.isEmpty) {
-          log("No customers found");
-        } else {
-          final firstCustomer = _customers[0];
-          log("First customer details:");
-          log("Name: ${firstCustomer.name}");
-          log("Phone: ${firstCustomer.phone ?? 'N/A'}");
-          log("Email: ${firstCustomer.email ?? 'N/A'}");
-          log("City: ${firstCustomer.city ?? 'N/A'}");
-          log("Company ID: ${firstCustomer.companyId}");
+      final List<Customer> fetchedCustomers = result
+          .map((customerData) {
+        if (customerData is! Map) {
+          developer.log("Warning: Skipping invalid customer data: $customerData");
+          return null;
         }
+
+        try {
+          // Convert Map<dynamic, dynamic> to Map<String, dynamic>
+          final Map<String, dynamic> typedCustomerData =
+              customerData.cast<String, dynamic>() ??
+                  Map<String, dynamic>.from(customerData);
+          return Customer.fromJson(typedCustomerData); // Use the fromJson factory method
+        } catch (e) {
+          developer.log("Error mapping customer: $e, Data: $customerData");
+          return null;
+        }
+      })
+          .where((customer) => customer != null)
+          .cast<Customer>()
+          .toList();;
+
+      fetchedCustomers.sort((a, b) => a.name.compareTo(b.name));
+      _customers = fetchedCustomers;
+
+      developer
+          .log("Successfully fetched ${fetchedCustomers.length} customers");
+      if (_customers.isEmpty) {
+        developer.log("No customers found");
+      } else {
+        final firstCustomer = _customers[0];
+        developer.log("First customer details:");
+        developer.log("Name: ${firstCustomer.name}");
+        developer.log("Phone: ${firstCustomer.phone ?? 'N/A'}");
+        developer.log("Mobile: ${firstCustomer.mobile ?? 'N/A'}");
+        developer.log("Email: ${firstCustomer.email ?? 'N/A'}");
+        developer.log("City: ${firstCustomer.city ?? 'N/A'}");
+        developer.log("Company ID: ${firstCustomer.companyId}");
+        developer.log("Latitude: ${firstCustomer.latitude ?? 'N/A'}");
+        developer.log("Longitude: ${firstCustomer.longitude ?? 'N/A'}");
+        developer.log("Image URL: ${firstCustomer.imageUrl ?? 'N/A'}");
       }
     } catch (e) {
-      log("Error fetching customers: $e");
+      developer.log("Error fetching customers: $e");
     } finally {
       _isLoadingCustomers = false;
       notifyListeners();
@@ -472,62 +496,6 @@ class OrderPickingProvider with ChangeNotifier {
     _products.removeAt(index);
     notifyListeners();
   }
-
-  // void submitForm(BuildContext context) async {
-  //   if (formKey.currentState!.validate() && _products.isNotEmpty) {
-  //     final orderId = _currentOrderId ?? await generateOrderId();
-  //
-  //     Map<String, dynamic> formData = {
-  //       'order_id': orderId,
-  //       'shop_info': {
-  //         'name': shopNameController.text,
-  //         'location': shopLocationController.text,
-  //         'contact_person': contactPersonController.text,
-  //         'contact_number': contactNumberController.text,
-  //       },
-  //       'delivery_info': {
-  //         'date': DateFormat('yyyy-MM-dd').format(_deliveryDate),
-  //         'priority': _priority,
-  //         'slot': _deliverySlot,
-  //       },
-  //       'products': _products
-  //           .map((product) => {
-  //                 'name': product.nameController.text,
-  //                 'quantity': int.parse(product.quantityController.text),
-  //                 'unit': product.selectedUnit,
-  //                 'category': product.selectedCategory,
-  //                 'urgency': product.selectedUrgency,
-  //                 'notes': product.notesController.text,
-  //                 'stock_quantity': product.stockQuantity,
-  //               })
-  //           .toList(),
-  //       'additional_notes': notesController.text,
-  //     };
-  //
-  //     print('Generated Order ID: $orderId');
-  //     print(formData);
-  //
-  //     Navigator.of(context).push(
-  //       MaterialPageRoute(
-  //         builder: (context) => FormSummaryPage(formData: formData),
-  //       ),
-  //     );
-  //   } else if (_products.isEmpty) {
-  //     ScaffoldMessenger.of(context).showSnackBar(
-  //       SnackBar(
-  //         padding: const EdgeInsets.all(16),
-  //         behavior: SnackBarBehavior.floating,
-  //         shape: RoundedRectangleBorder(
-  //           borderRadius: BorderRadius.circular(8),
-  //         ),
-  //         margin: const EdgeInsets.all(10),
-  //         duration: const Duration(seconds: 2),
-  //         content: const Text('Please add at least one product'),
-  //         backgroundColor: primaryColor,
-  //       ),
-  //     );
-  //   }
-  // }
 
   Future<void> selectDate(BuildContext context) async {
     final DateTime? picked = await showDatePicker(

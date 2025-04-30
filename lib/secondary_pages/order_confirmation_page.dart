@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:latest_van_sale_application/main_page/main_page.dart';
 import 'package:provider/provider.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -596,20 +597,16 @@ class OrderConfirmationPage extends StatelessWidget {
                         ),
                       ),
                       onPressed: () {
-                        print('1');
                         salesOrderProvider.clearOrder();
-                        print('2');
                         salesOrderProvider.resetInventory();
-                        print('3');
                         salesOrderProvider.notifyOrderConfirmed();
-                        print('4');
-                        // Navigate to the home screen and clear the stack
-                        Navigator.pushNamedAndRemoveUntil(
+                        Navigator.pushAndRemoveUntil(
                           context,
-                          '/home', // Replace with your home screen's route name
-                          (route) => false, // Remove all previous routes
+                          MaterialPageRoute(
+                            builder: (context) => const MainPage(),
+                          ),
+                          (route) => false,
                         );
-                        print('5');
                       },
                       child: const Text(
                         'Done',

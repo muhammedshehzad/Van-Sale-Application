@@ -1,6 +1,9 @@
+import 'dart:typed_data';
+
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:latest_van_sale_application/assets/widgets%20and%20consts/demodetailsproducts.dart';
 import 'package:provider/provider.dart';
 import 'dart:convert';
 import 'dart:developer';
@@ -10,7 +13,7 @@ import '../../main_page/main_page.dart';
 import '../../providers/order_picking_provider.dart';
 import '../../providers/sale_order_provider.dart';
 import '../add_products_page.dart';
-import '../sale_order_history_page.dart';
+import '../product_details_page.dart';
 import '../sale_order_page.dart';
 
 class ProductSelectionPage extends StatefulWidget {
@@ -151,229 +154,6 @@ class _ProductSelectionPageState extends State<ProductSelectionPage> {
     }
   }
 
-  // Future<List<Map<String, dynamic>>?> _showAttributeSelectionDialog(
-  //     BuildContext context, Product product,
-  //     {int? requestedQuantity}) async {
-  //   if (product.attributes == null || product.attributes!.isEmpty) return null;
-  //
-  //   List<Map<String, dynamic>> selectedCombinations = [];
-  //
-  //   return await showDialog<List<Map<String, dynamic>>?>(
-  //     context: context,
-  //     builder: (context) {
-  //       return StatefulBuilder(
-  //         builder: (context, setState) {
-  //           int totalQuantity = selectedCombinations.fold<int>(
-  //               0, (sum, combo) => sum + (combo['quantity'] as int));
-  //           bool isQuantityValid =
-  //               requestedQuantity == null || totalQuantity == requestedQuantity;
-  //
-  //           return Dialog(
-  //               shape: RoundedRectangleBorder(
-  //                 borderRadius: BorderRadius.circular(12),
-  //               ),
-  //               elevation: 4,
-  //               child: Padding(
-  //                 padding: const EdgeInsets.all(16.0),
-  //                 child: SingleChildScrollView(
-  //                   child: Column(
-  //                     mainAxisSize: MainAxisSize.min,
-  //                     crossAxisAlignment: CrossAxisAlignment.start,
-  //                     children: [
-  //                       Row(
-  //                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
-  //                         children: [
-  //                           Expanded(
-  //                             flex: 9,
-  //                             child: Text(
-  //                               'Variants for ${product.name}',
-  //                               style: TextStyle(
-  //                                 fontSize: 18,
-  //                                 fontWeight: FontWeight.bold,
-  //                                 color:
-  //                                     primaryColor, // Assuming primaryColor is defined
-  //                               ),
-  //                               overflow: TextOverflow.ellipsis,
-  //                             ),
-  //                           ),
-  //                           Expanded(
-  //                             flex: 1,
-  //                             child: IconButton(
-  //                               icon:
-  //                                   Icon(Icons.close, color: Colors.grey[600]),
-  //                               onPressed: () => Navigator.pop(context, null),
-  //                             ),
-  //                           ),
-  //                         ],
-  //                       ),
-  //                       const SizedBox(height: 12),
-  //                       if (selectedCombinations.isNotEmpty) ...[
-  //                         Text(
-  //                           'Selected Combinations',
-  //                           style: TextStyle(
-  //                             fontSize: 14,
-  //                             fontWeight: FontWeight.w600,
-  //                             color: Colors.grey[700],
-  //                           ),
-  //                         ),
-  //                         const SizedBox(height: 8),
-  //                         Container(
-  //                           constraints: BoxConstraints(
-  //                             maxHeight: 150,
-  //                             minWidth: double.infinity,
-  //                           ),
-  //                           decoration: BoxDecoration(
-  //                             border: Border.all(color: Colors.grey[300]!),
-  //                             borderRadius: BorderRadius.circular(8),
-  //                           ),
-  //                           child: SingleChildScrollView(
-  //                             child: Column(
-  //                               children: selectedCombinations.map((combo) {
-  //                                 final attrs = combo['attributes']
-  //                                     as Map<String, String>;
-  //                                 final qty = combo['quantity'] as int;
-  //                                 double extraCost = 0;
-  //                                 for (var attr in product.attributes!) {
-  //                                   final value = attrs[attr.name];
-  //                                   if (value != null &&
-  //                                       attr.extraCost != null) {
-  //                                     extraCost += attr.extraCost![value] ?? 0;
-  //                                   }
-  //                                 }
-  //                                 final totalCost =
-  //                                     (product.price + extraCost) * qty;
-  //                                 return Padding(
-  //                                   padding: const EdgeInsets.symmetric(
-  //                                       vertical: 8, horizontal: 12),
-  //                                   child: Row(
-  //                                     children: [
-  //                                       Expanded(
-  //                                         child: Column(
-  //                                           crossAxisAlignment:
-  //                                               CrossAxisAlignment.start,
-  //                                           children: [
-  //                                             Text(
-  //                                               attrs.entries
-  //                                                   .map((e) =>
-  //                                                       '${e.key}: ${e.value}')
-  //                                                   .join(', '),
-  //                                               style: const TextStyle(
-  //                                                   fontSize: 14),
-  //                                             ),
-  //                                             const SizedBox(height: 4),
-  //                                             Text(
-  //                                               'Qty: $qty | Extra: \$${extraCost.toStringAsFixed(2)} | Total: \$${totalCost.toStringAsFixed(2)}',
-  //                                               style: TextStyle(
-  //                                                 fontSize: 12,
-  //                                                 color: Colors.grey[600],
-  //                                               ),
-  //                                             ),
-  //                                           ],
-  //                                         ),
-  //                                       ),
-  //                                       IconButton(
-  //                                         icon: const Icon(Icons.delete,
-  //                                             color: Colors.redAccent),
-  //                                         onPressed: () {
-  //                                           setState(() {
-  //                                             selectedCombinations
-  //                                                 .remove(combo);
-  //                                             totalQuantity =
-  //                                                 selectedCombinations
-  //                                                     .fold<int>(
-  //                                                         0,
-  //                                                         (sum, combo) =>
-  //                                                             sum +
-  //                                                             (combo['quantity']
-  //                                                                 as int));
-  //                                             isQuantityValid =
-  //                                                 requestedQuantity == null ||
-  //                                                     totalQuantity ==
-  //                                                         requestedQuantity;
-  //                                           });
-  //                                         },
-  //                                       ),
-  //                                     ],
-  //                                   ),
-  //                                 );
-  //                               }).toList(),
-  //                             ),
-  //                           ),
-  //                         ),
-  //                         const SizedBox(height: 16),
-  //                         const Divider(),
-  //                       ],
-  //                       if (requestedQuantity != null)
-  //                         Text(
-  //                           'Total Quantity Required: $requestedQuantity (Current: $totalQuantity)',
-  //                           style: TextStyle(
-  //                             fontSize: 14,
-  //                             color: isQuantityValid
-  //                                 ? Colors.green
-  //                                 : Colors.redAccent,
-  //                           ),
-  //                         ),
-  //                       _AttributeCombinationForm(
-  //                         product: product,
-  //                         onAdd: (attributes, quantity) {
-  //                           setState(() {
-  //                             selectedCombinations.add({
-  //                               'attributes': attributes,
-  //                               'quantity': quantity,
-  //                             });
-  //                             totalQuantity = selectedCombinations.fold<int>(
-  //                                 0,
-  //                                 (sum, combo) =>
-  //                                     sum + (combo['quantity'] as int));
-  //                             isQuantityValid = requestedQuantity == null ||
-  //                                 totalQuantity == requestedQuantity;
-  //                           });
-  //                         },
-  //                       ),
-  //                       const SizedBox(height: 16),
-  //                       Row(
-  //                         mainAxisAlignment: MainAxisAlignment.end,
-  //                         children: [
-  //                           TextButton(
-  //                             style: TextButton.styleFrom(
-  //                               foregroundColor: Colors.grey[600],
-  //                               padding: const EdgeInsets.symmetric(
-  //                                   horizontal: 16, vertical: 8),
-  //                             ),
-  //                             onPressed: () => Navigator.pop(context, null),
-  //                             child: const Text('Cancel',
-  //                                 style: TextStyle(fontSize: 14)),
-  //                           ),
-  //                           ElevatedButton(
-  //                             style: ElevatedButton.styleFrom(
-  //                               backgroundColor: primaryColor,
-  //                               foregroundColor: Colors.white,
-  //                               padding: const EdgeInsets.symmetric(
-  //                                   horizontal: 16, vertical: 8),
-  //                               shape: RoundedRectangleBorder(
-  //                                 borderRadius: BorderRadius.circular(8),
-  //                               ),
-  //                             ),
-  //                             onPressed: selectedCombinations.isNotEmpty &&
-  //                                     isQuantityValid
-  //                                 ? () => Navigator.pop(
-  //                                     context, selectedCombinations)
-  //                                 : null,
-  //                             child: const Text('Confirm',
-  //                                 style: TextStyle(fontSize: 14)),
-  //                           ),
-  //                         ],
-  //                       ),
-  //                     ],
-  //                   ),
-  //                 ),
-  //               ));
-  //         },
-  //       );
-  //     },
-  //   );
-  // }
-
   void _updateProductList(SalesOrderProvider salesProvider,
       OrderPickingProvider orderPickingProvider) {
     if (orderPickingProvider.needsProductRefresh) {
@@ -471,12 +251,13 @@ class _ProductSelectionPageState extends State<ProductSelectionPage> {
                 prefixIcon: const Icon(Icons.search, color: Colors.grey),
                 suffixIcon: searchController.text.isNotEmpty
                     ? IconButton(
-                  icon: const Icon(Icons.clear, color: Colors.grey),
-                  onPressed: () {
-                    searchController.clear();
-                    _filterProducts(''); // Trigger filter with empty query
-                  },
-                )
+                        icon: const Icon(Icons.clear, color: Colors.grey),
+                        onPressed: () {
+                          searchController.clear();
+                          _filterProducts(
+                              ''); // Trigger filter with empty query
+                        },
+                      )
                     : null,
                 filled: true,
                 fillColor: Colors.white,
@@ -501,10 +282,9 @@ class _ProductSelectionPageState extends State<ProductSelectionPage> {
             labelColor: primaryColor,
             unselectedLabelColor: Colors.grey,
             labelStyle: const TextStyle(fontWeight: FontWeight.bold),
-            // indicator: BoxDecoration(
-            //   // borderRadius: BorderRadius.circular(20),
-            //   color: primaryColor,
-            // ),
+            unselectedLabelStyle: const TextStyle(
+              fontWeight: FontWeight.w500,
+            ),
             tabs: categories
                 .map((category) => Tab(
                       child: Padding(
@@ -517,7 +297,6 @@ class _ProductSelectionPageState extends State<ProductSelectionPage> {
           SizedBox(
             height: 10,
           ),
-
           Expanded(
             child: TabBarView(
               children: categories.map((category) {
@@ -530,23 +309,72 @@ class _ProductSelectionPageState extends State<ProductSelectionPage> {
 
                 return filteredByCategory.isEmpty
                     ? Center(
-                        child: Text(
-                          "No products in this category. Available: ${widget.availableProducts.length}, Filtered: ${filteredProducts.length}",
-                          textAlign: TextAlign.center,
-                        ),
+                        child: Text("No products in this category."),
                       )
-                    : ListView.builder(
-                        // padding: const EdgeInsets.all(16.0),
-                        itemCount: filteredByCategory.length,
-                        itemBuilder: (context, index) {
-                          log('buildProductsList: Building card for product ${filteredByCategory[index].id} in category $category');
-                          return _buildProductCard(filteredByCategory[index]);
-                        },
+                    : RefreshIndicator(
+                        onRefresh: _refreshProducts,
+                        color: primaryColor,
+                        child: ListView.builder(
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          itemCount: filteredByCategory.length,
+                          itemBuilder: (context, index) {
+                            final product = filteredByCategory[index];
+                            Uint8List? imageBytes; // Nullable Uint8List
+                            if (product.imageUrl != null) {
+                              String base64String = product.imageUrl!;
+                              if (base64String.contains(',')) {
+                                base64String =
+                                    base64String.split(',')[1]; // Remove prefix
+                              }
+                              imageBytes = base64Decode(base64String);
+                            } else {
+                              imageBytes =
+                                  Uint8List(0); // Fallback for null image
+                            }
+
+                            return GestureDetector(
+                              onTap: () {
+                                Navigator.push(
+                                    context,
+                                    SlidingPageTransitionRL(
+                                        page: ProductDetailsPage(
+                                      productId: filteredByCategory[index].id,
+                                    )));
+                                // Navigator.push(
+                                //   context,
+                                //   MaterialPageRoute(
+                                //     builder: (context) => ProductsDetailsPage(
+                                //       product: {
+                                //         'id': product.id,
+                                //         'name': product.name,
+                                //         'default_code': product.defaultCode,
+                                //         'list_price': product.price,
+                                //         'standard_price': product.cost ?? 0.0,
+                                //         'barcode': product.barcode,
+                                //         'type': product.category,
+                                //         'categ_id': [
+                                //           product.categId ?? 1,
+                                //           product.category
+                                //         ],
+                                //         'description_sale': product.description,
+                                //         'weight': product.weight,
+                                //         'volume': product.volume,
+                                //         'qty_available': product.vanInventory,
+                                //         'image_1920': imageBytes,
+                                //         // Pass Uint8List or empty Uint8List
+                                //       },
+                                //     ),
+                                //   ),
+                                // );
+                              },
+                              child: _buildProductCard(product),
+                            );
+                          },
+                        ),
                       );
               }).toList(),
             ),
           ),
-
         ],
       ),
     );

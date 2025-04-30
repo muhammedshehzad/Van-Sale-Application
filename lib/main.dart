@@ -6,12 +6,15 @@ import 'package:latest_van_sale_application/providers/invoice_provider.dart';
 import 'package:latest_van_sale_application/providers/order_picking_provider.dart';
 import 'package:latest_van_sale_application/providers/sale_order_detail_provider.dart';
 import 'package:latest_van_sale_application/providers/sale_order_provider.dart';
-import 'package:latest_van_sale_application/secondary_pages/delivey_details_page.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
 import 'authentication/login_page.dart';
 import 'main_page/main_page.dart';
 
+// Define primary color (replace with your actual primary color)
+
+// App theme
 final appTheme = ThemeData(
   primaryColor: primaryColor,
   colorScheme: ColorScheme.fromSwatch().copyWith(
@@ -24,8 +27,8 @@ final appTheme = ThemeData(
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
-  await initializeCameras();
+  // Initialize cameras or other async dependencies if needed
+  // await initializeCameras(); // Uncomment if initializeCameras is defined
   runApp(
     MultiProvider(
       providers: [
@@ -98,7 +101,7 @@ class _MyAppState extends State<MyApp> {
         progressTracker.completeTask('Loading customers');
 
         // Task 4: Fetch order details
-        final orderData = {'id': 1}; // Replace with actual order data
+        final orderData = {'': 1}; // Replace with actual order data
         final saleOrderDetailProvider =
             SaleOrderDetailProvider(orderData: orderData);
         await saleOrderDetailProvider.fetchOrderDetails();
@@ -123,15 +126,6 @@ class _MyAppState extends State<MyApp> {
       title: 'Van Sale Application',
       theme: appTheme,
       debugShowCheckedModeBanner: false,
-      initialRoute: '/home',
-      routes: {
-        '/home': (context) => const MainPage(),
-        // MainPage as the home screen
-        '/login': (context) => const Login(),
-        // Add other routes as needed
-        // '/create_order': (context) => CreateOrderPage(customer: Customer(...)), // Example, requires Customer
-        // '/order_confirmation': (context) => OrderConfirmationPage(...), // Dynamic params needed
-      },
       home: _buildContent(),
     );
   }

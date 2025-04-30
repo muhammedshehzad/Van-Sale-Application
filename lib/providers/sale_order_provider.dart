@@ -36,19 +36,34 @@ class ProductItem {
   final List<String> urgencyLevels = ['Low', 'Normal', 'High', 'Critical'];
 }
 
-class Product with CustomDropdownListFilter {
+class Product {
   final String id;
   final String name;
   final double price;
   final int vanInventory;
   final String? imageUrl;
   final String? defaultCode;
-  final List<dynamic>? sellerIds;
-  final List<dynamic>? taxesIds;
+  final String? barcode;
   final dynamic categId;
-  final dynamic propertyStockProduction;
-  final dynamic propertyStockInventory;
+  final DateTime? creationDate;
+  final String? description;
+  final double? weight;
+  final double? volume;
+  final String? dimensions;
+  final double? cost;
   final List<ProductAttribute>? attributes;
+  final List<dynamic>? taxesIds;
+  final List<dynamic>? sellerIds;
+  final int? leadTime;
+  final dynamic propertyStockInventory;
+  final dynamic propertyStockProduction;
+  final String? procurementRoute;
+  final String? costMethod;
+  final double? standardPrice;
+  final String? propertyAccountIncome;
+  final String? propertyAccountExpense;
+  final Map<String, String>? selectedVariants;
+  final int? quantity;
 
   Product({
     required this.id,
@@ -57,22 +72,34 @@ class Product with CustomDropdownListFilter {
     required this.vanInventory,
     this.imageUrl,
     this.defaultCode,
-    this.sellerIds,
-    this.taxesIds,
+    this.barcode,
     this.categId,
-    this.propertyStockProduction,
-    this.propertyStockInventory,
+    this.creationDate,
+    this.description,
+    this.weight,
+    this.volume,
+    this.dimensions,
+    this.cost,
     this.attributes,
+    this.taxesIds,
+    this.sellerIds,
+    this.leadTime,
+    this.propertyStockInventory,
+    this.propertyStockProduction,
+    this.procurementRoute,
+    this.costMethod,
+    this.standardPrice,
+    this.propertyAccountIncome,
+    this.propertyAccountExpense,
+    this.selectedVariants,
+    this.quantity,
   });
-
-  @override
-  String toString() => name;
 
   String get category {
     if (categId is List && categId.length == 2 && categId[1] is String) {
       return categId[1];
     }
-    return 'General'; // Fallback category if categId is invalid
+    return 'Miscellaneous';
   }
 
   bool filter(String query) {
@@ -81,6 +108,9 @@ class Product with CustomDropdownListFilter {
         (defaultCode != null &&
             defaultCode!.toLowerCase().contains(lowercaseQuery));
   }
+
+  @override
+  String toString() => name;
 }
 
 class ProductAttribute {
@@ -88,10 +118,13 @@ class ProductAttribute {
   final List<String> values;
   final Map<String, double>? extraCost;
 
-  ProductAttribute({required this.name, required this.values, this.extraCost});
+  ProductAttribute({
+    required this.name,
+    required this.values,
+    this.extraCost,
+  });
 }
-
-class Customer with CustomDropdownListFilter {
+class Customer {
   final String id;
   final String name;
   final String? phone;
@@ -105,41 +138,136 @@ class Customer with CustomDropdownListFilter {
   final String? stateId;
   final String? vat;
   final String? ref;
+  final String? website;
+  final String? function;
+  final String? comment;
   final dynamic companyId;
   final bool isCompany;
   final String? parentId;
+  final double? latitude;
+  final double? longitude;
+  final String? imageUrl;
+  final String? addressType;
+  final String? lang;
+  final String? parentName;
+  final List<String>? tags;
+  final String? deliveryInstructions;
+  final String? fax;
+  final String? linkedIn;
+  final String? twitter;
+  final String? facebook;
+  final dynamic employeeCount;
+  final String? annualRevenue;
+  final String? title;
+  final String? industryId;
+  final String? source;
+  final String? dateLocalization; // Add this
 
   Customer({
     required this.id,
     required this.name,
-    this.phone = '',
+    this.phone,
+    this.dateLocalization,
+    this.parentName,
     this.mobile,
-    this.email = '',
+    this.email,
     this.street,
     this.street2,
-    this.city = '',
+    this.city,
     this.zip,
     this.countryId,
     this.stateId,
     this.vat,
     this.ref,
-    required this.companyId,
+    this.website,
+    this.function,
+    this.comment,
+    this.companyId,
     this.isCompany = false,
     this.parentId,
+    this.latitude,
+    this.longitude,
+    this.imageUrl,
+    this.addressType,
+    this.lang,
+    this.tags,
+    this.deliveryInstructions,
+    this.fax,
+    this.linkedIn,
+    this.twitter,
+    this.facebook,
+    this.employeeCount,
+    this.annualRevenue,
+    this.title,
+    this.industryId,
+    this.source,
   });
 
   factory Customer.fromJson(Map<String, dynamic> json) {
     return Customer(
       id: json['id'].toString(),
-      name: json['name'] ?? '',
-      phone: json['phone'],
-      email: json['email'],
-      city: json['city'],
-      companyId: json['company_id'],
+      dateLocalization: json['date_localization'] is String
+          ? json['date_localization']
+          : null,
+      parentName: json['parent_name'] is String ? json['parent_name'] : null,
+      name: json['name'] is String ? json['name'] : 'Unnamed Customer',
+      phone: json['phone'] is String ? json['phone'] : null,
+      mobile: json['mobile'] is String ? json['mobile'] : null,
+      email: json['email'] is String ? json['email'] : null,
+      street: json['street'] is String ? json['street'] : null,
+      street2: json['street2'] is String ? json['street2'] : null,
+      city: json['city'] is String ? json['city'] : null,
+      zip: json['zip'] is String ? json['zip'] : null,
+      countryId: json['country_id'] != false && json['country_id'] is List
+          ? json['country_id'][0].toString()
+          : null,
+      stateId: json['state_id'] != false && json['state_id'] is List
+          ? json['state_id'][0].toString()
+          : null,
+      vat: json['vat'] is String ? json['vat'] : null,
+      ref: json['ref'] is String ? json['ref'] : null,
+      website: json['website'] is String ? json['website'] : null,
+      function: json['function'] is String ? json['function'] : null,
+      comment: json['comment'] is String ? json['comment'] : null,
+      companyId: json['company_id'] ?? false,
+      isCompany: json['is_company'] is bool ? json['is_company'] : false,
+      parentId: json['parent_id'] != false && json['parent_id'] is List
+          ? json['parent_id'][0].toString()
+          : null,
+      latitude: json['partner_latitude'] is num
+          ? json['partner_latitude'].toDouble()
+          : null,
+      longitude: json['partner_longitude'] is num
+          ? json['partner_longitude'].toDouble()
+          : null,
+      imageUrl: json['image_1920'] is String ? json['image_1920'] : null,
+      addressType: json['type'] is String ? json['type'] : null,
+      lang: json['lang'] is String ? json['lang'] : null,
+      tags: json['category_id'] != false && json['category_id'] is List
+          ? List<String>.from(json['category_id'].map((id) => id.toString()))
+          : null,
+      deliveryInstructions: json['x_delivery_instructions'] is String
+          ? json['x_delivery_instructions']
+          : null,
+      fax: json['fax'] is String ? json['fax'] : null,
+      linkedIn:
+          json['social_linkedin'] is String ? json['social_linkedin'] : null,
+      twitter: json['social_twitter'] is String ? json['social_twitter'] : null,
+      facebook:
+          json['social_facebook'] is String ? json['social_facebook'] : null,
+      employeeCount: json['employee_count'],
+      annualRevenue:
+          json['annual_revenue'] is String ? json['annual_revenue'] : null,
+      title: json['title'] != false && json['title'] is List
+          ? json['title'][0].toString()
+          : null,
+      industryId: json['industry_id'] != false && json['industry_id'] is List
+          ? json['industry_id'][0].toString()
+          : null,
+      source: json['source'] is String ? json['source'] : null,
     );
   }
 
-  // Add toJson method for serialization
   Map<String, dynamic> toJson() {
     return {
       'id': id,
@@ -150,23 +278,129 @@ class Customer with CustomDropdownListFilter {
       'street': street,
       'street2': street2,
       'city': city,
+      'parent_name': parentName,
+      'parent_id': parentId != null ? int.tryParse(parentId!) : null,
       'zip': zip,
-      'country_id': countryId,
-      'state_id': stateId,
+      'country_id': countryId != null ? int.tryParse(countryId!) : null,
+      'state_id': stateId != null ? int.tryParse(stateId!) : null,
       'vat': vat,
       'ref': ref,
+      'website': website,
+      'function': function,
+      'comment': comment,
       'company_id': companyId,
       'is_company': isCompany,
-      'parent_id': parentId,
+      'partner_latitude': latitude,
+      'partner_longitude': longitude,
+      'image_1920': imageUrl,
+      'type': addressType,
+      'lang': lang,
+      'category_id': tags
+          ?.map((id) => int.tryParse(id))
+          .where((id) => id != null)
+          .toList(),
+      'x_delivery_instructions': deliveryInstructions,
+      'fax': fax,
+      'social_linkedin': linkedIn,
+      'social_twitter': twitter,
+      'social_facebook': facebook,
+      'employee_count': employeeCount,
+      'annual_revenue': annualRevenue,
+      'title': title,
+      'industry_id': industryId != null ? int.tryParse(industryId!) : null,
+      'source': source,
+      'date_localization': dateLocalization,
     };
+  }
+
+  Customer copyWith({
+    String? id,
+    String? name,
+    String? phone,
+    String? mobile,
+    String? email,
+    String? street,
+    String? street2,
+    String? city,
+    String? zip,
+    String? countryId,
+    String? stateId,
+    String? vat,
+    String? ref,
+    String? website,
+    String? function,
+    String? comment,
+    dynamic companyId,
+    bool? isCompany,
+    String? parentId,
+    double? latitude,
+    double? longitude,
+    String? imageUrl,
+    String? addressType,
+    String? lang,
+    List<String>? tags,
+    String? deliveryInstructions,
+    String? fax,
+    String? linkedIn,
+    String? twitter,
+    String? facebook,
+    dynamic employeeCount,
+    String? annualRevenue,
+    String? title,
+    String? industryId,
+    String? source,
+    String? dateLocalization,
+  }) {
+    return Customer(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      phone: phone ?? this.phone,
+      mobile: mobile ?? this.mobile,
+      email: email ?? this.email,
+      street: street ?? this.street,
+      street2: street2 ?? this.street2,
+      city: city ?? this.city,
+      zip: zip ?? this.zip,
+      countryId: countryId ?? this.countryId,
+      stateId: stateId ?? this.stateId,
+      vat: vat ?? this.vat,
+      ref: ref ?? this.ref,
+      website: website ?? this.website,
+      function: function ?? this.function,
+      comment: comment ?? this.comment,
+      companyId: companyId ?? this.companyId,
+      isCompany: isCompany ?? this.isCompany,
+      parentId: parentId ?? this.parentId,
+      latitude: latitude ?? this.latitude,
+      longitude: longitude ?? this.longitude,
+      imageUrl: imageUrl ?? this.imageUrl,
+      addressType: addressType ?? this.addressType,
+      lang: lang ?? this.lang,
+      deliveryInstructions: deliveryInstructions ?? this.deliveryInstructions,
+      tags: tags ?? this.tags,
+      fax: fax ?? this.fax,
+      linkedIn: linkedIn ?? this.linkedIn,
+      twitter: twitter ?? this.twitter,
+      facebook: facebook ?? this.facebook,
+      employeeCount: employeeCount ?? this.employeeCount,
+      annualRevenue: annualRevenue ?? this.annualRevenue,
+      title: title ?? this.title,
+      industryId: industryId ?? this.industryId,
+      source: source ?? this.source,
+      dateLocalization: dateLocalization ?? this.dateLocalization,
+    );
   }
 
   @override
   String toString() => name;
 
-  @override
   bool filter(String query) {
-    return name.toLowerCase().contains(query.toLowerCase());
+    final queryLower = query.toLowerCase();
+    return name.toLowerCase().contains(queryLower) ||
+        (email?.toLowerCase().contains(queryLower) ?? false) ||
+        (phone?.toLowerCase().contains(queryLower) ?? false) ||
+        (mobile?.toLowerCase().contains(queryLower) ?? false) ||
+        (ref?.toLowerCase().contains(queryLower) ?? false);
   }
 }
 
@@ -202,10 +436,7 @@ class OrderItem {
         total += (product.price + extraCost) * qty;
       }
       return total;
-    }
-
-    // Handle simple selectedAttributes (from first implementation)
-    else if (selectedAttributes != null && product.attributes != null) {
+    } else if (selectedAttributes != null && product.attributes != null) {
       double price = product.price;
       for (var attr in product.attributes!) {
         final value = selectedAttributes![attr.name];
@@ -228,7 +459,7 @@ class OrderItem {
       return selectedAttributes;
     } else if (productAttributes?[product.id] != null &&
         productAttributes![product.id]!.isNotEmpty) {
-      // Return the first set of attributes for display
+      // Return the firs// Handle simple selectedAttributes (from first implementation)t set of attributes for display
       // This is a simplification - you might want to handle this differently
       return Map<String, String>.from(productAttributes![product.id]![0]
           ['attributes'] as Map<String, dynamic>);
@@ -532,14 +763,14 @@ class SalesOrderProvider with ChangeNotifier {
   }
 
   Future<void> createSaleOrderInOdoo(
-      BuildContext context,
-      Customer customer,
-      List<Product> selectedProducts,
-      Map<String, int> quantities,
-      Map<String, List<Map<String, dynamic>>> productAttributes,
-      String? orderNotes,
-      String? paymentMethod,
-      ) async {
+    BuildContext context,
+    Customer customer,
+    List<Product> selectedProducts,
+    Map<String, int> quantities,
+    Map<String, List<Map<String, dynamic>>> productAttributes,
+    String? orderNotes,
+    String? paymentMethod,
+  ) async {
     try {
       if (selectedProducts.isEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -591,7 +822,8 @@ class SalesOrderProvider with ChangeNotifier {
             final qty = combo['quantity'] as int;
             final attrsMap = combo['attributes'] as Map<String, String>;
             double extraCost = 0;
-            if (product.attributes != null) { // Add null check
+            if (product.attributes != null) {
+              // Add null check
               for (var attr in product.attributes!) {
                 final value = attrsMap[attr.name];
                 if (value != null && attr.extraCost != null) {
@@ -606,7 +838,7 @@ class SalesOrderProvider with ChangeNotifier {
               {
                 'product_id': int.parse(product.id),
                 'name':
-                '${product.name} (${attrsMap.entries.map((e) => '${e.key}: ${e.value}').join(', ')})',
+                    '${product.name} (${attrsMap.entries.map((e) => '${e.key}: ${e.value}').join(', ')})',
                 'product_uom_qty': qty,
                 'price_unit': adjustedPrice,
               }
@@ -686,13 +918,13 @@ class SalesOrderProvider with ChangeNotifier {
 
       final orderItems = selectedProducts
           .map((product) => OrderItem(
-        product: product,
-        quantity: quantities[product.id] ?? 1,
-        selectedAttributes:
-        productAttributes[product.id]?.isNotEmpty ?? false
-            ? productAttributes[product.id]!.first['attributes']
-            : null,
-      ))
+                product: product,
+                quantity: quantities[product.id] ?? 1,
+                selectedAttributes:
+                    productAttributes[product.id]?.isNotEmpty ?? false
+                        ? productAttributes[product.id]!.first['attributes']
+                        : null,
+              ))
           .toList();
 
       await confirmOrderInCyllo(
@@ -709,7 +941,8 @@ class SalesOrderProvider with ChangeNotifier {
             final qty = combo['quantity'] as int;
             final attrsMap = combo['attributes'] as Map<String, String>;
             double extraCost = 0;
-            if (item.product.attributes != null) { // Add null check
+            if (item.product.attributes != null) {
+              // Add null check
               for (var attr in item.product.attributes!) {
                 final value = attrsMap[attr.name];
                 if (value != null && attr.extraCost != null) {
@@ -764,6 +997,7 @@ class SalesOrderProvider with ChangeNotifier {
       notifyListeners();
     }
   }
+
   Future<int?> _getPaymentTermId(dynamic client, String? paymentMethod) async {
     try {
       if (paymentMethod == null) {
@@ -809,6 +1043,7 @@ class SalesOrderProvider with ChangeNotifier {
       return null;
     }
   }
+
   Future<String> _getNextOrderSequence(dynamic client) async {
     try {
       final result = await client.callKw({

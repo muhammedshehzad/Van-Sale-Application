@@ -63,14 +63,14 @@ class InvoiceDetailsProvider extends ChangeNotifier {
   String get paymentTerms {
     final terms = _invoiceData['invoice_payment_term_id'];
     if (terms is List && terms.length > 1) return terms[1].toString();
-    return 'Not specified';
+    return '';
   }
 
   String get salesperson {
     final user = _invoiceData['user_id'];
     if (user is List && user.length > 1) return user[1].toString();
     if (user == false) return 'Unassigned';
-    return 'Unassigned';
+    return '';
   }
 
   String get currency {
@@ -236,7 +236,7 @@ class InvoiceDetailsProvider extends ChangeNotifier {
     try {
       // Load the custom font from assets
       final fontData = await DefaultAssetBundle.of(context)
-          .load('lib/assets/texts/Inter-VariableFont_opsz,wght.ttf');
+          .load('lib/assets/fonts/Inter-VariableFont_opsz,wght.ttf');
       final regularFont = pw.Font.ttf(fontData);
       final boldFont = pw.Font.ttf(fontData);
 

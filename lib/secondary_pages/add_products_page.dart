@@ -1,4 +1,8 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'dart:io';
 import 'package:image_picker/image_picker.dart';
@@ -7,7 +11,9 @@ import '../providers/order_picking_provider.dart';
 import '../providers/sale_order_provider.dart';
 
 class AddProductPage extends StatefulWidget {
-  const AddProductPage({Key? key}) : super(key: key);
+  final Map<String, dynamic>? productToEdit;
+
+  const AddProductPage({Key? key, this.productToEdit}) : super(key: key);
 
   @override
   State<AddProductPage> createState() => _AddProductPageState();
@@ -48,7 +54,11 @@ class _AddProductPageState extends State<AddProductPage> {
   bool _expirationTracking = false;
   bool _hasVariants = false;
   File? _productImage;
-
+  List<Map<String, dynamic>> _vendors = [];
+  List<Map<String, dynamic>> _categories = [];
+  Map<String, dynamic>? _selectedVendor;
+  bool _isLoadingVendors = false;
+  bool _isLoadingCategories = false;
   List<String> _routes = [
     'Buy',
     'Manufacture',
@@ -82,7 +92,6 @@ class _AddProductPageState extends State<AddProductPage> {
   // Supplier section
   List<Map<String, dynamic>> _suppliers = [];
   final _supplierNameController = TextEditingController();
-  final _supplierCodeController = TextEditingController();
   final _supplierPriceController = TextEditingController();
   final _supplierLeadTimeController = TextEditingController();
 
@@ -114,7 +123,6 @@ class _AddProductPageState extends State<AddProductPage> {
     _customerLeadTimeController.dispose();
     _tagController.dispose();
     _supplierNameController.dispose();
-    _supplierCodeController.dispose();
     _supplierPriceController.dispose();
     _supplierLeadTimeController.dispose();
     _attributeNameController.dispose();
@@ -203,14 +211,12 @@ class _AddProductPageState extends State<AddProductPage> {
       setState(() {
         _suppliers.add({
           'name': _supplierNameController.text,
-          'code': _supplierCodeController.text,
           'price': double.parse(_supplierPriceController.text),
           'leadTime': int.tryParse(_supplierLeadTimeController.text) ?? 0
         });
 
         // Clear the controllers
         _supplierNameController.clear();
-        _supplierCodeController.clear();
         _supplierPriceController.clear();
         _supplierLeadTimeController.clear();
       });
@@ -251,16 +257,6 @@ class _AddProductPageState extends State<AddProductPage> {
 
   Future<void> _addProduct() async {
     if (_formKey.currentState!.validate()) {
-      final newProduct = ProductItem()
-        ..nameController.text = _nameController.text
-        ..quantityController.text = _quantityController.text
-        ..salePriceController.text = _salePriceController.text
-        ..costController.text = _costController.text
-        ..barcodeController.text = _barcodeController.text
-        ..selectedUnit = _selectedUnit
-        ..selectedCategory = _selectedCategory
-        ..selectedProductType = _selectedProductType;
-
       try {
         final client = await SessionManager.getActiveClient();
         if (client == null) throw Exception('No active session found.');
@@ -274,8 +270,8 @@ class _AddProductPageState extends State<AddProductPage> {
           'standard_price': double.parse(_costController.text),
           'barcode': _barcodeController.text.isNotEmpty
               ? _barcodeController.text
-              : false,
-          'type': _selectedProductType,
+              : null,
+          'type': 'product',
           'uom_id': _mapUnitToOdooId(_selectedUnit),
           'uom_po_id': _mapUnitToOdooId(_selectedPurchaseUnit),
           'categ_id': _mapCategoryToOdooId(_selectedCategory),
@@ -288,8 +284,7 @@ class _AddProductPageState extends State<AddProductPage> {
               : 0.0,
           'sale_ok': _canBeSold,
           'purchase_ok': _canBePurchased,
-          'responsible_id': _selectedResponsible.isNotEmpty ? 1 : false,
-          // Map to actual user ID
+          'responsible_id': _selectedResponsible.isNotEmpty ? 1 : 0,
           'invoice_policy': _selectedInvoicePolicy == 'Ordered quantities'
               ? 'order'
               : 'delivery',
@@ -304,45 +299,114 @@ class _AddProductPageState extends State<AddProductPage> {
               ? double.parse(_reorderMaxController.text)
               : 0.0,
           'expiration_time': _expirationTracking ? 30 : 0,
-          // 30 days default expiration time
           'use_expiration_date': _expirationTracking,
           'taxes_id': _selectedSalesTax != 'No Tax' ? [1] : [],
-          // Map to actual tax IDs
           'supplier_taxes_id': _selectedPurchaseTax != 'No Tax' ? [1] : [],
-          // Map to actual tax IDs
         };
 
-        // Handle product image if selected
+        debugPrint('Product data prepared: ${jsonEncode(productData)}');
+
+        // Process the product image if available
         if (_productImage != null) {
-          // Here you would convert the image to base64 and add it to productData
-          // productData['image_1920'] = base64Image;
+          try {
+            final bytes = await _productImage!.readAsBytes();
+            final base64Image = base64Encode(bytes);
+            productData['image_1920'] = base64Image;
+            debugPrint('Image processed and added to product data');
+          } catch (e) {
+            debugPrint('Error processing image: $e');
+          }
         }
 
-        final productId = await client.callKw({
-          'model': 'product.product',
-          'method': 'create',
-          'args': [productData],
-          'kwargs': {},
-        });
+        dynamic productId;
 
-        // Create initial inventory if specified
-        if (int.parse(_quantityController.text) > 0) {
-          await client.callKw({
-            'model': 'stock.quant',
-            'method': 'create',
+        if (widget.productToEdit != null) {
+          // Validate product ID
+          if (widget.productToEdit!['id'] == null) {
+            throw Exception('Product ID is null, cannot update');
+          }
+
+          // Convert ID to integer
+          int parsedId;
+          try {
+            parsedId = int.parse(widget.productToEdit!['id'].toString());
+          } catch (e) {
+            throw Exception(
+                'Invalid product ID format: ${widget.productToEdit!['id']}');
+          }
+
+          debugPrint(
+              'Checking product with ID: $parsedId (Type: ${parsedId.runtimeType})');
+
+          // Verify product exists in Odoo
+          final productExists = await client.callKw({
+            'model': 'product.product',
+            'method': 'search',
             'args': [
-              {
-                'product_id': productId,
-                'location_id': 8,
-                'quantity': int.parse(_quantityController.text).toDouble(),
-              }
+              [
+                ['id', '=', parsedId]
+              ]
             ],
             'kwargs': {},
           });
+
+          if (productExists.isEmpty) {
+            throw Exception(
+                'Product with ID $parsedId does not exist or has been deleted');
+          }
+
+          debugPrint('Updating product with ID: $parsedId');
+
+          // Update existing product
+          await client.callKw({
+            'model': 'product.product',
+            'method': 'write',
+            'args': [
+              [parsedId],
+              productData
+            ],
+            'kwargs': {},
+          });
+
+          productId = parsedId;
+
+          debugPrint('Product updated successfully with ID: $productId');
+        } else {
+          // Create new product
+          debugPrint('Creating new product...');
+          productId = await client.callKw({
+            'model': 'product.product',
+            'method': 'create',
+            'args': [productData],
+            'kwargs': {},
+          });
+
+          debugPrint(
+              'New product created with ID: $productId (Type: ${productId.runtimeType})');
+
+          // Create initial inventory if specified
+          if (_quantityController.text.isNotEmpty &&
+              int.parse(_quantityController.text) > 0) {
+            debugPrint('Creating initial inventory...');
+            await client.callKw({
+              'model': 'stock.quant',
+              'method': 'create',
+              'args': [
+                {
+                  'product_id': productId,
+                  'location_id': 8,
+                  'quantity': int.parse(_quantityController.text).toDouble(),
+                }
+              ],
+              'kwargs': {},
+            });
+            debugPrint('Initial inventory created');
+          }
         }
 
         // Add supplier info if specified
         if (_suppliers.isNotEmpty) {
+          debugPrint('Adding ${_suppliers.length} suppliers to product');
           for (var supplier in _suppliers) {
             await client.callKw({
               'model': 'product.supplierinfo',
@@ -350,7 +414,7 @@ class _AddProductPageState extends State<AddProductPage> {
               'args': [
                 {
                   'product_id': productId,
-                  'partner_id': 1, // Would be mapped to actual supplier ID
+                  'partner_id': supplier['partner_id'],
                   'product_code': supplier['code'],
                   'price': supplier['price'],
                   'delay': supplier['leadTime'],
@@ -363,41 +427,55 @@ class _AddProductPageState extends State<AddProductPage> {
 
         // Add product tags
         if (_selectedTags.isNotEmpty) {
-          // This would depend on your tag handling in Odoo
+          debugPrint('Tags would be added here');
+          // Implement tag handling as needed
         }
 
         // Handle product variants if needed
         if (_hasVariants && _attributes.isNotEmpty) {
-          // This would involve creating attribute values and linking them to the product template
+          debugPrint('Product variants would be created here');
+          // Implement variant handling as needed
         }
 
-        newProduct.odooId = productId;
-        _products.add(newProduct);
-
+        // Refresh product list in provider
+        debugPrint('Refreshing product list...');
         final salesProvider =
             Provider.of<SalesOrderProvider>(context, listen: false);
         await salesProvider.loadProducts();
         _availableProducts = salesProvider.products.cast<ProductItem>();
         _needsProductRefresh = true;
+        debugPrint('Product list refreshed');
 
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Product added successfully (ID: $productId)'),
-            backgroundColor: Colors.green,
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
+        // Add haptic feedback
+        HapticFeedback.mediumImpact();
+        _productImage = null;
 
-        Navigator.of(context).pop();
+        // Return success result to parent screen
+        Navigator.of(context).pop({
+          'success': true,
+          'message': widget.productToEdit != null
+              ? 'Product updated successfully'
+              : 'Product added successfully (ID: $productId)',
+        });
       } catch (e) {
+        debugPrint('Error in _addProduct: $e');
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Error: $e'),
             backgroundColor: Colors.red,
-            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 3),
           ),
         );
       }
+    } else {
+      // Form validation failed
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please fix the errors in the form'),
+          backgroundColor: Colors.orange,
+          duration: Duration(seconds: 2),
+        ),
+      );
     }
   }
 
@@ -416,17 +494,127 @@ class _AddProductPageState extends State<AddProductPage> {
     }
   }
 
+  Future<void> _fetchVendors() async {
+    setState(() => _isLoadingVendors = true);
+    try {
+      final client = await SessionManager.getActiveClient();
+      if (client == null) throw Exception('No active session found.');
+
+      final result = await client.callKw({
+        'model': 'res.partner',
+        'method': 'search_read',
+        'args': [
+          [
+            ['supplier_rank', '>', 0]
+          ], // Filter for vendors
+          ['id', 'name', 'phone', 'email'], // Standard fields
+        ],
+        'kwargs': {},
+      });
+
+      setState(() {
+        _vendors = List<Map<String, dynamic>>.from(result);
+        _isLoadingVendors = false;
+      });
+    } catch (e) {
+      setState(() => _isLoadingVendors = false);
+      debugPrint('$e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error loading vendors: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  Future<void> _fetchCategories() async {
+    setState(() => _isLoadingCategories = true);
+    try {
+      final client = await SessionManager.getActiveClient();
+      if (client == null) throw Exception('No active session found.');
+
+      final result = await client.callKw({
+        'model': 'product.category',
+        'method': 'search_read',
+        'args': [
+          [], // All categories
+          ['id', 'name', 'complete_name'],
+        ],
+        'kwargs': {},
+      });
+
+      setState(() {
+        _categories = List<Map<String, dynamic>>.from(result);
+        _selectedCategory =
+            _categories.isNotEmpty ? _categories[0]['id'].toString() : '';
+        _isLoadingCategories = false;
+      });
+    } catch (e) {
+      setState(() => _isLoadingCategories = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+            content: Text('Error loading categories: $e'),
+            backgroundColor: Colors.red),
+      );
+    }
+  }
+
+  Future<void> _createCategory(String name) async {
+    try {
+      final client = await SessionManager.getActiveClient();
+      if (client == null) throw Exception('No active session found.');
+
+      final categoryId = await client.callKw({
+        'model': 'product.category',
+        'method': 'create',
+        'args': [
+          {'name': name}
+        ],
+        'kwargs': {},
+      });
+
+      await _fetchCategories(); // Refresh categories
+      setState(() => _selectedCategory = categoryId.toString());
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text('Category created successfully'),
+            backgroundColor: Colors.green),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+            content: Text('Error creating category: $e'),
+            backgroundColor: Colors.red),
+      );
+    }
+  }
+
+  void _onVendorSelected(Map<String, dynamic> vendor) {
+    setState(() {
+      _selectedVendor = vendor;
+      _supplierNameController.text = vendor['name'];
+      // You can fetch additional vendor details here if needed
+    });
+  }
+
   @override
   void initState() {
     super.initState();
+    _fetchVendors();
+    _fetchCategories();
 
-    // Make sure initial values exist in their respective lists
+    // Ensure initial values exist in their respective lists
     final availableUnits = ProductItem().units;
     if (!availableUnits.contains(_selectedUnit)) {
       _selectedUnit = availableUnits.first;
     }
     if (!availableUnits.contains(_selectedPurchaseUnit)) {
       _selectedPurchaseUnit = availableUnits.first;
+    }
+    if (widget.productToEdit != null) {
+      _initializeFormWithProductData();
     }
 
     // Do the same for other dropdowns
@@ -436,17 +624,179 @@ class _AddProductPageState extends State<AddProductPage> {
     }
   }
 
+  void _initializeFormWithProductData() {
+    final product = widget.productToEdit!;
+
+    setState(() {
+      // Reset product image to null before loading new data
+      _productImage = null;
+
+      _nameController.text = product['name'] ?? '';
+      _internalReferenceController.text = product['default_code'] ?? '';
+      _quantityController.text = product['qty_available']?.toString() ?? '0';
+      _salePriceController.text = product['list_price']?.toString() ?? '0.0';
+      _costController.text = product['standard_price']?.toString() ?? '0.0';
+      _barcodeController.text = product['barcode']?.toString() ?? '';
+      _descriptionController.text = product['description_sale'] ?? '';
+      _weightController.text = product['weight']?.toString() ?? '';
+      _volumeController.text = product['volume']?.toString() ?? '';
+
+      // Set dropdown values
+      _selectedProductType = product['type'] ?? 'product';
+      _selectedUnit = product['uom_id']?[1]?.toString() ?? 'Units';
+      _selectedPurchaseUnit = product['uom_po_id']?[1]?.toString() ?? 'Units';
+      _selectedCategory = product['categ_id']?[1]?.toString() ?? 'General';
+      _selectedResponsible = product['responsible_id']?[1]?.toString() ?? '';
+      _canBeSold = product['sale_ok'] ?? true;
+      _canBePurchased = product['purchase_ok'] ?? true;
+      _expirationTracking = product['use_expiration_date'] ?? false;
+
+      // Load product image if available
+      if (product['image_1920'] != null && product['image_1920'] != false) {
+        try {
+          if (product['image_1920'] is String) {
+            // Handle base64 string
+            final bytes = base64Decode(product['image_1920'] as String);
+            final tempDir = Directory.systemTemp;
+            final tempFile =
+                File('${tempDir.path}/temp_product_image_${product['id']}.jpg');
+            tempFile.writeAsBytesSync(bytes);
+            _productImage = tempFile;
+          } else if (product['image_1920'] is Uint8List) {
+            // Handle Uint8List
+            final tempDir = Directory.systemTemp;
+            final tempFile =
+                File('${tempDir.path}/temp_product_image_${product['id']}.jpg');
+            tempFile.writeAsBytesSync(product['image_1920'] as Uint8List);
+            _productImage = tempFile;
+          }
+        } catch (e) {
+          debugPrint('Error decoding image: $e');
+          _productImage = null; // Ensure image is null if decoding fails
+        }
+      }
+    });
+  }
+
+  Widget _buildSearchableDropdown({
+    required String label,
+    required List<Map<String, dynamic>> items,
+    required Function(Map<String, dynamic>) onSelected,
+    bool isLoading = false,
+    String? selectedItemId,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8.0),
+      child: isLoading
+          ? const CircularProgressIndicator()
+          : Autocomplete<Map<String, dynamic>>(
+              optionsBuilder: (TextEditingValue textEditingValue) {
+                if (textEditingValue.text.isEmpty) {
+                  return items;
+                }
+                return items.where((item) => item['name']
+                    .toString()
+                    .toLowerCase()
+                    .contains(textEditingValue.text.toLowerCase()));
+              },
+              displayStringForOption: (item) => item['name'].toString(),
+              fieldViewBuilder:
+                  (context, controller, focusNode, onFieldSubmitted) {
+                return TextFormField(
+                  controller: controller,
+                  focusNode: focusNode,
+                  decoration: InputDecoration(
+                    labelText: label,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  onFieldSubmitted: (value) => onFieldSubmitted(),
+                );
+              },
+              optionsViewBuilder: (context, onSelected, options) {
+                return Align(
+                  alignment: Alignment.topLeft,
+                  child: Material(
+                    elevation: 4,
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxHeight: 200),
+                      child: ListView.builder(
+                        shrinkWrap: true,
+                        itemCount: options.length,
+                        itemBuilder: (context, index) {
+                          final option = options.elementAt(index);
+                          // Convert email to string, handle false/null
+                          final email = option['email'] != null &&
+                                  option['email'] != false
+                              ? option['email'].toString()
+                              : null;
+                          return ListTile(
+                            title: Text(option['name'].toString()),
+                            subtitle: email != null ? Text(email) : null,
+                            onTap: () => onSelected(option),
+                          );
+                        },
+                      ),
+                    ),
+                  ),
+                );
+              },
+              onSelected: onSelected,
+            ),
+    );
+  }
+
+  Widget _buildCategoryAdder() {
+    final newCategoryController = TextEditingController();
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8.0),
+      child: Row(
+        children: [
+          Expanded(
+            child: TextField(
+              controller: newCategoryController,
+              decoration: InputDecoration(
+                labelText: 'New Category',
+                border:
+                    OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          ElevatedButton(
+            onPressed: () {
+              if (newCategoryController.text.isNotEmpty) {
+                _createCategory(newCategoryController.text);
+                newCategoryController.clear();
+              }
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFA12424),
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Add Category'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text(
-          'Add New Product',
+        title: Text(
+          widget.productToEdit != null ? 'Edit Product' : 'Add New Product',
           style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
         ),
         backgroundColor: primaryColor,
         leading: IconButton(
-            onPressed: () => Navigator.of(context).pop(),
+            onPressed: () {
+              _productImage = null;
+
+              Navigator.of(context).pop();
+            },
             icon: Icon(
               Icons.arrow_back,
               color: Colors.white,
@@ -561,7 +911,16 @@ class _AddProductPageState extends State<AddProductPage> {
                   ),
 
                 const SizedBox(height: 10),
-
+                _sectionHeader('Inventory'),
+                _buildSearchableDropdown(
+                  label: 'Category',
+                  items: _categories,
+                  onSelected: (category) => setState(
+                      () => _selectedCategory = category['id'].toString()),
+                  isLoading: _isLoadingCategories,
+                  selectedItemId: _selectedCategory,
+                ),
+                _buildCategoryAdder(),
                 // Sales & Purchase Section
                 _sectionHeader('Sales & Purchase'),
                 SwitchListTile(
@@ -793,25 +1152,15 @@ class _AddProductPageState extends State<AddProductPage> {
                 // Suppliers Section
                 _sectionHeader('Vendors'),
                 if (_canBePurchased) ...[
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _buildTextField(
-                          controller: _supplierNameController,
-                          label: 'Vendor',
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: _buildTextField(
-                          controller: _supplierCodeController,
-                          label: 'Vendor Product Code',
-                        ),
-                      ),
-                    ],
+                  _buildSearchableDropdown(
+                    label: 'Vendor',
+                    items: _vendors,
+                    onSelected: _onVendorSelected,
+                    isLoading: _isLoadingVendors,
                   ),
                   Row(
                     children: [
+                      const SizedBox(width: 10),
                       Expanded(
                         child: _buildTextField(
                           controller: _supplierPriceController,
@@ -820,7 +1169,10 @@ class _AddProductPageState extends State<AddProductPage> {
                               decimal: true),
                         ),
                       ),
-                      const SizedBox(width: 10),
+                    ],
+                  ),
+                  Row(
+                    children: [
                       Expanded(
                         child: _buildTextField(
                           controller: _supplierLeadTimeController,
@@ -831,34 +1183,33 @@ class _AddProductPageState extends State<AddProductPage> {
                       IconButton(
                         icon: const Icon(Icons.add_circle),
                         onPressed: _addSupplier,
-                        color: primaryColor,
+                        color: const Color(0xFF875A7B),
                       ),
                     ],
                   ),
                   if (_suppliers.isNotEmpty)
                     ListView.builder(
-                        shrinkWrap: true,
-                        physics: const NeverScrollableScrollPhysics(),
-                        itemCount: _suppliers.length,
-                        itemBuilder: (context, index) {
-                          final supplier = _suppliers[index];
-                          return Card(
-                            margin: const EdgeInsets.symmetric(vertical: 4.0),
-                            child: ListTile(
-                              title: Text(supplier['name']),
-                              subtitle: Text(
-                                  'Price: ${supplier['price']} | Lead Time: ${supplier['leadTime']} days'),
-                              trailing: IconButton(
-                                icon: const Icon(Icons.delete),
-                                onPressed: () {
-                                  setState(() {
-                                    _suppliers.removeAt(index);
-                                  });
-                                },
-                              ),
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      itemCount: _suppliers.length,
+                      itemBuilder: (context, index) {
+                        final supplier = _suppliers[index];
+                        return Card(
+                          margin: const EdgeInsets.symmetric(vertical: 4.0),
+                          child: ListTile(
+                            title: Text(supplier['name']),
+                            subtitle: Text(
+                              'Price: ${supplier['price']} | Lead Time: ${supplier['leadTime']} days',
                             ),
-                          );
-                        }),
+                            trailing: IconButton(
+                              icon: const Icon(Icons.delete),
+                              onPressed: () =>
+                                  setState(() => _suppliers.removeAt(index)),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
                 ],
 
                 const SizedBox(height: 30),
@@ -869,8 +1220,10 @@ class _AddProductPageState extends State<AddProductPage> {
                       Icons.check,
                       color: Colors.white,
                     ),
-                    label: const Text(
-                      'Add Product',
+                    label: Text(
+                      widget.productToEdit != null
+                          ? 'Update Product'
+                          : 'Add Product',
                       style: TextStyle(color: Colors.white),
                     ),
                     style: ElevatedButton.styleFrom(
@@ -903,13 +1256,10 @@ class _AddProductPageState extends State<AddProductPage> {
             style: const TextStyle(
               fontSize: 18,
               fontWeight: FontWeight.bold,
-              color: Color(0xFF875A7B), // Odoo purple color
+              color: Color(0xFFA12424),
             ),
           ),
-          const Divider(
-            thickness: 1,
-            color: Color(0xFF875A7B), // Odoo purple color
-          ),
+          const Divider(thickness: 1, color: Color(0xFFA12424)),
         ],
       ),
     );

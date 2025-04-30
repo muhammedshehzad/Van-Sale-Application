@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -8,6 +9,8 @@ import 'package:odoo_rpc/odoo_rpc.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:shimmer/shimmer.dart';
+import '../../assets/widgets and consts/create_sale_order_dialog.dart';
+import '../../assets/widgets and consts/order_utils.dart';
 import '../../assets/widgets and consts/page_transition.dart';
 import '../../authentication/cyllo_session_model.dart';
 import '../../authentication/login_page.dart';
@@ -80,6 +83,10 @@ class DashboardStats {
   final String topSellingProduct;
   final int visitedCustomers;
   final int remainingCustomers;
+  late final int scheduledDeliveries;
+  late final int inTransitDeliveries;
+  late final int delivered;
+  late final int delayedDeliveries;
 
   DashboardStats({
     required this.todaySales,
@@ -90,6 +97,10 @@ class DashboardStats {
     required this.topSellingProduct,
     required this.visitedCustomers,
     required this.remainingCustomers,
+    required this.scheduledDeliveries,
+    required this.inTransitDeliveries,
+    required this.delivered,
+    required this.delayedDeliveries,
   });
 
   factory DashboardStats.fromJson(Map<String, dynamic> json) {
@@ -102,6 +113,10 @@ class DashboardStats {
       topSellingProduct: json['top_selling_product'] ?? 'None',
       visitedCustomers: json['visited_customers'] ?? 0,
       remainingCustomers: json['remaining_customers'] ?? 0,
+      scheduledDeliveries: json['scheduled_deliveries'] ?? 0,
+      inTransitDeliveries: json['in_transit_deliveries'] ?? 0,
+      delivered: json['delivered'] ?? 0,
+      delayedDeliveries: json['delayed_deliveries'] ?? 0,
     );
   }
 
@@ -115,6 +130,10 @@ class DashboardStats {
       topSellingProduct: 'None',
       visitedCustomers: 0,
       remainingCustomers: 0,
+      scheduledDeliveries: 0,
+      inTransitDeliveries: 0,
+      delivered: 0,
+      delayedDeliveries: 0,
     );
   }
 }
@@ -167,6 +186,84 @@ class OdooService {
     }
   }
 
+  Future<void> fetchDeliveryStatus(DashboardStats stats) async {
+    try {
+      final today = DateTime.now();
+      final startOfDay =
+          DateTime(today.year, today.month, today.day).toIso8601String();
+      final endOfDay =
+          DateTime(today.year, today.month, today.day + 1).toIso8601String();
+
+      final scheduled = await callKW(
+        model: 'stock.picking',
+        method: 'search_count',
+        args: [
+          [
+            ['scheduled_date', '>=', startOfDay],
+            ['scheduled_date', '<', endOfDay],
+            [
+              'state',
+              'in',
+              ['confirmed', 'assigned']
+            ],
+          ]
+        ],
+      );
+
+      final inTransit = await callKW(
+        model: 'stock.picking',
+        method: 'search_count',
+        args: [
+          [
+            ['scheduled_date', '>=', startOfDay],
+            ['scheduled_date', '<', endOfDay],
+            ['state', '=', 'assigned'],
+          ]
+        ],
+      );
+
+      final delivered = await callKW(
+        model: 'stock.picking',
+        method: 'search_count',
+        args: [
+          [
+            ['scheduled_date', '>=', startOfDay],
+            ['scheduled_date', '<', endOfDay],
+            ['state', '=', 'done'],
+          ]
+        ],
+      );
+
+      final delayed = await callKW(
+        model: 'stock.picking',
+        method: 'search_count',
+        args: [
+          [
+            ['scheduled_date', '>=', startOfDay],
+            ['scheduled_date', '<', endOfDay],
+            [
+              'state',
+              'in',
+              ['confirmed', 'assigned']
+            ],
+            ['scheduled_date', '<', DateTime.now().toIso8601String()],
+          ]
+        ],
+      );
+
+      stats.scheduledDeliveries = scheduled is int ? scheduled : 0;
+      stats.inTransitDeliveries = inTransit is int ? inTransit : 0;
+      stats.delivered = delivered is int ? delivered : 0;
+      stats.delayedDeliveries = delayed is int ? delayed : 0;
+    } catch (e) {
+      debugPrint('Error fetching delivery status: $e');
+      stats.scheduledDeliveries = 0;
+      stats.inTransitDeliveries = 0;
+      stats.delivered = 0;
+      stats.delayedDeliveries = 0;
+    }
+  }
+
   Future<List<Customer>> getAllCustomers() async {
     try {
       final result = await callKW(
@@ -195,11 +292,28 @@ class OdooService {
 
   Future<bool> initFromStorage() async {
     try {
-      _session = await SessionManager.getCurrentSession();
+      // Add a 10-second timeout for session initialization
+      _session = await SessionManager.getCurrentSession().timeout(
+        const Duration(seconds: 10),
+        onTimeout: () {
+          throw TimeoutException(
+              'Session initialization timed out after 10 seconds');
+        },
+      );
+
       if (_session == null) {
+        debugPrint('No session found');
         return false;
       }
-      _client = await _session!.createClient();
+
+      // Create client with timeout
+      _client = await _session!.createClient().timeout(
+        const Duration(seconds: 10),
+        onTimeout: () {
+          throw TimeoutException('Client creation timed out after 10 seconds');
+        },
+      );
+
       return true;
     } catch (e) {
       debugPrint('Error initializing OdooService: $e');
@@ -378,6 +492,10 @@ class OdooService {
         topSellingProduct: 'N/A',
         visitedCustomers: visitedCustomers,
         remainingCustomers: remainingCustomers,
+        scheduledDeliveries: 0,
+        inTransitDeliveries: 0,
+        delivered: 0,
+        delayedDeliveries: 0,
       );
     } catch (e) {
       debugPrint('Error fetching dashboard stats: $e');
@@ -817,6 +935,21 @@ class _DashboardPageState extends State<DashboardPage>
     );
   }
 
+  void showCreateOrderSheetGeneral(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (context) => CustomerSelectionDialog(
+        onCustomerSelected: (Customer selectedCustomer) {
+          Navigator.pop(context);
+          Navigator.push(
+              context,
+              SlidingPageTransitionRL(
+                  page: CreateOrderPage(customer: selectedCustomer)));
+        },
+      ),
+    );
+  }
+
   Widget _buildDashboard() {
     final now = DateTime.now();
     final dateFormatter = DateFormat('EEEE, MMM d, yyyy');
@@ -1021,6 +1154,8 @@ class _DashboardPageState extends State<DashboardPage>
                     ],
                   )
                 : _buildStatsShimmer(),
+            const SizedBox(height: 16),
+            _buildDeliveryStatusCard(),
             const SizedBox(height: 24),
             const Text(
               'Quick Actions',
@@ -1039,7 +1174,9 @@ class _DashboardPageState extends State<DashboardPage>
                     Icons.post_add,
                     'Create Order',
                     Colors.blue[600]!,
-                    () {},
+                    () {
+                      showCreateOrderSheetGeneral(context);
+                    },
                   ),
                   _buildQuickActionButton(
                     Icons.qr_code_scanner,
@@ -1088,7 +1225,10 @@ class _DashboardPageState extends State<DashboardPage>
                   ),
                 ),
                 TextButton(
-                  onPressed: () {},
+                  onPressed: () {
+                    // Navigator.push(context,
+                    //     SlidingPageTransitionRL(page: SaleOrdersList()));
+                  },
                   child: const Text(
                     'View All',
                     style: TextStyle(color: Color(0xFF6A1414)),
@@ -1363,6 +1503,50 @@ class _DashboardPageState extends State<DashboardPage>
     );
   }
 
+  Widget _buildDeliveryStatusCard() {
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Delivery Status',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                _buildStatusItem('Scheduled',
+                    '${_cachedStats!.scheduledDeliveries}', primaryLightColor),
+                _buildStatusItem('In Transit',
+                    '${_cachedStats!.inTransitDeliveries}', primaryLightColor),
+                _buildStatusItem('Delivered', '${_cachedStats!.delivered}',
+                    primaryLightColor),
+                _buildStatusItem('Delayed',
+                    '${_cachedStats!.delayedDeliveries}', primaryLightColor),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStatusItem(String label, String value, Color color) {
+    return Column(
+      children: [
+        Text(value,
+            style: TextStyle(
+                fontSize: 16, fontWeight: FontWeight.bold, color: color)),
+        Text(label, style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+      ],
+    );
+  }
+
   Widget _buildQuickActionButton(
       IconData icon, String label, Color color, VoidCallback onTap) {
     return Container(
@@ -1404,64 +1588,178 @@ void loadRouteData(BuildContext context) {
 
   showDialog(
     context: context,
-    builder: (BuildContext context) {
-      return AlertDialog(
-        title: const Text('Load Today\'s Route'),
-        content: const Text('Do you want to load today\'s customer route?'),
-        actions: [
-          TextButton(
-            child: const Text('Cancel'),
-            onPressed: () => Navigator.of(context).pop(),
+    builder: (BuildContext dialogContext) {
+      return Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        elevation: 4,
+        child: Padding(
+          padding: const EdgeInsets.all(20.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Load Today\'s Route',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.black87,
+                ),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'Do you want to load today\'s customer route?',
+                style: TextStyle(fontSize: 14, color: Colors.black54),
+              ),
+              const SizedBox(height: 20),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  TextButton(
+                    onPressed: () => Navigator.of(dialogContext).pop(),
+                    child: const Text(
+                      'Cancel',
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: Colors.black54,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: primaryColor,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 10,
+                      ),
+                      elevation: 0,
+                    ),
+                    onPressed: () async {
+                      Navigator.of(dialogContext).pop();
+
+                      // Show custom loading dialog
+                      showDialog(
+                        context: context,
+                        barrierDismissible: false,
+                        builder: (BuildContext loadingContext) {
+                          return Dialog(
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Padding(
+                              padding: const EdgeInsets.all(20.0),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: const [
+                                  CircularProgressIndicator(
+                                    valueColor:
+                                        AlwaysStoppedAnimation(primaryColor),
+                                  ),
+                                  SizedBox(width: 16),
+                                  Text(
+                                    'Loading Route...',
+                                    style: TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      );
+
+                      try {
+                        final initialized = await odooService.initFromStorage();
+                        if (!initialized) {
+                          throw Exception('Failed to initialize Odoo service');
+                        }
+
+                        await odooService.callKW(
+                          model: 'sale.route.plan',
+                          method: 'generate_today_route',
+                          args: [],
+                        ).timeout(
+                          const Duration(seconds: 30),
+                          onTimeout: () => throw TimeoutException(
+                              'Route loading timed out after 30 seconds'),
+                        );
+
+                        if (context.mounted) {
+                          Navigator.of(context).pop();
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: const Text('Route loaded successfully!'),
+                              backgroundColor: Colors.green,
+                              behavior: SnackBarBehavior.floating,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              margin: const EdgeInsets.all(16),
+                            ),
+                          );
+                        }
+                      } catch (e) {
+                        if (context.mounted) {
+                          Navigator.of(context).pop();
+                          String errorMessage;
+                          if (e
+                              .toString()
+                              .contains('KeyError: \'sale.route.plan\'')) {
+                            errorMessage =
+                                'Route planning unavailable. Contact your administrator.';
+                          } else if (e is TimeoutException) {
+                            errorMessage = 'Timed out. Please try again.';
+                          } else if (e is Exception) {
+                            errorMessage =
+                                e.toString().replaceFirst('Exception: ', '');
+                          } else {
+                            errorMessage = 'Error: $e';
+                          }
+
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(errorMessage),
+                              backgroundColor: Colors.red,
+                              behavior: SnackBarBehavior.floating,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              margin: const EdgeInsets.all(16),
+                              action: SnackBarAction(
+                                label: 'Retry',
+                                textColor: Colors.white,
+                                onPressed: () => loadRouteData(context),
+                              ),
+                            ),
+                          );
+                        }
+                        debugPrint('Failed to load route: $e');
+                      }
+                    },
+                    child: const Text(
+                      'Load Route',
+                      style:
+                          TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                ],
+              ),
+            ],
           ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.blue,
-              foregroundColor: Colors.white,
-            ),
-            child: const Text('Load Route'),
-            onPressed: () async {
-              Navigator.of(context).pop();
-
-              showDialog(
-                context: context,
-                barrierDismissible: false,
-                builder: (BuildContext context) {
-                  return const Center(
-                    child: CircularProgressIndicator(),
-                  );
-                },
-              );
-
-              try {
-                await odooService.initFromStorage();
-
-                await odooService.callKW(
-                  model: 'sale.route.plan',
-                  method: 'generate_today_route',
-                  args: [],
-                );
-
-                Navigator.of(context).pop();
-
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Route loaded successfully!')),
-                );
-              } catch (e) {
-                Navigator.of(context).pop();
-
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Failed to load route: $e')),
-                );
-              }
-            },
-          ),
-        ],
+        ),
       );
     },
   );
-}
+} // Add toJson methods to models for caching
 
-// Add toJson methods to models for caching
 extension DashboardStatsExtension on DashboardStats {
   Map<String, dynamic> toJson() {
     return {

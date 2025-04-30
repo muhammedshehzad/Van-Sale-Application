@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
-import 'package:latest_van_sale_application/assets/widgets%20and%20consts/customer_dialog.dart';
+import 'package:latest_van_sale_application/assets/widgets%20and%20consts/create_customer_page.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -18,54 +18,12 @@ import '../secondary_pages/1/invoice_list_page.dart';
 import '../secondary_pages/1/products.dart';
 import '../secondary_pages/1/sale_orders.dart';
 import '../secondary_pages/add_products_page.dart';
-import '../secondary_pages/sale_order_history_page.dart';
 import '../assets/widgets and consts/order_utils.dart';
 import '../secondary_pages/todays_sales_page.dart';
 
 const Color secondaryColor = Color(0xFFD32F2F); // Red accent
 
-final List<Map<String, dynamic>> customers = [
-  {
-    "name": "ABC Market",
-    "address": "123 Main St",
-    "contact": "555-1234",
-    "lastVisit": "5 days ago",
-    "totalPurchases": 2450.00,
-    "pending": 450.00,
-    "status": "Regular",
-    "image": "A"
-  },
-  {
-    "name": "Quick Shop",
-    "address": "456 Oak Ave",
-    "contact": "555-2345",
-    "lastVisit": "2 days ago",
-    "totalPurchases": 1850.75,
-    "pending": 0.00,
-    "status": "VIP",
-    "image": "Q"
-  },
-  {
-    "name": "Corner Store",
-    "address": "789 Pine Rd",
-    "contact": "555-3456",
-    "lastVisit": "1 week ago",
-    "totalPurchases": 3200.50,
-    "pending": 1200.00,
-    "status": "Regular",
-    "image": "C"
-  },
-  {
-    "name": "City Mart",
-    "address": "321 Elm St",
-    "contact": "555-4567",
-    "lastVisit": "Yesterday",
-    "totalPurchases": 950.25,
-    "pending": 0.00,
-    "status": "New",
-    "image": "C"
-  },
-];
+final List<Map<String, dynamic>> customers = [];
 final List<Map<String, dynamic>> products = [];
 final List<Map<String, dynamic>> saleOrders = [];
 int selectedIndex = 0;
@@ -85,7 +43,7 @@ class _MainPageState extends State<MainPage> with TickerProviderStateMixin {
   bool _isSearching = false;
   final TextEditingController _searchController = TextEditingController();
   final OdooService _odooService = OdooService(); // Initialize OdooService
-  String userName = "John Doe"; // Will be updated from SharedPreferences
+  String userName = ""; // Will be updated from SharedPreferences
   String? _userImageBase64; // Store base64 image
   bool _isLoadingImage = true; // Loading state for image
 
@@ -147,14 +105,6 @@ class _MainPageState extends State<MainPage> with TickerProviderStateMixin {
   // Toggle search mode
 
   // Handle notifications
-  void _showNotifications() {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) => _buildNotificationsSheet(),
-    );
-  }
 
   // Load route data for the day
 
@@ -230,15 +180,7 @@ class _MainPageState extends State<MainPage> with TickerProviderStateMixin {
     }
 
     return [
-      IconButton(
-        onPressed: () {
-          Navigator.push(
-            context,
-            SlidingPageTransitionRL(page: const SaleOrderHistoryPage()),
-          );
-        },
-        icon: const Icon(Icons.history, color: Colors.white),
-      ),
+
       const Padding(
         padding: EdgeInsets.only(right: 4.0),
         child: LogoutButton(),
@@ -621,9 +563,7 @@ Navigator.push(context, SlidingPageTransitionRL(page: CreateOrderPage(customer: 
       case 3:
         Navigator.push(
             context, SlidingPageTransitionRL(page: CreateCustomerPage()));
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Add customer')),
-        );
+
         break;
       case 4:
         ScaffoldMessenger.of(context).showSnackBar(

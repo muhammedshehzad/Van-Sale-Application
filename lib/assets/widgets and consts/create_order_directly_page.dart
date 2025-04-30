@@ -4,34 +4,38 @@ import 'dart:developer';
 import 'package:animated_custom_dropdown/custom_dropdown.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
-
 import 'package:intl/intl.dart';
+import 'package:odoo_rpc/odoo_rpc.dart';
 import 'package:provider/provider.dart';
+
+import '../../authentication/cyllo_session_model.dart';
 import '../../providers/order_picking_provider.dart';
 import '../../providers/sale_order_provider.dart';
-import 'create_order_directly_page.dart';
+import '../../secondary_pages/order_confirmation_page.dart';
 import 'create_sale_order_dialog.dart';
 
-String _selectedPaymentMethod = 'Invoice';
-
-class CreateOrderPage extends StatefulWidget {
+class CreateOrderDirectlyPage extends StatefulWidget {
   final Customer customer;
 
-  const CreateOrderPage({Key? key, required this.customer}) : super(key: key);
+  const CreateOrderDirectlyPage({Key? key, required this.customer})
+      : super(key: key);
 
   @override
-  _CreateOrderPageState createState() => _CreateOrderPageState();
+  _CreateOrderDirectlyPageState createState() =>
+      _CreateOrderDirectlyPageState();
 }
 
-class _CreateOrderPageState extends State<CreateOrderPage> {
+class _CreateOrderDirectlyPageState extends State<CreateOrderDirectlyPage> {
   final List<Product> _selectedProducts = [];
   final Map<String, int> _quantities = {};
   final Map<String, List<Map<String, dynamic>>> _productAttributes = {};
   double _totalAmount = 0.0;
-  String _orderNotes = '';
+  String _selectedPaymentMethod = 'Invoice';
   bool _isLoading = false;
+  String _orderNotes = '';
   bool _isInitialized = false;
-  String? _selectedPaymentMethod = 'Invoice'; // Default value
+  final TextEditingController _notesController = TextEditingController();
+  String? _draftOrderId;
 
   @override
   void initState() {
@@ -79,17 +83,380 @@ class _CreateOrderPageState extends State<CreateOrderPage> {
     });
   }
 
+  Future<String> _getNextOrderSequence(OdooClient client) async {
+    try {
+      final result = await client.callKw({
+        'model': 'ir.sequence',
+        'method': 'next_by_code',
+        'args': ['sale.order'],
+        'kwargs': {},
+      });
+
+      if (result is String && result.contains('/')) {
+        return result.split('/').last;
+      }
+      return result?.toString() ??
+          DateTime.now().millisecondsSinceEpoch.toString().substring(7);
+    } catch (e) {
+      final timestamp = DateTime.now().millisecondsSinceEpoch.toString();
+      return timestamp.substring(timestamp.length - 4).padLeft(4, '0');
+    }
+  }
+
+  Future<int?> _findExistingDraftOrder(String orderId) async {
+    try {
+      final client = await SessionManager.getActiveClient();
+      if (client == null) {
+        throw Exception('No active Odoo session found. Please log in again.');
+      }
+
+      final result = await client.callKw({
+        'model': 'sale.order',
+        'method': 'search',
+        'args': [
+          [
+            ['name', '=', orderId],
+            ['state', '=', 'draft'],
+          ]
+        ],
+        'kwargs': {},
+      });
+
+      if (result is List && result.isNotEmpty) {
+        return result[0] as int;
+      }
+      return null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  Future<int?> _getPaymentTermId(dynamic client, String? paymentMethod) async {
+    try {
+      if (paymentMethod == null) return null;
+
+      String termName;
+      switch (paymentMethod) {
+        case 'Cash':
+          termName = 'Immediate Payment';
+          break;
+        case 'Credit Card':
+          termName = 'Immediate Payment';
+          break;
+        case 'Invoice':
+          termName = '30 Days';
+          break;
+        default:
+          termName = 'Immediate Payment';
+      }
+
+      final result = await client.callKw({
+        'model': 'account.payment.term',
+        'method': 'search_read',
+        'args': [
+          [
+            ['name', 'ilike', termName]
+          ],
+        ],
+        'kwargs': {
+          'fields': ['id'],
+          'limit': 1,
+        },
+      });
+
+      if (result is List && result.isNotEmpty) {
+        return result[0]['id'];
+      }
+      return null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  Future<void> _createSaleOrderInOdooDirectly(BuildContext context,
+      Customer customer, String? orderNotes, String? paymentMethod) async {
+    final salesOrderProvider =
+        Provider.of<SalesOrderProvider>(context, listen: false);
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      final selected = _selectedProducts
+          .where((product) =>
+              _quantities[product.id] != null && _quantities[product.id]! > 0)
+          .toList();
+
+      if (selected.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Please select at least one product!'),
+            backgroundColor: Colors.grey,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(kBorderRadius),
+            ),
+            behavior: SnackBarBehavior.floating,
+            margin: const EdgeInsets.all(16),
+          ),
+        );
+        return;
+      }
+
+      if (paymentMethod == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Please select a payment method!'),
+            backgroundColor: Colors.grey,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(kBorderRadius),
+            ),
+            behavior: SnackBarBehavior.floating,
+            margin: const EdgeInsets.all(16),
+          ),
+        );
+        return;
+      }
+
+      List<Product> finalProducts = [];
+      Map<String, int> updatedQuantities = Map.from(_quantities);
+
+      for (var product in selected) {
+        if (product.attributes != null && product.attributes!.isNotEmpty) {
+          if (!_productAttributes.containsKey(product.id)) {
+            final combinations = await showAttributeSelectionDialog(
+              context,
+              product,
+              requestedQuantity: _quantities[product.id],
+            );
+            if (combinations != null && combinations.isNotEmpty) {
+              _productAttributes[product.id] = combinations;
+            } else {
+              continue;
+            }
+          }
+          final combinations = _productAttributes[product.id]!;
+          final totalAttributeQuantity = combinations.fold<int>(
+              0, (sum, comb) => sum + (comb['quantity'] as int));
+          updatedQuantities[product.id] = totalAttributeQuantity;
+
+          double productTotal = 0;
+          for (var combo in combinations) {
+            final qty = combo['quantity'] as int;
+            final attrs = combo['attributes'] as Map<String, String>;
+            double extraCost = 0;
+            for (var attr in product.attributes!) {
+              final value = attrs[attr.name];
+              if (value != null && attr.extraCost != null) {
+                extraCost += attr.extraCost![value] ?? 0;
+              }
+            }
+            productTotal += (product.price + extraCost) * qty;
+          }
+          finalProducts.add(product);
+          _onAddProduct(product, totalAttributeQuantity);
+        } else {
+          final baseQuantity = _quantities[product.id] ?? 0;
+          if (baseQuantity > 0) {
+            finalProducts.add(product);
+            _onAddProduct(product, baseQuantity);
+          }
+        }
+      }
+
+      if (finalProducts.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('No valid products selected with quantities!'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+            margin: EdgeInsets.all(16),
+          ),
+        );
+        return;
+      }
+
+      final client = await SessionManager.getActiveClient();
+      if (client == null) {
+        throw Exception('No active Odoo session found. Please log in again.');
+      }
+
+
+
+      final orderId = await _getNextOrderSequence(client);
+      final existingDraftId = await _findExistingDraftOrder(orderId);
+      final orderDate = DateTime.now();
+      final orderLines = <dynamic>[];
+      double orderTotal = 0.0;
+
+      for (var product in finalProducts) {
+        final quantity = updatedQuantities[product.id] ?? 1;
+        final combinations = _productAttributes[product.id] ?? [];
+
+        if (combinations.isNotEmpty) {
+          for (var combo in combinations) {
+            final qty = combo['quantity'] as int;
+            final attrs = combo['attributes'] as Map<String, String>;
+            double extraCost = 0.0;
+            if (product.attributes != null) {
+              for (var attr in product.attributes!) {
+                final value = attrs[attr.name];
+                if (value != null && attr.extraCost != null) {
+                  extraCost += attr.extraCost![value] ?? 0.0;
+                }
+              }
+            }
+            final lineTotal = (product.price + extraCost) * qty;
+            orderTotal += lineTotal;
+            orderLines.add([
+              0,
+              0,
+              {
+                'product_id': int.parse(product.id),
+                'name':
+                    '${product.name} (${attrs.entries.map((e) => '${e.key}: ${e.value}').join(', ')})',
+                'product_uom_qty': qty,
+                'price_unit': product.price + extraCost,
+              }
+            ]);
+          }
+        } else {
+          final lineTotal = product.price * quantity;
+          orderTotal += lineTotal;
+          orderLines.add([
+            0,
+            0,
+            {
+              'product_id': int.parse(product.id),
+              'name': product.name,
+              'product_uom_qty': quantity,
+              'price_unit': product.price,
+            }
+          ]);
+        }
+      }
+
+      final paymentTermId = await _getPaymentTermId(client, paymentMethod);
+      int saleOrderId;
+
+      if (existingDraftId != null) {
+        await client.callKw({
+          'model': 'sale.order',
+          'method': 'write',
+          'args': [
+            [existingDraftId],
+            {
+              'order_line': [
+                [5, 0, 0]
+              ]
+            },
+          ],
+          'kwargs': {},
+        });
+        await client.callKw({
+          'model': 'sale.order',
+          'method': 'write',
+          'args': [
+            [existingDraftId],
+            {
+              'partner_id': int.parse(customer.id),
+              'order_line': orderLines,
+              'state': 'sale',
+              'date_order': DateFormat('yyyy-MM-dd HH:mm:ss').format(orderDate),
+              'note': orderNotes,
+              'payment_term_id': paymentTermId,
+            },
+          ],
+          'kwargs': {},
+        });
+        saleOrderId = existingDraftId;
+      } else {
+        saleOrderId = await client.callKw({
+          'model': 'sale.order',
+          'method': 'create',
+          'args': [
+            {
+              'name': orderId,
+              'partner_id': int.parse(customer.id),
+              'order_line': orderLines,
+              'state': 'sale',
+              'date_order': DateFormat('yyyy-MM-dd HH:mm:ss').format(orderDate),
+              'note': orderNotes,
+              'payment_term_id': paymentTermId,
+            }
+          ],
+          'kwargs': {},
+        });
+      }
+
+      final orderItems = finalProducts
+          .map((product) => OrderItem(
+                product: product,
+                quantity: updatedQuantities[product.id] ?? 1,
+                selectedAttributes:
+                    _productAttributes[product.id]?.isNotEmpty ?? false
+                        ? _productAttributes[product.id]!.first['attributes']
+                        : null,
+              ))
+          .toList();
+
+      await salesOrderProvider.confirmOrderInCyllo(
+        orderId: orderId,
+        items: orderItems,
+      );
+
+      Navigator.pop(context);
+
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (context) => OrderConfirmationPage(
+            orderId: orderId,
+            items: orderItems,
+            totalAmount: orderTotal,
+            customer: customer,
+            paymentMethod: paymentMethod,
+            orderNotes: orderNotes,
+            orderDate: orderDate,
+          ),
+        ),
+      );
+
+      _clearSelections();
+      _notesController.clear();
+      _draftOrderId = null;
+    } catch (e) {
+      if (Navigator.canPop(context)) Navigator.pop(context);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to create order: $e'),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 5),
+        ),
+      );
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _notesController.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
+        backgroundColor: primaryColor,
         leading: IconButton(
-          icon: const Icon(Icons.close),
+          icon: const Icon(Icons.close,color: Colors.white,),
           onPressed: () => Navigator.pop(context),
         ),
-        title: const Text('Create New Order'),
-        elevation: 0,
+        title: Text('Create New Order for ${widget.customer.name}',style: TextStyle(color: Colors.white,fontWeight: FontWeight.w500),),
       ),
       body: Column(
         children: [
@@ -174,6 +541,7 @@ class _CreateOrderPageState extends State<CreateOrderPage> {
         ),
         const SizedBox(height: 8),
         TextField(
+          controller: _notesController,
           maxLines: 3,
           decoration: InputDecoration(
             hintText: 'Add any notes for this order...',
@@ -191,32 +559,33 @@ class _CreateOrderPageState extends State<CreateOrderPage> {
           style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 8),
-        _buildPaymentMethodSelector(),
+        Row(
+          children: [
+            _buildPaymentMethodOption(
+              'Invoice',
+              Icons.receipt_long,
+              _selectedPaymentMethod == 'Invoice',
+              () {
+                setState(() {
+                  _selectedPaymentMethod = 'Invoice';
+                });
+              },
+            ),
+            const SizedBox(width: 16),
+            _buildPaymentMethodOption(
+              'Cash',
+              Icons.money,
+              _selectedPaymentMethod == 'Cash',
+              () {
+                setState(() {
+                  _selectedPaymentMethod = 'Cash';
+                });
+              },
+            ),
+          ],
+        ),
         const SizedBox(height: 32),
       ],
-    );
-  }
-
-  Widget _buildPaymentMethodSelector() {
-    return DropdownButtonFormField<String>(
-      value: _selectedPaymentMethod,
-      hint: const Text('Select Payment Method'),
-      items: const [
-        DropdownMenuItem(value: 'Invoice', child: Text('Invoice')),
-        DropdownMenuItem(value: 'Cash', child: Text('Cash')),
-      ],
-      onChanged: (value) {
-        setState(() {
-          _selectedPaymentMethod = value;
-        });
-      },
-      validator: (value) =>
-          value == null ? 'Please select a payment method' : null,
-      decoration: InputDecoration(
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
-        ),
-      ),
     );
   }
 
@@ -262,7 +631,14 @@ class _CreateOrderPageState extends State<CreateOrderPage> {
                   borderRadius: BorderRadius.circular(kBorderRadius),
                 ),
               ),
-              onPressed: _isLoading ? null : _createOrder,
+              onPressed: _isLoading
+                  ? null
+                  : () => _createSaleOrderInOdooDirectly(
+                        context,
+                        widget.customer,
+                        _orderNotes,
+                        _selectedPaymentMethod,
+                      ),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
@@ -294,123 +670,433 @@ class _CreateOrderPageState extends State<CreateOrderPage> {
     );
   }
 
-  Future<void> _createOrder() async {
-    setState(() {
-      _isLoading = true;
-    });
-
-    try {
-      final selected = _selectedProducts
-          .where((product) =>
-              _quantities[product.id] != null && _quantities[product.id]! > 0)
-          .toList();
-
-      if (selected.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('Please select at least one product!'),
-            backgroundColor: Colors.grey,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(kBorderRadius),
-            ),
-            behavior: SnackBarBehavior.floating,
-            margin: const EdgeInsets.all(16),
+  Widget _buildPaymentMethodOption(
+      String label, IconData icon, bool selected, VoidCallback onTap) {
+    return Expanded(
+      child: GestureDetector(
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          decoration: BoxDecoration(
+            color: selected ? primaryColor.withOpacity(0.1) : Colors.grey[100],
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+                color: selected ? primaryColor : Colors.grey[300]!,
+                width: selected ? 2 : 1),
           ),
-        );
-        return;
-      }
-
-      if (_selectedPaymentMethod == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('Please select a payment method!'),
-            backgroundColor: Colors.grey,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(kBorderRadius),
-            ),
-            behavior: SnackBarBehavior.floating,
-            margin: const EdgeInsets.all(16),
+          child: Column(
+            children: [
+              Icon(icon, color: selected ? primaryColor : Colors.grey),
+              const SizedBox(height: 4),
+              Text(
+                label,
+                style: TextStyle(
+                  color: selected ? primaryColor : Colors.grey[800],
+                  fontWeight: selected ? FontWeight.bold : FontWeight.normal,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ],
           ),
-        );
-        return;
-      }
-
-      List<Product> finalProducts = [];
-      Map<String, int> updatedQuantities = Map.from(_quantities);
-
-      for (var product in selected) {
-        if (product.attributes != null && product.attributes!.isNotEmpty) {
-          if (!_productAttributes.containsKey(product.id)) {
-            final combinations = await showAttributeSelectionDialog(
-              context,
-              product,
-              requestedQuantity: _quantities[product.id],
-            );
-            if (combinations != null && combinations.isNotEmpty) {
-              _productAttributes[product.id] = combinations;
-            } else {
-              continue;
-            }
-          }
-          final combinations = _productAttributes[product.id]!;
-          final totalAttributeQuantity = combinations.fold<int>(
-              0, (sum, comb) => sum + (comb['quantity'] as int));
-          updatedQuantities[product.id] = totalAttributeQuantity;
-
-          double productTotal = 0;
-          for (var combo in combinations) {
-            final qty = combo['quantity'] as int;
-            final attrs = combo['attributes'] as Map<String, String>;
-            double extraCost = 0;
-            for (var attr in product.attributes!) {
-              final value = attrs[attr.name];
-              if (value != null && attr.extraCost != null) {
-                extraCost += attr.extraCost![value] ?? 0;
-              }
-            }
-            productTotal += (product.price + extraCost) * qty;
-          }
-          finalProducts.add(product);
-          _onAddProduct(product, totalAttributeQuantity);
-        } else {
-          final baseQuantity = _quantities[product.id] ?? 0;
-          if (baseQuantity > 0) {
-            finalProducts.add(product);
-            _onAddProduct(product, baseQuantity);
-          }
-        }
-      }
-
-      if (finalProducts.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('No valid products selected with quantities!'),
-            backgroundColor: Colors.red,
-            behavior: SnackBarBehavior.floating,
-            margin: EdgeInsets.all(16),
-          ),
-        );
-        return;
-      }
-
-      await Provider.of<SalesOrderProvider>(context, listen: false)
-          .createSaleOrderInOdoo(
-        context,
-        widget.customer,
-        finalProducts,
-        updatedQuantities,
-        _productAttributes,
-        _orderNotes,
-        _selectedPaymentMethod,
-      );
-    } finally {
-      setState(() {
-        _isLoading = false;
-      });
-    }
+        ),
+      ),
+    );
   }
 }
 
+// The following components are copied directly from CreateOrderPage
+
+Future<List<Map<String, dynamic>>?> showAttributeSelectionDialog(
+    BuildContext context, Product product,
+    {int? requestedQuantity,
+    List<Map<String, dynamic>>? existingCombinations}) async {
+  if (product.attributes == null || product.attributes!.isEmpty) {
+    return null;
+  }
+
+  List<Map<String, dynamic>> selectedCombinations =
+      existingCombinations != null ? List.from(existingCombinations) : [];
+
+  return await showDialog<List<Map<String, dynamic>>?>(
+    context: context,
+    barrierDismissible: false,
+    builder: (context) {
+      return StatefulBuilder(
+        builder: (context, setState) {
+          int totalQuantity = selectedCombinations.fold<int>(
+              0, (sum, combo) => sum + (combo['quantity'] as int));
+          bool isQuantityValid =
+              requestedQuantity == null || totalQuantity == requestedQuantity;
+
+          return AlertDialog(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+            title: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Expanded(
+                  child: Text(
+                    'Variants for ${product.name}',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: primaryColor,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                IconButton(
+                  icon: Icon(Icons.close, color: Colors.grey[600]),
+                  onPressed: () {
+                    Navigator.pop(
+                        context,
+                        selectedCombinations.isEmpty
+                            ? null
+                            : selectedCombinations);
+                  },
+                ),
+              ],
+            ),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (selectedCombinations.isNotEmpty) ...[
+                    Text(
+                      'Selected Combinations',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.grey[700],
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Container(
+                      constraints: BoxConstraints(
+                        maxHeight: 150,
+                        minWidth: double.infinity,
+                      ),
+                      decoration: BoxDecoration(
+                        border: Border.all(color: Colors.grey[300]!),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: SingleChildScrollView(
+                        child: Column(
+                          children: selectedCombinations.map((combo) {
+                            final attrs =
+                                combo['attributes'] as Map<String, String>;
+                            final qty = combo['quantity'] as int;
+                            double extraCost = 0;
+                            for (var attr in product.attributes!) {
+                              final value = attrs[attr.name];
+                              if (value != null && attr.extraCost != null) {
+                                extraCost += attr.extraCost![value] ?? 0;
+                              }
+                            }
+                            final totalCost = (product.price + extraCost) * qty;
+                            return Padding(
+                              padding: const EdgeInsets.symmetric(
+                                  vertical: 8, horizontal: 12),
+                              child: Row(
+                                children: [
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          attrs.entries
+                                              .map(
+                                                  (e) => '${e.key}: ${e.value}')
+                                              .join(', '),
+                                          style: const TextStyle(fontSize: 14),
+                                        ),
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          'Qty: $qty | Extra: \$${extraCost.toStringAsFixed(2)} | Total: \$${totalCost.toStringAsFixed(2)}',
+                                          style: TextStyle(
+                                            fontSize: 12,
+                                            color: Colors.grey[600],
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  IconButton(
+                                    icon: const Icon(Icons.delete,
+                                        color: Colors.redAccent),
+                                    onPressed: () {
+                                      setState(() {
+                                        selectedCombinations.remove(combo);
+                                        totalQuantity =
+                                            selectedCombinations.fold<int>(
+                                                0,
+                                                (sum, combo) =>
+                                                    sum +
+                                                    (combo['quantity'] as int));
+                                        isQuantityValid = requestedQuantity ==
+                                                null ||
+                                            totalQuantity == requestedQuantity;
+                                      });
+                                    },
+                                  ),
+                                ],
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    const Divider(),
+                  ],
+                  if (requestedQuantity != null)
+                    Text(
+                      'Total Quantity Required: $requestedQuantity (Current: $totalQuantity)',
+                      style: TextStyle(
+                        fontSize: 14,
+                        color:
+                            isQuantityValid ? Colors.green : Colors.redAccent,
+                      ),
+                    ),
+                  AttributeCombinationForm(
+                    product: product,
+                    onAdd: (attributes, quantity) {
+                      setState(() {
+                        selectedCombinations.add({
+                          'attributes': attributes,
+                          'quantity': quantity,
+                        });
+                        totalQuantity = selectedCombinations.fold<int>(0,
+                            (sum, combo) => sum + (combo['quantity'] as int));
+                        isQuantityValid = requestedQuantity == null ||
+                            totalQuantity == requestedQuantity;
+                      });
+                    },
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  Navigator.pop(
+                      context,
+                      selectedCombinations.isEmpty
+                          ? null
+                          : selectedCombinations);
+                },
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: selectedCombinations.isNotEmpty && isQuantityValid
+                    ? () {
+                        Navigator.pop(context, selectedCombinations);
+                      }
+                    : null,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: primaryColor,
+                  foregroundColor: Colors.white,
+                ),
+                child: const Text('Confirm'),
+              ),
+            ],
+          );
+        },
+      );
+    },
+  );
+}
+
+class AttributeCombinationForm extends StatefulWidget {
+  final Product product;
+  final Function(Map<String, String>, int) onAdd;
+
+  const AttributeCombinationForm({
+    required this.product,
+    required this.onAdd,
+  });
+
+  @override
+  AttributeCombinationFormState createState() =>
+      AttributeCombinationFormState();
+}
+
+class AttributeCombinationFormState extends State<AttributeCombinationForm> {
+  Map<String, String> selectedAttributes = {};
+  final TextEditingController quantityController =
+      TextEditingController(text: '1');
+  final currencyFormat = NumberFormat.currency(symbol: '\$');
+
+  double calculateExtraCost() {
+    double extraCost = 0;
+    for (var attr in widget.product.attributes!) {
+      final value = selectedAttributes[attr.name];
+      if (value != null && attr.extraCost != null) {
+        extraCost += attr.extraCost![value] ?? 0;
+      }
+    }
+    return extraCost;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final extraCost = calculateExtraCost();
+    final basePrice = widget.product.price;
+    final qty = int.tryParse(quantityController.text) ?? 0;
+    final totalCost = (basePrice + extraCost) * qty;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Add New Variant',
+          style: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+            color: Colors.grey[700],
+          ),
+        ),
+        const SizedBox(height: 12),
+        ...widget.product.attributes!.map((attribute) {
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 8.0),
+            child: DropdownButtonFormField<String>(
+              value: selectedAttributes[attribute.name],
+              decoration: InputDecoration(
+                labelText: attribute.name,
+                labelStyle: TextStyle(color: Colors.grey[600]),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: BorderSide(color: Colors.grey[300]!),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: BorderSide(color: Colors.grey[300]!),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: const BorderSide(color: primaryColor, width: 2),
+                ),
+                filled: true,
+                fillColor: Colors.grey[50],
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              ),
+              items: attribute.values.map((value) {
+                final extra = attribute.extraCost?[value] ?? 0;
+                return DropdownMenuItem<String>(
+                  value: value,
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(value),
+                      if (extra > 0)
+                        Text(
+                          '+\$${extra.toStringAsFixed(2)}',
+                          style: const TextStyle(
+                              color: Colors.redAccent, fontSize: 12),
+                        ),
+                    ],
+                  ),
+                );
+              }).toList(),
+              onChanged: (value) {
+                setState(() {
+                  if (value != null) {
+                    selectedAttributes[attribute.name] = value;
+                  }
+                });
+              },
+            ),
+          );
+        }).toList(),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: quantityController,
+                keyboardType: TextInputType.number,
+                decoration: InputDecoration(
+                  labelText: 'Quantity',
+                  labelStyle: TextStyle(color: Colors.grey[600]),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    borderSide: BorderSide(color: Colors.grey[300]!),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    borderSide: BorderSide(color: Colors.grey[300]!),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    borderSide: const BorderSide(color: primaryColor, width: 2),
+                  ),
+                  filled: true,
+                  fillColor: Colors.grey[50],
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                ),
+                onChanged: (value) => setState(() {}),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(
+                  'Extra: ${currencyFormat.format(extraCost)}',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: extraCost > 0 ? Colors.redAccent : Colors.grey[600],
+                  ),
+                ),
+                Text(
+                  'Total: ${currencyFormat.format(totalCost)}',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                    color: primaryColor,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Align(
+          alignment: Alignment.centerRight,
+          child: ElevatedButton.icon(
+            onPressed: selectedAttributes.length ==
+                        widget.product.attributes!.length &&
+                    qty > 0
+                ? () {
+                    widget.onAdd(Map.from(selectedAttributes), qty);
+                    setState(() {
+                      selectedAttributes.clear();
+                      quantityController.text = '1';
+                    });
+                  }
+                : null,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: primaryColor,
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+            icon: const Icon(Icons.add, size: 18),
+            label: const Text('Add Variant', style: TextStyle(fontSize: 14)),
+          ),
+        ),
+      ],
+    );
+  }
+}
 
 Widget _buildProductSelector(
     BuildContext context,
@@ -578,13 +1264,11 @@ Widget _buildProductSelector(
                     ),
                     child: Row(
                       children: [
-                        // Left column with product info
                         Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              // Product name and price in a row
                               Row(
                                 children: [
                                   Expanded(
@@ -614,8 +1298,6 @@ Widget _buildProductSelector(
                                   ),
                                 ],
                               ),
-
-                              // Code and attributes in one row
                               if (product.defaultCode != null ||
                                   (product.attributes != null &&
                                       product.attributes!.isNotEmpty))
@@ -660,8 +1342,6 @@ Widget _buildProductSelector(
                             ],
                           ),
                         ),
-
-                        // Right side with selection indicator
                         Container(
                           margin: const EdgeInsets.only(left: 8),
                           width: 16,
@@ -747,7 +1427,6 @@ Widget _buildSelectedProductsList(
     Map<String, int> quantities,
     Map<String, List<Map<String, dynamic>>> productAttributes,
     double totalAmount) {
-  // Recalculate totalAmount to ensure accuracy
   double recalculatedTotal = 0;
   for (var product in selectedProducts) {
     final combinations = productAttributes[product.id] ?? [];
@@ -853,7 +1532,6 @@ Widget _buildOrderProductItem(
   final totalQuantity = quantities[product.id] ?? 0;
   double productTotal = 0;
 
-  // Calculate total cost for this product
   if (combinations.isNotEmpty) {
     for (var combo in combinations) {
       final qty = combo['quantity'] as int;
@@ -948,10 +1626,7 @@ Widget _buildOrderProductItem(
                                   color: Colors.red[400], size: 16),
                               onPressed: () {
                                 setSheetState(() {
-                                  // Remove the specific combination
                                   combinations.remove(combo);
-
-                                  // Update productAttributes
                                   if (combinations.isEmpty) {
                                     productAttributes.remove(product.id);
                                     selectedProducts.remove(product);
@@ -959,7 +1634,6 @@ Widget _buildOrderProductItem(
                                   } else {
                                     productAttributes[product.id] =
                                         combinations;
-                                    // Update total quantity
                                     quantities[product.id] =
                                         combinations.fold<int>(
                                             0,
@@ -967,8 +1641,6 @@ Widget _buildOrderProductItem(
                                                 sum +
                                                 (comb['quantity'] as int));
                                   }
-
-                                  // Recalculate totalAmount by subtracting the cost of the deleted combination
                                   totalAmount -=
                                       (product.price + extraCost) * qty;
                                 });
@@ -992,7 +1664,6 @@ Widget _buildOrderProductItem(
                           if (newCombinations != null &&
                               newCombinations.isNotEmpty) {
                             setSheetState(() {
-                              // Recalculate previous total for this product
                               double prevTotal = 0;
                               final prevCombinations =
                                   productAttributes[product.id] ?? [];
@@ -1010,7 +1681,6 @@ Widget _buildOrderProductItem(
                                 prevTotal += (product.price + extraCost) * qty;
                               }
 
-                              // Update attributes and quantities
                               productAttributes[product.id] = newCombinations;
                               quantities[product.id] =
                                   newCombinations.fold<int>(
@@ -1018,7 +1688,6 @@ Widget _buildOrderProductItem(
                                       (sum, comb) =>
                                           sum + (comb['quantity'] as int));
 
-                              // Recalculate new total for this product
                               double newTotal = 0;
                               for (var combo in newCombinations) {
                                 final qty = combo['quantity'] as int;
@@ -1034,7 +1703,6 @@ Widget _buildOrderProductItem(
                                 newTotal += (product.price + extraCost) * qty;
                               }
 
-                              // Adjust totalAmount
                               totalAmount = totalAmount - prevTotal + newTotal;
                             });
                           }
@@ -1053,7 +1721,6 @@ Widget _buildOrderProductItem(
                 ],
               ),
             ),
-            // Quantity controls (only for products without attributes)
             if (combinations.isEmpty)
               Container(
                 decoration: BoxDecoration(
@@ -1127,116 +1794,6 @@ Widget _buildOrderProductItem(
               ),
             ),
           ),
-      ],
-    ),
-  );
-}
-
-Widget buildPaymentMethodSelector(StateSetter setSheetState) {
-  final List<Map<String, dynamic>> paymentMethods = [
-    {'name': 'Invoice', 'icon': Icons.receipt_long, 'enabled': true},
-    {'name': 'Cash', 'icon': Icons.money, 'enabled': true},
-    {'name': 'Credit Card', 'icon': Icons.credit_card, 'enabled': false},
-    {'name': 'UPI Payment', 'icon': Icons.payment, 'enabled': false},
-  ];
-
-  return Container(
-    padding: const EdgeInsets.all(16),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        const Text(
-          'Select Payment Method',
-          style: TextStyle(
-            fontSize: 18,
-            fontWeight: FontWeight.bold,
-            color: Colors.black87,
-          ),
-        ),
-        const SizedBox(height: 16),
-        GridView.builder(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: 3,
-            crossAxisSpacing: 12,
-            mainAxisSpacing: 12,
-            childAspectRatio: 1.2,
-          ),
-          itemCount: paymentMethods.length,
-          itemBuilder: (context, index) {
-            final method = paymentMethods[index];
-            final isSelected = _selectedPaymentMethod == method['name'];
-            final isDisabled = !method['enabled'];
-
-            return GestureDetector(
-              onTap: isDisabled
-                  ? null
-                  : () {
-                      setSheetState(() {
-                        _selectedPaymentMethod = method['name'];
-                      });
-                    },
-              child: Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: isDisabled
-                      ? Colors.grey[200]
-                      : isSelected
-                          ? Theme.of(context).primaryColor.withOpacity(0.1)
-                          : Colors.white,
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(
-                    color: isDisabled
-                        ? Colors.grey[400]!
-                        : isSelected
-                            ? Theme.of(context).primaryColor
-                            : Colors.grey[300]!,
-                    width: isSelected ? 2 : 1,
-                  ),
-                ),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(
-                      method['icon'],
-                      color: isDisabled
-                          ? Colors.grey[500]
-                          : isSelected
-                              ? Theme.of(context).primaryColor
-                              : Colors.grey[600],
-                      size: 28,
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      method['name'],
-                      style: TextStyle(
-                        color: isDisabled
-                            ? Colors.grey[500]
-                            : isSelected
-                                ? Theme.of(context).primaryColor
-                                : Colors.grey[700],
-                        fontWeight:
-                            isSelected ? FontWeight.bold : FontWeight.normal,
-                        fontSize: 11,
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                    if (isDisabled)
-                      Text(
-                        '(Coming Soon)',
-                        style: TextStyle(
-                          color: Colors.grey[500],
-                          fontSize: 8,
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-            );
-          },
-        ),
       ],
     ),
   );
