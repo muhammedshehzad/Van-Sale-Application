@@ -83,7 +83,128 @@ class SaleOrderDetailProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> fetchOrderDetails() async {
+  Future<void> cancelSaleOrder(int orderId) async {
+    try {
+      _isLoading = true;
+      notifyListeners();
+
+      final client = await SessionManager.getActiveClient();
+      if (client == null) {
+        throw Exception('No active Odoo session found. Please log in again.');
+      }
+
+      // Check current state of the sale order
+      final orderState = await client.callKw({
+        'model': 'sale.order',
+        'method': 'search_read',
+        'args': [
+          [
+            ['id', '=', orderId]
+          ],
+          ['state', 'picking_ids', 'invoice_ids'],
+        ],
+        'kwargs': {},
+      });
+
+      if (orderState.isEmpty) {
+        throw Exception('Sale order not found for ID: $orderId');
+      }
+
+      final currentState = orderState[0]['state'] as String;
+      final pickingIds = orderState[0]['picking_ids'] as List? ?? [];
+      final invoiceIds = orderState[0]['invoice_ids'] as List? ?? [];
+
+      if (currentState == 'cancel') {
+        throw Exception('Sale order is already cancelled.');
+      }
+      if (currentState == 'done') {
+        throw Exception('Cannot cancel a locked sale order.');
+      }
+      if (!['draft', 'sent', 'sale'].contains(currentState)) {
+        throw Exception('Sale order cannot be cancelled in its current state ($currentState).');
+      }
+
+      // Check for dependencies
+      if (pickingIds.isNotEmpty) {
+        final pickings = await client.callKw({
+          'model': 'stock.picking',
+          'method': 'search_read',
+          'args': [
+            [
+              ['id', 'in', pickingIds]
+            ],
+            ['state'],
+          ],
+          'kwargs': {},
+        });
+
+        if (pickings.any((picking) => picking['state'] != 'cancel' && picking['state'] != 'done')) {
+          throw Exception('Cannot cancel order: There are unprocessed deliveries.');
+        }
+      }
+
+      if (invoiceIds.isNotEmpty) {
+        final invoices = await client.callKw({
+          'model': 'account.move',
+          'method': 'search_read',
+          'args': [
+            [
+              ['id', 'in', invoiceIds]
+            ],
+            ['state'],
+          ],
+          'kwargs': {},
+        });
+
+        if (invoices.any((invoice) => invoice['state'] != 'cancel')) {
+          throw Exception('Cannot cancel order: There are unprocessed invoices.');
+        }
+      }
+
+      // Attempt to cancel the sale order
+      final cancelResult = await client.callKw({
+        'model': 'sale.order',
+        'method': 'action_cancel',
+        'args': [
+          [orderId]
+        ],
+        'kwargs': {},
+      });
+
+      // Verify the state after cancellation
+      final updatedOrderState = await client.callKw({
+        'model': 'sale.order',
+        'method': 'search_read',
+        'args': [
+          [
+            ['id', '=', orderId]
+          ],
+          ['state'],
+        ],
+        'kwargs': {},
+      });
+
+      if (updatedOrderState.isEmpty) {
+        throw Exception('Failed to retrieve order state after cancellation.');
+      }
+
+      final newState = updatedOrderState[0]['state'] as String;
+      if (newState != 'cancel') {
+        throw Exception('Failed to cancel the sale order. Current state: $newState');
+      }
+
+      // Refresh order details
+      await fetchOrderDetails();
+    } catch (e) {
+      debugPrint('Error cancelling sale order: $e');
+      _error = 'Failed to cancel sale order: $e';
+      notifyListeners();
+      throw Exception('Failed to cancel sale order: $e');
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }  Future<void> fetchOrderDetails() async {
     _isLoading = true;
     _error = null;
     notifyListeners();
@@ -557,12 +678,12 @@ class SaleOrderDetailProvider extends ChangeNotifier {
   }
 
   Future<void> confirmPicking(
-    int pickingId,
-    Map<int, double> pickedQuantities,
-    Map<int, String?> lotSerialNumbers, // Add lot/serial numbers parameter
-    bool validateImmediately, {
-    bool createBackorder = false,
-  }) async {
+      int pickingId,
+      Map<int, double> pickedQuantities,
+      Map<int, String?> lotSerialNumbers,
+      bool validateImmediately, {
+        bool createBackorder = false,
+      }) async {
     final client = await SessionManager.getActiveClient();
     if (client == null) {
       throw Exception('No active Odoo session found.');
@@ -571,6 +692,7 @@ class SaleOrderDetailProvider extends ChangeNotifier {
     try {
       const doneField = 'quantity';
 
+      // Fetch picking state
       final pickingStateResult = await client.callKw({
         'model': 'stock.picking',
         'method': 'search_read',
@@ -585,6 +707,14 @@ class SaleOrderDetailProvider extends ChangeNotifier {
       final currentState = pickingStateResult[0]['state'] as String;
       debugPrint('Current picking state: $currentState');
 
+      if (currentState == 'done') {
+        throw Exception('Picking is already completed.');
+      }
+      if (currentState == 'cancel') {
+        throw Exception('Picking is cancelled and cannot be modified.');
+      }
+
+      // Fetch stock move lines
       final moveLines = await client.callKw({
         'model': 'stock.move.line',
         'method': 'search_read',
@@ -601,10 +731,11 @@ class SaleOrderDetailProvider extends ChangeNotifier {
         throw Exception('No move lines found for picking $pickingId');
       }
 
+      // Fetch stock moves to get ordered quantities
       final moveIds = moveLines
           .map((line) => line['move_id'] is List
-              ? (line['move_id'] as List)[0] as int
-              : line['move_id'] as int)
+          ? (line['move_id'] as List)[0] as int
+          : line['move_id'] as int)
           .toList();
       final moveResult = await client.callKw({
         'model': 'stock.move',
@@ -622,16 +753,17 @@ class SaleOrderDetailProvider extends ChangeNotifier {
           move['id'] as int: move['product_uom_qty'] as double
       };
 
+      // Check if all products are fully picked
       bool isFullyPicked = true;
       for (var moveLine in moveLines) {
-        int productId = (moveLine['product_id'] as List)[0] as int;
-        double pickedQty = pickedQuantities[productId] ?? 0.0;
+        final productId = (moveLine['product_id'] as List)[0] as int;
+        final pickedQty = pickedQuantities[productId] ?? 0.0;
         final moveId = moveLine['move_id'] is List
             ? (moveLine['move_id'] as List)[0] as int
             : moveLine['move_id'] as int;
-        double orderedQty = moveQtyMap[moveId] ?? 0.0;
+        final orderedQty = moveQtyMap[moveId] ?? 0.0;
 
-        if (pickedQty != orderedQty) {
+        if (pickedQty < orderedQty) {
           isFullyPicked = false;
         }
 
@@ -640,7 +772,7 @@ class SaleOrderDetailProvider extends ChangeNotifier {
               'Picked quantity ($pickedQty) for product $productId exceeds ordered quantity ($orderedQty).');
         }
 
-        // Write quantity and lot/serial number to stock.move.line
+        // Write picked quantity and lot/serial number to stock.move.line
         final writeData = {
           doneField: pickedQty,
           if (lotSerialNumbers[productId] != null)
@@ -657,53 +789,72 @@ class SaleOrderDetailProvider extends ChangeNotifier {
         });
       }
 
-      if (currentState == 'done') {
-        throw Exception('Picking is already completed.');
-      }
-
-      if (validateImmediately) {
-        final validationResult = await client.callKw({
-          'model': 'stock.picking',
-          'method': 'button_validate',
-          'args': [
-            [pickingId],
-          ],
-          'kwargs': {
-            'context': {'create_backorder': createBackorder},
-          },
-        });
-
-        if (validationResult is Map &&
-            validationResult['type'] == 'ir.actions.act_window') {
-          final context = validationResult['context'] as Map<String, dynamic>;
-          final wizardId = await client.callKw({
-            'model': 'stock.backorder.confirmation',
-            'method': 'create',
-            'args': [{}],
-            'kwargs': {'context': context},
-          });
-
+      // If not validating immediately, just reserve the quantities
+      if (!validateImmediately) {
+        if (currentState != 'assigned') {
           await client.callKw({
-            'model': 'stock.backorder.confirmation',
-            'method': createBackorder ? 'process' : 'process_cancel_backorder',
-            'args': [wizardId],
+            'model': 'stock.picking',
+            'method': 'action_assign',
+            'args': [
+              [pickingId],
+            ],
             'kwargs': {},
           });
-        } else if (validationResult is Map &&
-            validationResult.containsKey('warning')) {
-          throw Exception('Validation warning: ${validationResult['warning']}');
-        } else if (validationResult is bool && !validationResult) {
-          throw Exception('Validation failed for picking $pickingId');
         }
+        notifyListeners();
+        return;
       }
 
+      // If validating, check if fully picked
+      if (!isFullyPicked && !createBackorder) {
+        throw Exception(
+            'Cannot validate: Not all products are fully picked. Please pick all quantities or create a backorder.');
+      }
+
+      // Validate the picking
+      final validationResult = await client.callKw({
+        'model': 'stock.picking',
+        'method': 'button_validate',
+        'args': [
+          [pickingId],
+        ],
+        'kwargs': {
+          'context': {'create_backorder': createBackorder},
+        },
+      });
+
+      // Handle backorder wizard if necessary
+      if (validationResult is Map &&
+          validationResult['type'] == 'ir.actions.act_window') {
+        final context = validationResult['context'] as Map<String, dynamic>;
+        final wizardId = await client.callKw({
+          'model': 'stock.backorder.confirmation',
+          'method': 'create',
+          'args': [{}],
+          'kwargs': {'context': context},
+        });
+
+        await client.callKw({
+          'model': 'stock.backorder.confirmation',
+          'method': createBackorder ? 'process' : 'process_cancel_backorder',
+          'args': [wizardId],
+          'kwargs': {},
+        });
+      } else if (validationResult is Map &&
+          validationResult.containsKey('warning')) {
+        throw Exception('Validation warning: ${validationResult['warning']}');
+      } else if (validationResult is bool && !validationResult) {
+        throw Exception('Validation failed for picking $pickingId');
+      }
+
+      // Refresh order details after validation
+      await fetchOrderDetails();
       notifyListeners();
     } catch (e) {
+      debugPrint('Error confirming picking: $e');
       throw Exception('Failed to confirm picking: $e');
     }
-  }
-
-  Future<Map<int, double>> fetchStockAvailability(
+  }  Future<Map<int, double>> fetchStockAvailability(
       List<Map<String, dynamic>> products, int warehouseId) async {
     final client = await SessionManager.getActiveClient();
     if (client == null) return {};

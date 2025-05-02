@@ -51,6 +51,7 @@ class Product {
   final double? volume;
   final String? dimensions;
   final double? cost;
+  final int variantCount;
   final List<ProductAttribute>? attributes;
   final List<dynamic>? taxesIds;
   final List<dynamic>? sellerIds;
@@ -70,6 +71,7 @@ class Product {
     required this.name,
     required this.price,
     required this.vanInventory,
+    required this.variantCount,
     this.imageUrl,
     this.defaultCode,
     this.barcode,
@@ -95,11 +97,24 @@ class Product {
     this.quantity,
   });
 
+  factory Product.fromJson(Map<String, dynamic> json) {
+    return Product(
+      id: json['id'].toString(),
+      name: json['name'],
+      defaultCode: json['default_code'] is String ? json['default_code'] : '',
+      price: (json['list_price'] as num?)?.toDouble() ?? 0.0,
+      imageUrl: json['image_1920'] is String ? json['image_1920'] : null,
+      variantCount: json['product_variant_count'] ?? 0,
+      categId: json['categ_id'],
+      vanInventory: (json['qty_available'] as num?)?.toInt() ?? 0,
+    );
+  }
+
   String get category {
     if (categId is List && categId.length == 2 && categId[1] is String) {
       return categId[1];
     }
-    return 'Miscellaneous';
+    return 'Uncategorized';
   }
 
   bool filter(String query) {
@@ -113,6 +128,7 @@ class Product {
   String toString() => name;
 }
 
+
 class ProductAttribute {
   final String name;
   final List<String> values;
@@ -124,6 +140,7 @@ class ProductAttribute {
     this.extraCost,
   });
 }
+
 class Customer {
   final String id;
   final String name;
@@ -550,6 +567,12 @@ class SalesOrderProvider with ChangeNotifier {
       _currentStep = step;
       notifyListeners();
     }
+  }
+
+  double getTotalSalesAmount() {
+    return todaysOrders.fold(0.0, (sum, order) {
+      return sum + (order['amount_total'] as num?)!.toDouble() ?? 0.0;
+    });
   }
 
   Future<void> fetchTodaysOrders() async {
@@ -1478,7 +1501,7 @@ class SalesOrderProvider with ChangeNotifier {
               productData['property_stock_production'] ?? false,
           propertyStockInventory:
               productData['property_stock_inventory'] ?? false,
-          attributes: attributes.isNotEmpty ? attributes : null,
+          attributes: attributes.isNotEmpty ? attributes : null, variantCount: productData['product_variant_count'] as int? ?? 0,
         );
       }).toList();
 

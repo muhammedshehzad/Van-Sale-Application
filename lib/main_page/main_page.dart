@@ -19,6 +19,7 @@ import '../secondary_pages/1/products.dart';
 import '../secondary_pages/1/sale_orders.dart';
 import '../secondary_pages/add_products_page.dart';
 import '../assets/widgets and consts/order_utils.dart';
+import '../secondary_pages/pending_deliveries.dart';
 import '../secondary_pages/todays_sales_page.dart';
 
 const Color secondaryColor = Color(0xFFD32F2F); // Red accent
@@ -180,7 +181,6 @@ class _MainPageState extends State<MainPage> with TickerProviderStateMixin {
     }
 
     return [
-
       const Padding(
         padding: EdgeInsets.only(right: 4.0),
         child: LogoutButton(),
@@ -388,6 +388,22 @@ class _MainPageState extends State<MainPage> with TickerProviderStateMixin {
               // Management Section
               _buildSectionHeader("Management"),
               ListTile(
+                leading: const Icon(Icons.delivery_dining),
+                title: const Text('Deliveries'),
+                selectedTileColor: primaryColor.withOpacity(0.1),
+                selectedColor: primaryColor,
+                onTap: () {
+                  Navigator.pop(context);
+
+                  Navigator.push(
+                      context,
+                      SlidingPageTransitionRL(
+                          page: PendingDeliveriesPage(
+                        showPendingOnly: false,
+                      )));
+                },
+              ),
+              ListTile(
                 leading: const Icon(Icons.bar_chart),
                 title: const Text('Reports & Analytics'),
                 selectedTileColor: primaryColor.withOpacity(0.1),
@@ -536,7 +552,11 @@ class _MainPageState extends State<MainPage> with TickerProviderStateMixin {
         onCustomerSelected: (Customer selectedCustomer) {
           Navigator.pop(context);
           // Then show the order creation sheet with the selected customer
-Navigator.push(context, SlidingPageTransitionRL(page: CreateOrderPage(customer: selectedCustomer)));        },
+          Navigator.push(
+              context,
+              SlidingPageTransitionRL(
+                  page: CreateOrderPage(customer: selectedCustomer)));
+        },
       ),
     );
   } // Handle FAB press based on selected index

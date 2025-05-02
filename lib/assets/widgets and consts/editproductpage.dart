@@ -2,10 +2,11 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:latest_van_sale_application/providers/order_picking_provider.dart';
 import 'package:odoo_rpc/odoo_rpc.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:developer' as developer;
-
+import 'package:collection/collection.dart';
 import '../../authentication/cyllo_session_model.dart';
 
 class EditProductPage extends StatefulWidget {
@@ -45,8 +46,9 @@ class _EditProductPageState extends State<EditProductPage> {
   List<Map<String, dynamic>> _incomeAccounts = [];
   int? _selectedExpenseAccountId;
   List<Map<String, dynamic>> _expenseAccounts = [];
+  List<Map<String, dynamic>> _variants = [];
 
-  // Attributes
+  // Attributes with IDs for better tracking
   List<Map<String, dynamic>> _attributes = [];
 
   @override
@@ -126,6 +128,7 @@ class _EditProductPageState extends State<EditProductPage> {
   Future<void> _loadProductData() async {
     setState(() => _isLoading = true);
     try {
+      // Fetch the main product (variant) data
       final productResult = await _odooClient.callKw({
         'model': 'product.product',
         'method': 'search_read',
@@ -159,7 +162,27 @@ class _EditProductPageState extends State<EditProductPage> {
         final productData = productResult[0];
         final templateId = productData['product_tmpl_id'][0] as int;
 
-        // Load attributes
+        // Fetch all variants for this product template
+        final variantResult = await _odooClient.callKw({
+          'model': 'product.product',
+          'method': 'search_read',
+          'args': [
+            [
+              ['product_tmpl_id', '=', templateId]
+            ]
+          ],
+          'kwargs': {
+            'fields': [
+              'id',
+              'name',
+              'qty_available',
+              'list_price',
+              'product_template_attribute_value_ids',
+            ],
+          },
+        });
+
+        // Fetch attribute lines for the product template
         final attributeLineResult = await _odooClient.callKw({
           'model': 'product.template.attribute.line',
           'method': 'search_read',
@@ -169,13 +192,14 @@ class _EditProductPageState extends State<EditProductPage> {
             ]
           ],
           'kwargs': {
-            'fields': ['attribute_id', 'value_ids'],
+            'fields': ['attribute_id', 'value_ids', 'id'],
           },
         });
 
         List<Map<String, dynamic>> attributes = [];
         for (var attrLine in attributeLineResult) {
           final attributeId = attrLine['attribute_id'][0] as int;
+          final attributeLineId = attrLine['id'] as int;
           final attributeNameResult = await _odooClient.callKw({
             'model': 'product.attribute',
             'method': 'read',
@@ -186,22 +210,87 @@ class _EditProductPageState extends State<EditProductPage> {
               'fields': ['name']
             },
           });
+
           final valueIds = attrLine['value_ids'] as List;
           final valueResult = await _odooClient.callKw({
             'model': 'product.attribute.value',
             'method': 'read',
             'args': [valueIds],
             'kwargs': {
-              'fields': ['name']
+              'fields': ['id', 'name'],
             },
           });
+
           attributes.add({
+            'attribute_line_id': attributeLineId,
+            'attribute_id': attributeId,
             'name': attributeNameResult[0]['name'],
-            'values': valueResult.map((v) => v['name'] as String).toList(),
+            'values': valueResult
+                .map((v) => {
+                      'id': v['id'],
+                      'name': v['name'] as String,
+                    })
+                .toList(),
           });
         }
 
-        // Load product image if available
+        // Fetch attribute value details for variants
+        List<Map<String, dynamic>> variants = [];
+        for (var variant in variantResult) {
+          final attributeValueIds =
+              variant['product_template_attribute_value_ids'] as List;
+          final attributeValueResult = await _odooClient.callKw({
+            'model': 'product.template.attribute.value',
+            'method': 'read',
+            'args': [attributeValueIds],
+            'kwargs': {
+              'fields': ['product_attribute_value_id', 'attribute_id'],
+            },
+          });
+
+          List<Map<String, dynamic>> variantAttributes = [];
+          for (var attrValue in attributeValueResult) {
+            final valueId = attrValue['product_attribute_value_id'][0] as int;
+            final attributeId = attrValue['attribute_id'][0] as int;
+
+            final valueData = await _odooClient.callKw({
+              'model': 'product.attribute.value',
+              'method': 'read',
+              'args': [
+                [valueId]
+              ],
+              'kwargs': {
+                'fields': ['name'],
+              },
+            });
+
+            final attributeData = await _odooClient.callKw({
+              'model': 'product.attribute',
+              'method': 'read',
+              'args': [
+                [attributeId]
+              ],
+              'kwargs': {
+                'fields': ['name'],
+              },
+            });
+
+            variantAttributes.add({
+              'attribute_name': attributeData[0]['name'],
+              'value_name': valueData[0]['name'],
+            });
+          }
+
+          variants.add({
+            'id': variant['id'],
+            'name': variant['name'],
+            'qty_available': variant['qty_available']?.toInt() ?? 0,
+            'list_price': variant['list_price']?.toDouble() ?? 0.0,
+            'attributes': variantAttributes,
+          });
+        }
+
+        // Load product image
         File? tempImage;
         if (productData['image_1920'] != null &&
             productData['image_1920'] != false) {
@@ -219,6 +308,7 @@ class _EditProductPageState extends State<EditProductPage> {
 
         setState(() {
           _productData = productData;
+          _variants = variants;
           _nameController.text = _productData['name'] ?? '';
           _defaultCodeController.text = _productData['default_code'] is String
               ? _productData['default_code']
@@ -287,6 +377,7 @@ class _EditProductPageState extends State<EditProductPage> {
 
     setState(() => _isSaving = true);
     try {
+      // Save product template data
       final productData = {
         'name': _nameController.text,
         'default_code': _defaultCodeController.text,
@@ -302,10 +393,9 @@ class _EditProductPageState extends State<EditProductPage> {
         ],
         'property_account_income_id': _selectedIncomeAccountId,
         'property_account_expense_id': _selectedExpenseAccountId,
-        'qty_available': int.parse(_stockQuantityController.text),
       };
 
-      // Process the product image if available
+      // Process the product image
       if (_productImage != null) {
         try {
           final bytes = await _productImage!.readAsBytes();
@@ -319,6 +409,7 @@ class _EditProductPageState extends State<EditProductPage> {
         }
       }
 
+      // Update the main product
       await _odooClient.callKw({
         'model': 'product.product',
         'method': 'write',
@@ -329,8 +420,25 @@ class _EditProductPageState extends State<EditProductPage> {
         'kwargs': {},
       });
 
+      // Update variants
+      for (var variant in _variants) {
+        await _odooClient.callKw({
+          'model': 'product.product',
+          'method': 'write',
+          'args': [
+            [variant['id']],
+            {
+              'qty_available': variant['qty_available'],
+              'list_price': variant['list_price'],
+            }
+          ],
+          'kwargs': {},
+        });
+      }
+
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Product updated successfully')),
+        const SnackBar(
+            content: Text('Product and variants updated successfully')),
       );
       Navigator.pop(context);
     } catch (e) {
@@ -341,6 +449,95 @@ class _EditProductPageState extends State<EditProductPage> {
     } finally {
       setState(() => _isSaving = false);
     }
+  }
+
+  Future<void> _deleteAttribute(Map<String, dynamic> attribute) async {
+    final bool? confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Remove Attribute'),
+        content: Text(
+            'Are you sure you want to remove the attribute "${attribute['name']}" from this product?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('CANCEL'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('REMOVE', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    try {
+      // Delete the attribute line
+      await _odooClient.callKw({
+        'model': 'product.template.attribute.line',
+        'method': 'unlink',
+        'args': [
+          [attribute['attribute_line_id']]
+        ],
+        'kwargs': {},
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+            content:
+                Text('Attribute "${attribute['name']}" removed from product')),
+      );
+
+      await _loadProductData();
+    } catch (e) {
+      String errorMessage = 'Error removing attribute';
+      if (e.toString().contains('odoo.exceptions.UserError')) {
+        try {
+          final String fullError = e.toString();
+          final int messageStart = fullError.indexOf('message: ') + 9;
+          final int messageEnd = fullError.indexOf(', arguments:');
+          if (messageStart > 9 && messageEnd > messageStart) {
+            errorMessage = fullError.substring(messageStart, messageEnd);
+          }
+        } catch (_) {
+          errorMessage = 'Error removing attribute: $e';
+        }
+      } else {
+        errorMessage = 'Error removing attribute: $e';
+      }
+
+      developer.log("Error deleting attribute: $e");
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(errorMessage)),
+      );
+    }
+  }
+
+  void _showAttributeDialog([Map<String, dynamic>? attribute]) {
+    showDialog(
+      context: context,
+      builder: (dialogContext) => _AttributeDialog(
+        odooClient: _odooClient,
+        attribute: attribute,
+        productTemplateId: _productData['product_tmpl_id'][0],
+        onSave: _loadProductData,
+        isEditing: attribute != null,
+      ),
+    );
+  }
+
+  Future<List<String>> _fetchAttributeValueNames(List<dynamic> valueIds) async {
+    final valueResult = await _odooClient.callKw({
+      'model': 'product.attribute.value',
+      'method': 'read',
+      'args': [valueIds],
+      'kwargs': {
+        'fields': ['name'],
+      },
+    });
+    return valueResult.map<String>((v) => v['name'] as String).toList();
   }
 
   @override
@@ -574,15 +771,18 @@ class _EditProductPageState extends State<EditProductPage> {
                     Wrap(
                       spacing: 8,
                       children: _selectedTaxIds.map((taxId) {
-                        final tax = _taxes.firstWhere((t) => t['id'] == taxId);
-                        return Chip(
-                          label: Text(tax['name']),
-                          onDeleted: () {
-                            setState(() {
-                              _selectedTaxIds.remove(taxId);
-                            });
-                          },
-                        );
+                        final tax =
+                            _taxes.firstWhereOrNull((t) => t['id'] == taxId);
+                        return tax != null
+                            ? Chip(
+                                label: Text(tax['name']),
+                                onDeleted: () {
+                                  setState(() {
+                                    _selectedTaxIds.remove(taxId);
+                                  });
+                                },
+                              )
+                            : const SizedBox.shrink();
                       }).toList(),
                     ),
                     const SizedBox(height: 16),
@@ -640,8 +840,7 @@ class _EditProductPageState extends State<EditProductPage> {
                     ),
                     const SizedBox(height: 16),
 
-                    // Replace your existing attributes section with this
-// Attributes section
+                    // Attributes section
                     const Text(
                       'Attributes',
                       style:
@@ -697,30 +896,42 @@ class _EditProductPageState extends State<EditProductPage> {
                       ),
                       ..._attributes.map((attr) {
                         return Card(
-                          margin: const EdgeInsets.only(bottom: 8.0),
-                          elevation: 1,
+                          margin: const EdgeInsets.symmetric(vertical: 4.0),
+                          elevation: 0,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                            side: BorderSide(color: Colors.grey.shade200),
+                          ),
                           child: ListTile(
+                            dense: true,
+                            contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 4),
                             title: Text(
                               attr['name'],
-                              style:
-                                  const TextStyle(fontWeight: FontWeight.bold),
+                              style: const TextStyle(
+                                  fontSize: 16, fontWeight: FontWeight.w600),
                             ),
-                            subtitle:
-                                Text('Values: ${attr['values'].join(', ')}'),
+                            subtitle: Text(
+                              attr['values'].map((v) => v['name']).join(', '),
+                              style: TextStyle(
+                                  fontSize: 14, color: Colors.grey.shade600),
+                            ),
                             trailing: Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
                                 IconButton(
                                   icon: const Icon(Icons.edit,
-                                      color: Colors.blue),
+                                      size: 20, color: Colors.blueGrey),
                                   onPressed: () => _showAttributeDialog(attr),
-                                  tooltip: 'Edit Attribute',
+                                  padding: EdgeInsets.zero,
+                                  constraints: const BoxConstraints(),
                                 ),
                                 IconButton(
                                   icon: const Icon(Icons.delete,
-                                      color: Colors.red),
+                                      size: 20, color: primaryLightColor),
                                   onPressed: () => _deleteAttribute(attr),
-                                  tooltip: 'Delete Attribute',
+                                  padding: EdgeInsets.zero,
+                                  constraints: const BoxConstraints(),
                                 ),
                               ],
                             ),
@@ -730,7 +941,106 @@ class _EditProductPageState extends State<EditProductPage> {
                       const SizedBox(height: 8),
                     ],
                     const SizedBox(height: 16),
+// Add this in the Column of the Form widget in the build method
+                    // Add this in the Column of the Form widget in the build method
+                    // In the build method, variants section
+                    const SizedBox(height: 16),
+                    const Text(
+                      'Variants',
+                      style:
+                          TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 8),
+                    if (_variants.isEmpty)
+                      Center(
+                        child: Text(
+                          'No variants defined',
+                          style: TextStyle(color: Colors.grey[600]),
+                        ),
+                      )
+                    else
+                      ..._variants.map((variant) {
+                        final variantId = variant['id'];
+                        final variantAttributes =
+                            variant['attributes'] as List<Map<String, dynamic>>;
+                        final stockController = TextEditingController(
+                            text: variant['qty_available'].toString());
+                        final priceController = TextEditingController(
+                            text: variant['list_price'].toString());
 
+                        return Card(
+                          margin: const EdgeInsets.symmetric(vertical: 4.0),
+                          elevation: 0,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                            side: BorderSide(color: Colors.grey.shade200),
+                          ),
+                          child: Padding(
+                            padding: const EdgeInsets.all(8.0),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  variantAttributes
+                                      .map((attr) =>
+                                          '${attr['attribute_name']}: ${attr['value_name']}')
+                                      .join(', '),
+                                  style: const TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w600),
+                                ),
+                                const SizedBox(height: 8),
+                                TextFormField(
+                                  controller: stockController,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Stock Quantity',
+                                    border: OutlineInputBorder(),
+                                  ),
+                                  keyboardType:
+                                      const TextInputType.numberWithOptions(
+                                          decimal: false, signed: false),
+                                  validator: (value) {
+                                    if (value!.isEmpty)
+                                      return 'Please enter a stock quantity';
+                                    if (int.tryParse(value) == null ||
+                                        int.parse(value) < 0)
+                                      return 'Please enter a valid positive integer';
+                                    return null;
+                                  },
+                                  inputFormatters: [
+                                    FilteringTextInputFormatter.digitsOnly,
+                                  ],
+                                  onChanged: (value) {
+                                    variant['qty_available'] =
+                                        int.tryParse(value) ?? 0;
+                                  },
+                                ),
+                                const SizedBox(height: 8),
+                                TextFormField(
+                                  controller: priceController,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Sales Price',
+                                    border: OutlineInputBorder(),
+                                    prefixText: '\$ ',
+                                  ),
+                                  keyboardType: TextInputType.number,
+                                  validator: (value) {
+                                    if (value!.isEmpty)
+                                      return 'Please enter a sales price';
+                                    if (double.tryParse(value) == null)
+                                      return 'Invalid number';
+                                    return null;
+                                  },
+                                  onChanged: (value) {
+                                    variant['list_price'] =
+                                        double.tryParse(value) ?? 0.0;
+                                  },
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      }).toList(),
                     // Save Button
                     SizedBox(
                       width: double.infinity,
@@ -762,138 +1072,138 @@ class _EditProductPageState extends State<EditProductPage> {
             ),
     );
   }
+}
 
-  // Add this method to handle attribute deletion
-  Future<void> _deleteAttribute(Map<String, dynamic> attribute) async {
-    // Show confirmation dialog
-    final bool? confirm = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Remove Attribute'),
-        content: Text(
-            'Are you sure you want to remove the attribute "${attribute['name']}" from this product?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('CANCEL'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('REMOVE', style: TextStyle(color: Colors.red)),
-          ),
-        ],
+class AttributeCard extends StatelessWidget {
+  final Map<String, dynamic> attr;
+  final Function(Map<String, dynamic>) onEdit;
+  final Function(Map<String, dynamic>) onDelete;
+
+  const AttributeCard({
+    Key? key,
+    required this.attr,
+    required this.onEdit,
+    required this.onDelete,
+  }) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8.0),
+      elevation: 1,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(8.0),
       ),
-    );
-
-    if (confirm != true) return;
-
-    try {
-      // Find the attribute ID
-      final attributeResult = await _odooClient.callKw({
-        'model': 'product.attribute',
-        'method': 'search_read',
-        'args': [
-          [
-            ['name', '=', attribute['name']],
-          ]
-        ],
-        'kwargs': {
-          'fields': ['id'],
-          'limit': 1,
-        },
-      });
-
-      if (attributeResult.isEmpty) {
-        throw Exception('Attribute not found');
-      }
-
-      final attributeId = attributeResult[0]['id'];
-
-      // Find the attribute line for this product
-      final attributeLineResult = await _odooClient.callKw({
-        'model': 'product.template.attribute.line',
-        'method': 'search_read',
-        'args': [
-          [
-            ['product_tmpl_id', '=', _productData['product_tmpl_id'][0]],
-            ['attribute_id', '=', attributeId],
-          ]
-        ],
-        'kwargs': {
-          'fields': ['id'],
-        },
-      });
-
-      if (attributeLineResult.isNotEmpty) {
-        final attributeLineIds =
-            attributeLineResult.map((line) => line['id']).toList();
-
-        // Delete the attribute line
-        await _odooClient.callKw({
-          'model': 'product.template.attribute.line',
-          'method': 'unlink',
-          'args': [attributeLineIds],
-          'kwargs': {},
-        });
-
-        // Note: We don't delete the attribute itself as it might be used by other products
-        // We only remove the association with this product
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-              content: Text(
-                  'Attribute "${attribute['name']}" removed from product')),
-        );
-
-        _loadProductData(); // Refresh the data
-      }
-    } catch (e) {
-      // Extract the user-friendly message from the Odoo exception
-      String errorMessage = 'Error removing attribute';
-      if (e.toString().contains('odoo.exceptions.UserError')) {
-        try {
-          // Try to extract the message from the error
-          final String fullError = e.toString();
-          final int messageStart = fullError.indexOf('message: ') + 9;
-          final int messageEnd = fullError.indexOf(', arguments:');
-          if (messageStart > 9 && messageEnd > messageStart) {
-            errorMessage = fullError.substring(messageStart, messageEnd);
-          }
-        } catch (_) {
-          // If parsing fails, use the generic message
-          errorMessage = 'Error removing attribute: $e';
-        }
-      } else {
-        errorMessage = 'Error removing attribute: $e';
-      }
-
-      developer.log("Error deleting attribute: $e");
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(errorMessage)),
-      );
-    }
-  }
-
-  void _showAttributeDialog([Map<String, dynamic>? attribute]) {
-    // If attribute is null, it's an add operation, otherwise it's an edit
-    final bool isEditing = attribute != null;
-
-    showDialog(
-      context: context,
-      builder: (dialogContext) => _AttributeDialog(
-        odooClient: _odooClient,
-        attribute: attribute,
-        productTemplateId: _productData['product_tmpl_id'][0],
-        onSave: _loadProductData,
-        isEditing: isEditing,
+      child: ListTile(
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+        title: Text(
+          attr['name'],
+          style: const TextStyle(
+            fontWeight: FontWeight.bold,
+            fontSize: 16.0,
+          ),
+        ),
+        subtitle: Padding(
+          padding: const EdgeInsets.only(top: 4.0),
+          child: Text(
+            'Values: ${attr['values'].map((v) => v['name']).join(', ')}',
+            style: const TextStyle(
+              fontSize: 14.0,
+              color: Colors.black54,
+            ),
+          ),
+        ),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              icon: const Icon(Icons.edit, size: 20.0),
+              color: Colors.blue,
+              splashRadius: 24.0,
+              onPressed: () => onEdit(attr),
+              tooltip: 'Edit Attribute',
+            ),
+            IconButton(
+              icon: const Icon(Icons.delete, size: 20.0),
+              color: Colors.red,
+              splashRadius: 24.0,
+              onPressed: () => onDelete(attr),
+              tooltip: 'Delete Attribute',
+            ),
+          ],
+        ),
       ),
     );
   }
 }
 
-// Replace your _showEditAttributeDialog method with this combined method
+// Example usage in a parent widget:
+class AttributesScreen extends StatefulWidget {
+  const AttributesScreen({Key? key}) : super(key: key);
 
-// Replace _EditAttributeDialog with this combined class
+  @override
+  State<AttributesScreen> createState() => _AttributesScreenState();
+}
+
+class _AttributesScreenState extends State<AttributesScreen> {
+  // Example attributes data
+  final List<Map<String, dynamic>> attributes = [
+    {
+      'id': 1,
+      'name': 'Color',
+      'values': [
+        {'id': 1, 'name': 'Red'},
+        {'id': 2, 'name': 'Blue'},
+        {'id': 3, 'name': 'Green'},
+      ],
+    },
+    {
+      'id': 2,
+      'name': 'Size',
+      'values': [
+        {'id': 4, 'name': 'Small'},
+        {'id': 5, 'name': 'Medium'},
+        {'id': 6, 'name': 'Large'},
+      ],
+    },
+  ];
+
+  void _showAttributeDialog(Map<String, dynamic> attr) {
+    // Implementation for editing attribute
+    print('Editing attribute: ${attr['name']}');
+  }
+
+  void _deleteAttribute(Map<String, dynamic> attr) {
+    setState(() {
+      attributes.removeWhere((item) => item['id'] == attr['id']);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Attributes'),
+        elevation: 0,
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: ListView.builder(
+          itemCount: attributes.length,
+          itemBuilder: (context, index) {
+            return AttributeCard(
+              attr: attributes[index],
+              onEdit: _showAttributeDialog,
+              onDelete: _deleteAttribute,
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
 class _AttributeDialog extends StatefulWidget {
   final OdooClient odooClient;
   final Map<String, dynamic>? attribute;
@@ -915,9 +1225,10 @@ class _AttributeDialog extends StatefulWidget {
 
 class _AttributeDialogState extends State<_AttributeDialog> {
   late String attributeName;
-  late List<String> attributeValues;
+  late List<Map<String, dynamic>> attributeValues;
   late List<TextEditingController> _valueControllers;
   late TextEditingController _nameController;
+  bool _isSaving = false;
 
   @override
   void initState() {
@@ -925,15 +1236,18 @@ class _AttributeDialogState extends State<_AttributeDialog> {
 
     if (widget.isEditing) {
       attributeName = widget.attribute!['name'];
-      attributeValues = List<String>.from(widget.attribute!['values']);
+      attributeValues =
+          List<Map<String, dynamic>>.from(widget.attribute!['values']);
     } else {
       attributeName = '';
-      attributeValues = ['']; // Start with one empty value field
+      attributeValues = [
+        {'id': null, 'name': ''}
+      ];
     }
 
     _nameController = TextEditingController(text: attributeName);
     _valueControllers = attributeValues
-        .map((value) => TextEditingController(text: value))
+        .map((value) => TextEditingController(text: value['name']))
         .toList();
   }
 
@@ -944,6 +1258,221 @@ class _AttributeDialogState extends State<_AttributeDialog> {
       controller.dispose();
     }
     super.dispose();
+  }
+
+  Future<void> _saveAttribute() async {
+    if (_isSaving) return;
+
+    setState(() => _isSaving = true);
+    try {
+      if (widget.isEditing) {
+        await _updateExistingAttribute();
+      } else {
+        await _createNewAttribute();
+      }
+
+      Navigator.pop(context);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+            content: Text(widget.isEditing
+                ? 'Attribute "$attributeName" updated'
+                : 'Attribute "$attributeName" added')),
+      );
+      widget.onSave();
+    } catch (e) {
+      String errorMessage =
+          'Error ${widget.isEditing ? 'updating' : 'adding'} attribute';
+      if (e.toString().contains('odoo.exceptions.UserError') ||
+          e.toString().contains('odoo.exceptions.ValidationError')) {
+        try {
+          final String fullError = e.toString();
+          final int messageStart = fullError.indexOf('message: ') + 9;
+          final int messageEnd = fullError.indexOf(', arguments:');
+          if (messageStart > 9 && messageEnd > messageStart) {
+            errorMessage = fullError.substring(messageStart, messageEnd);
+          }
+        } catch (_) {
+          errorMessage =
+              'Error ${widget.isEditing ? 'updating' : 'adding'} attribute: $e';
+        }
+      } else {
+        errorMessage =
+            'Error ${widget.isEditing ? 'updating' : 'adding'} attribute: $e';
+      }
+
+      developer.log(
+          "Error ${widget.isEditing ? 'updating' : 'adding'} attribute: $e");
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(errorMessage)),
+      );
+    } finally {
+      setState(() => _isSaving = false);
+    }
+  }
+
+  Future<void> _updateExistingAttribute() async {
+    // Update attribute name if changed
+    if (attributeName != widget.attribute!['name']) {
+      await widget.odooClient.callKw({
+        'model': 'product.attribute',
+        'method': 'write',
+        'args': [
+          [widget.attribute!['attribute_id']],
+          {'name': attributeName}
+        ],
+        'kwargs': {},
+      });
+    }
+
+    // Get existing values
+    final existingValueResult = await widget.odooClient.callKw({
+      'model': 'product.attribute.value',
+      'method': 'search_read',
+      'args': [
+        [
+          ['attribute_id', '=', widget.attribute!['attribute_id']],
+        ]
+      ],
+      'kwargs': {
+        'fields': ['id', 'name'],
+      },
+    });
+
+    final existingValues = {
+      for (var value in existingValueResult) value['name']: value['id']
+    };
+
+    // Create or update values
+    final valueIds = [];
+    final newValues = attributeValues
+        .where((v) => v['name'].isNotEmpty)
+        .map((v) => v['name'])
+        .toList();
+
+    for (var value in newValues) {
+      if (existingValues.containsKey(value)) {
+        valueIds.add(existingValues[value]);
+      } else {
+        final valueId = await widget.odooClient.callKw({
+          'model': 'product.attribute.value',
+          'method': 'create',
+          'args': [
+            {
+              'name': value,
+              'attribute_id': widget.attribute!['attribute_id'],
+            }
+          ],
+          'kwargs': {},
+        });
+        valueIds.add(valueId);
+      }
+    }
+
+    // Update attribute line
+    await widget.odooClient.callKw({
+      'model': 'product.template.attribute.line',
+      'method': 'write',
+      'args': [
+        [widget.attribute!['attribute_line_id']],
+        {
+          'value_ids': [
+            [6, 0, valueIds]
+          ]
+        }
+      ],
+      'kwargs': {},
+    });
+  }
+
+  Future<void> _createNewAttribute() async {
+    // Check if attribute exists
+    final existingAttrResult = await widget.odooClient.callKw({
+      'model': 'product.attribute',
+      'method': 'search_read',
+      'args': [
+        [
+          ['name', '=', attributeName],
+        ]
+      ],
+      'kwargs': {
+        'fields': ['id'],
+        'limit': 1,
+      },
+    });
+
+    int attributeId;
+    if (existingAttrResult.isNotEmpty) {
+      attributeId = existingAttrResult[0]['id'];
+    } else {
+      attributeId = await widget.odooClient.callKw({
+        'model': 'product.attribute',
+        'method': 'create',
+        'args': [
+          {'name': attributeName}
+        ],
+        'kwargs': {},
+      });
+    }
+
+    // Get existing values
+    final existingValueResult = await widget.odooClient.callKw({
+      'model': 'product.attribute.value',
+      'method': 'search_read',
+      'args': [
+        [
+          ['attribute_id', '=', attributeId],
+        ]
+      ],
+      'kwargs': {
+        'fields': ['id', 'name'],
+      },
+    });
+
+    final existingValues = {
+      for (var value in existingValueResult) value['name']: value['id']
+    };
+
+    // Create or reuse values
+    final valueIds = [];
+    final validValues = attributeValues
+        .where((v) => v['name'].isNotEmpty)
+        .map((v) => v['name'])
+        .toList();
+
+    for (var value in validValues) {
+      if (existingValues.containsKey(value)) {
+        valueIds.add(existingValues[value]);
+      } else {
+        final valueId = await widget.odooClient.callKw({
+          'model': 'product.attribute.value',
+          'method': 'create',
+          'args': [
+            {
+              'name': value,
+              'attribute_id': attributeId,
+            }
+          ],
+          'kwargs': {},
+        });
+        valueIds.add(valueId);
+      }
+    }
+
+    // Create attribute line
+    await widget.odooClient.callKw({
+      'model': 'product.template.attribute.line',
+      'method': 'create',
+      'args': [
+        {
+          'product_tmpl_id': widget.productTemplateId,
+          'attribute_id': attributeId,
+          'value_ids': [
+            [6, 0, valueIds]
+          ],
+        }
+      ],
+      'kwargs': {},
+    });
   }
 
   @override
@@ -990,7 +1519,7 @@ class _AttributeDialogState extends State<_AttributeDialog> {
                           border: const OutlineInputBorder(),
                         ),
                         onChanged: (value) {
-                          attributeValues[index] = value;
+                          attributeValues[index]['name'] = value;
                         },
                       ),
                     ),
@@ -1013,7 +1542,7 @@ class _AttributeDialogState extends State<_AttributeDialog> {
             OutlinedButton.icon(
               onPressed: () {
                 setState(() {
-                  attributeValues.add('');
+                  attributeValues.add({'id': null, 'name': ''});
                   _valueControllers.add(TextEditingController(text: ''));
                 });
               },
@@ -1029,243 +1558,41 @@ class _AttributeDialogState extends State<_AttributeDialog> {
           child: const Text('CANCEL'),
         ),
         ElevatedButton(
-          onPressed: () async {
-            if (attributeName.isNotEmpty &&
-                attributeValues.where((v) => v.isNotEmpty).isNotEmpty) {
-              try {
-                if (widget.isEditing) {
-                  await _updateExistingAttribute();
-                } else {
-                  await _createNewAttribute();
-                }
-
-                Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                      content: Text(widget.isEditing
-                          ? 'Attribute "$attributeName" updated'
-                          : 'Attribute "$attributeName" added')),
-                );
-                widget.onSave();
-              } catch (e) {
-                developer.log(
-                    "Error ${widget.isEditing ? 'updating' : 'adding'} attribute: $e");
-
-                // Extract user-friendly error message from Odoo exception
-                String errorMessage =
-                    'Error ${widget.isEditing ? 'updating' : 'adding'} attribute';
-
-                if (e.toString().contains('odoo.exceptions.UserError')) {
-                  try {
-                    // Try to extract the message from the error
-                    final String fullError = e.toString();
-                    final int messageStart = fullError.indexOf('message: ') + 9;
-                    final int messageEnd = fullError.indexOf(', arguments:');
-                    if (messageStart > 9 && messageEnd > messageStart) {
-                      errorMessage =
-                          fullError.substring(messageStart, messageEnd);
-                    }
-                  } catch (_) {
-                    // If parsing fails, use the generic message with error details
-                    errorMessage =
-                        'Error ${widget.isEditing ? 'updating' : 'adding'} attribute: $e';
+          onPressed: _isSaving
+              ? null
+              : () {
+                  if (attributeName.isEmpty ||
+                      attributeValues
+                          .where((v) => v['name'].isNotEmpty)
+                          .isEmpty) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text(
+                            'Please fill in the attribute name and at least one value'),
+                      ),
+                    );
+                    return;
                   }
-                } else {
-                  errorMessage =
-                      'Error ${widget.isEditing ? 'updating' : 'adding'} attribute: $e';
-                }
-
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text(errorMessage)),
-                );
-              }
-            } else {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text(
-                      'Please fill in the attribute name and at least one value'),
-                ),
-              );
-            }
-          },
+                  _saveAttribute();
+                },
           style: ElevatedButton.styleFrom(
             backgroundColor: Theme.of(context).primaryColor,
           ),
-          child: Text(
-            saveButtonText,
-            style: TextStyle(color: Colors.white),
-          ),
+          child: _isSaving
+              ? const SizedBox(
+                  height: 20,
+                  width: 20,
+                  child: CircularProgressIndicator(
+                    color: Colors.white,
+                    strokeWidth: 2,
+                  ),
+                )
+              : Text(
+                  saveButtonText,
+                  style: const TextStyle(color: Colors.white),
+                ),
         ),
       ],
     );
-  }
-
-  Future<void> _updateExistingAttribute() async {
-    // Fetch the attribute ID
-    final attributeResult = await widget.odooClient.callKw({
-      'model': 'product.attribute',
-      'method': 'search_read',
-      'args': [
-        [
-          ['name', '=', widget.attribute!['name']],
-        ]
-      ],
-      'kwargs': {
-        'fields': ['id'],
-        'limit': 1,
-      },
-    });
-
-    if (attributeResult.isEmpty) {
-      throw Exception('Attribute not found');
-    }
-
-    final attributeId = attributeResult[0]['id'];
-
-    // Update attribute name
-    await widget.odooClient.callKw({
-      'model': 'product.attribute',
-      'method': 'write',
-      'args': [
-        [attributeId],
-        {'name': attributeName}
-      ],
-      'kwargs': {},
-    });
-
-    // Fetch existing value IDs
-    final existingValueResult = await widget.odooClient.callKw({
-      'model': 'product.attribute.value',
-      'method': 'search_read',
-      'args': [
-        [
-          ['attribute_id', '=', attributeId],
-        ]
-      ],
-      'kwargs': {
-        'fields': ['id', 'name'],
-      },
-    });
-
-    final existingValues = {
-      for (var value in existingValueResult) value['name']: value['id']
-    };
-
-    // Update or create values
-    final valueIds = [];
-    for (var value in attributeValues.where((v) => v.isNotEmpty)) {
-      if (existingValues.containsKey(value)) {
-        valueIds.add(existingValues[value]);
-      } else {
-        final valueId = await widget.odooClient.callKw({
-          'model': 'product.attribute.value',
-          'method': 'create',
-          'args': [
-            {
-              'name': value,
-              'attribute_id': attributeId,
-            }
-          ],
-          'kwargs': {},
-        });
-        valueIds.add(valueId);
-      }
-    }
-
-    // Update attribute line
-    final attributeLineResult = await widget.odooClient.callKw({
-      'model': 'product.template.attribute.line',
-      'method': 'search_read',
-      'args': [
-        [
-          ['product_tmpl_id', '=', widget.productTemplateId],
-          ['attribute_id', '=', attributeId],
-        ]
-      ],
-      'kwargs': {
-        'fields': ['id'],
-        'limit': 1,
-      },
-    });
-
-    if (attributeLineResult.isNotEmpty) {
-      final attributeLineId = attributeLineResult[0]['id'];
-      await widget.odooClient.callKw({
-        'model': 'product.template.attribute.line',
-        'method': 'write',
-        'args': [
-          [attributeLineId],
-          {
-            'value_ids': [
-              [6, 0, valueIds]
-            ]
-          }
-        ],
-        'kwargs': {},
-      });
-    } else {
-      await widget.odooClient.callKw({
-        'model': 'product.template.attribute.line',
-        'method': 'create',
-        'args': [
-          {
-            'product_tmpl_id': widget.productTemplateId,
-            'attribute_id': attributeId,
-            'value_ids': [
-              [6, 0, valueIds]
-            ],
-          }
-        ],
-        'kwargs': {},
-      });
-    }
-
-    // Delete unused values
-    final valuesToDelete = existingValues.entries
-        .where((entry) => !attributeValues.contains(entry.key))
-        .map((entry) => entry.value)
-        .toList();
-    if (valuesToDelete.isNotEmpty) {
-      await widget.odooClient.callKw({
-        'model': 'product.attribute.value',
-        'method': 'unlink',
-        'args': [valuesToDelete],
-        'kwargs': {},
-      });
-    }
-  }
-
-  Future<void> _createNewAttribute() async {
-    // Check if attribute with this name already exists
-    final existingAttrResult = await widget.odooClient.callKw({
-      'model': 'product.attribute',
-      'method': 'search_read',
-      'args': [
-        [
-          ['name', '=', attributeName],
-        ]
-      ],
-      'kwargs': {
-        'fields': ['id'],
-        'limit': 1,
-      },
-    });
-
-    int attributeId;
-
-    if (existingAttrResult.isNotEmpty) {
-      // Use existing attribute
-      attributeId = existingAttrResult[0]['id'];
-    } else {
-      // Create new attribute
-      attributeId = await widget.odooClient.callKw({
-        'model': 'product.attribute',
-        'method': 'create',
-        'args': [
-          {'name': attributeName}
-        ],
-        'kwargs': {},
-      });
-    }
   }
 }

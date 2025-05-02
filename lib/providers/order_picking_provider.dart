@@ -424,25 +424,28 @@ class OrderPickingProvider with ChangeNotifier {
 
       final List<Customer> fetchedCustomers = result
           .map((customerData) {
-        if (customerData is! Map) {
-          developer.log("Warning: Skipping invalid customer data: $customerData");
-          return null;
-        }
+            if (customerData is! Map) {
+              developer.log(
+                  "Warning: Skipping invalid customer data: $customerData");
+              return null;
+            }
 
-        try {
-          // Convert Map<dynamic, dynamic> to Map<String, dynamic>
-          final Map<String, dynamic> typedCustomerData =
-              customerData.cast<String, dynamic>() ??
-                  Map<String, dynamic>.from(customerData);
-          return Customer.fromJson(typedCustomerData); // Use the fromJson factory method
-        } catch (e) {
-          developer.log("Error mapping customer: $e, Data: $customerData");
-          return null;
-        }
-      })
+            try {
+              // Convert Map<dynamic, dynamic> to Map<String, dynamic>
+              final Map<String, dynamic> typedCustomerData =
+                  customerData.cast<String, dynamic>() ??
+                      Map<String, dynamic>.from(customerData);
+              return Customer.fromJson(
+                  typedCustomerData); // Use the fromJson factory method
+            } catch (e) {
+              developer.log("Error mapping customer: $e, Data: $customerData");
+              return null;
+            }
+          })
           .where((customer) => customer != null)
           .cast<Customer>()
-          .toList();;
+          .toList();
+      ;
 
       fetchedCustomers.sort((a, b) => a.name.compareTo(b.name));
       _customers = fetchedCustomers;

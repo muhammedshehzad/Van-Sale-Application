@@ -300,6 +300,7 @@ class ProductsProvider with ChangeNotifier {
           propertyStockInventory:
               productData['property_stock_inventory'] ?? false,
           attributes: attributes.isNotEmpty ? attributes : null,
+          variantCount: productData['product_variant_count'] as int? ?? 0,
         );
       }).toList();
 
@@ -477,7 +478,10 @@ class _CustomerSelectionDialogState extends State<CustomerSelectionDialog> {
                       noResultFoundBuilder: _customers.isEmpty
                           ? (context, searchText) => GestureDetector(
                                 onTap: () {
-                                  Navigator.push(context, SlidingPageTransitionRL(page: CreateCustomerPage()));
+                                  Navigator.push(
+                                      context,
+                                      SlidingPageTransitionRL(
+                                          page: CreateCustomerPage()));
                                 },
                                 child: Container(
                                   padding: const EdgeInsets.symmetric(

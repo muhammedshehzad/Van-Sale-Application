@@ -176,7 +176,7 @@ class _CustomersListState extends State<CustomersList> {
               ? productData['image_1920']
               : null,
           vanInventory: 1,
-          attributes: attributes,
+          attributes: attributes, variantCount: productData['product_variant_count'] as int? ?? 0,
         );
       }).toList();
 

@@ -1285,8 +1285,12 @@ class _CustomerDetailsPageState extends State<CustomerDetailsPage>
                     unselectedLabelColor: Colors.grey,
                     indicatorColor: primaryColor,
                     indicatorWeight: 3,
-                    indicatorSize: TabBarIndicatorSize.label,
+                    indicatorSize: TabBarIndicatorSize.tab,
                     isScrollable: false,
+                    labelStyle: const TextStyle(
+                        fontSize: 16, fontWeight: FontWeight.bold),
+                    unselectedLabelStyle: const TextStyle(
+                        fontSize: 13, fontWeight: FontWeight.w400),
                     tabs: const [
                       Tab(text: 'Info'),
                       Tab(text: 'Invoices'),
