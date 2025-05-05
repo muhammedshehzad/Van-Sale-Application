@@ -98,14 +98,14 @@ class ProductsProvider with ChangeNotifier {
   Future<void> fetchProducts() async {
     _isLoading = true;
     notifyListeners();
-    log("Starting to fetch products..."); // Add this
+    log("Starting to fetch products...");
 
     try {
       final client = await SessionManager.getActiveClient();
       if (client == null) {
         throw Exception('No active Odoo session found. Please log in again.');
       }
-      log("Calling Odoo API..."); // Add this
+      log("Calling Odoo API...");
 
       final productResult = await client.callKw({
         'model': 'product.product',
@@ -206,14 +206,14 @@ class ProductsProvider with ChangeNotifier {
       });
 
       final attributeNameMap = {
-        for (var attr in attributeNames) attr['id']: attr['name'] as String
+        for (var attr in attributeNames) attr['id']: attr['name'] as String? ?? 'Unknown'
       };
       final attributeValueMap = {
-        for (var val in attributeValues) val['id']: val['name'] as String
+        for (var val in attributeValues) val['id']: val['name'] as String? ?? 'Unknown'
       };
 
       final templateAttributeValueMap =
-          <int, Map<int, Map<int, Map<String, dynamic>>>>{};
+      <int, Map<int, Map<int, Map<String, dynamic>>>>{};
       for (var attrVal in templateAttributeValueResult) {
         final templateId = attrVal['product_tmpl_id'][0] as int;
         final attributeId = attrVal['attribute_id'][0] as int;
@@ -245,60 +245,68 @@ class ProductsProvider with ChangeNotifier {
         final extraCosts = <String, double>{
           for (var id in valueIds)
             attributeValueMap[id as int]!:
-                (templateAttributeValueMap[templateId]?[attributeId]?[id as int]
-                            ?['price_extra'] as num?)
-                        ?.toDouble() ??
-                    0.0
+            (templateAttributeValueMap[templateId]?[attributeId]?[id as int]
+            ?['price_extra'] as num?)
+                ?.toDouble() ??
+                0.0
         };
 
         templateAttributes.putIfAbsent(templateId, () => []).add(
-              ProductAttribute(
-                name: attributeName,
-                values: values,
-                extraCost: extraCosts,
-              ),
-            );
+          ProductAttribute(
+            name: attributeName,
+            values: values,
+            extraCost: extraCosts,
+          ),
+        );
       }
 
-      final List<Product> fetchedProducts =
-          (productResult as List).map((productData) {
+      // Group products by product_tmpl_id and select the first variant
+      final Map<int, dynamic> mainVariants = {};
+      for (var productData in productResult as List) {
+        final templateId = productData['product_tmpl_id'] is List
+            ? productData['product_tmpl_id'][0] as int
+            : 0;
+        if (!mainVariants.containsKey(templateId)) {
+          mainVariants[templateId] = productData;
+        }
+      }
+
+      final List<Product> fetchedProducts = mainVariants.values.map((productData) {
         String? imageUrl;
         final imageData = productData['image_1920'];
-
-        if (imageData != false && imageData is String && imageData.isNotEmpty) {
+        if (imageData is String && imageData.isNotEmpty) {
           try {
             base64Decode(imageData);
             imageUrl = 'data:image/jpeg;base64,$imageData';
           } catch (e) {
-            log("Invalid base64 image data for product \${productData['id']}: $e");
-            imageUrl = null;
+            log("Invalid base64 image data for product ${productData['id']}: $e");
           }
         }
 
-        String? defaultCode = productData['default_code'] is String
-            ? productData['default_code']
-            : null;
-
-        final templateId = productData['product_tmpl_id'][0] as int;
+        final templateId = productData['product_tmpl_id'] is List
+            ? productData['product_tmpl_id'][0] as int
+            : 0;
         final attributes = templateAttributes[templateId] ?? [];
 
+        final defaultCodeValue = productData['default_code'];
+        log("Product ${productData['id']}: default_code = $defaultCodeValue (type: ${defaultCodeValue.runtimeType})");
+
         return Product(
-          id: productData['id'].toString(),
-          name: productData['name'] ?? 'Unnamed Product',
+          id: (productData['id'] ?? 0).toString(),
+          name: productData['name'] as String? ?? 'Unnamed Product',
           price: (productData['list_price'] as num?)?.toDouble() ?? 0.0,
           vanInventory: (productData['qty_available'] as num?)?.toInt() ?? 0,
           imageUrl: imageUrl,
-          defaultCode: defaultCode,
-          sellerIds: productData['seller_ids'] is List
-              ? productData['seller_ids']
-              : [],
-          taxesIds:
-              productData['taxes_id'] is List ? productData['taxes_id'] : [],
+          defaultCode: productData['default_code'] is String
+              ? productData['default_code'] as String
+              : defaultCodeValue == null || defaultCodeValue == false
+              ? ''
+              : defaultCodeValue.toString(),
+          sellerIds: productData['seller_ids'] is List ? productData['seller_ids'] as List : [],
+          taxesIds: productData['taxes_id'] is List ? productData['taxes_id'] as List : [],
           categId: productData['categ_id'] ?? false,
-          propertyStockProduction:
-              productData['property_stock_production'] ?? false,
-          propertyStockInventory:
-              productData['property_stock_inventory'] ?? false,
+          propertyStockProduction: productData['property_stock_production'] ?? false,
+          propertyStockInventory: productData['property_stock_inventory'] ?? false,
           attributes: attributes.isNotEmpty ? attributes : null,
           variantCount: productData['product_variant_count'] as int? ?? 0,
         );
@@ -308,16 +316,15 @@ class ProductsProvider with ChangeNotifier {
           .sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
       _products = fetchedProducts;
 
-      log("Received ${productResult.length} products from Odoo"); // Add this
+      log("Received ${fetchedProducts.length} main variant products from Odoo");
     } catch (e) {
-      log("Error fetching products: $e", error: e); // Enhanced error logging
+      log("Error fetching products: $e", error: e);
       rethrow;
     } finally {
       _isLoading = false;
       notifyListeners();
     }
   }
-
   Future<void> fetchCustomers() async {
     _isLoadingCustomers = true;
     notifyListeners();

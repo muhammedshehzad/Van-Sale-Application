@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:latest_van_sale_application/assets/widgets%20and%20consts/cached_data.dart';
 import 'package:latest_van_sale_application/main_page/main_page.dart';
 import 'package:latest_van_sale_application/providers/sale_order_provider.dart';
 import 'dart:developer';
@@ -345,20 +346,19 @@ class OrderPickingProvider with ChangeNotifier {
     }
   }
 
-  void showProductSelectionPage(BuildContext context) {
-    final salesProvider =
-        Provider.of<SalesOrderProvider>(context, listen: false);
+  void showProductSelectionPage(BuildContext context, DataSyncManager syncManager) {
+    final salesProvider = Provider.of<SalesOrderProvider>(context, listen: false);
     salesProvider.loadProducts().then((_) {
-      _availableProducts = salesProvider.products;
-      print('Available products count: ${_availableProducts.length}');
-      if (_availableProducts.isEmpty) {
+      var availableProducts = salesProvider.products;
+      print('Available products count: ${availableProducts.length}');
+      if (availableProducts.isEmpty) {
         print('Warning: No products retrieved from server');
       }
 
       Navigator.pushAndRemoveUntil(
         context,
-        SlidingPageTransitionRL(page: MainPage()),
-        (Route<dynamic> route) => false,
+        SlidingPageTransitionRL(page: MainPage(syncManager: syncManager)),
+            (Route route) => false,
       );
     }).catchError((e) {
       print('Error loading products for page: $e');
@@ -375,7 +375,6 @@ class OrderPickingProvider with ChangeNotifier {
       );
     });
   }
-
   Future<void> loadCustomers() async {
     _isLoadingCustomers = true;
     notifyListeners();
@@ -543,5 +542,31 @@ class OrderPickingProvider with ChangeNotifier {
   void setDeliverySlot(String newValue) {
     _deliverySlot = newValue;
     notifyListeners();
+  }
+}
+extension OrderPickingProviderCache on OrderPickingProvider {
+  // Load customers from cached data
+  Future<void> setCustomersFromCache(dynamic cachedCustomers) async {
+    try {
+      if (cachedCustomers is List) {
+        _customers = cachedCustomers.map((customerData) {
+          return Customer.fromJson(Map<String, dynamic>.from(customerData));
+        }).toList();
+        notifyListeners();
+      }
+    } catch (e) {
+      print('Error setting customers from cache: $e');
+      throw Exception('Failed to set customers from cache: $e');
+    }
+  }
+
+  // Prepare customers data for caching
+  dynamic getCustomersForCache() {
+    try {
+      return _customers.map((customer) => customer.toJson()).toList();
+    } catch (e) {
+      print('Error getting customers for cache: $e');
+      throw Exception('Failed to get customers for cache: $e');
+    }
   }
 }

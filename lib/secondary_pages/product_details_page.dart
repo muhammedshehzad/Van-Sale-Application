@@ -14,9 +14,13 @@ import 'dart:developer' as developer;
 
 class ProductDetailsPage extends StatefulWidget {
   final String productId;
+  final Map<String, String>? selectedAttributes;
 
-  const ProductDetailsPage({Key? key, required this.productId})
-      : super(key: key);
+  const ProductDetailsPage({
+    Key? key,
+    required this.productId,
+    this.selectedAttributes,
+  }) : super(key: key);
 
   @override
   State<ProductDetailsPage> createState() => _ProductDetailsPageState();
@@ -40,6 +44,9 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
     _initializeOdooClient();
+    if (widget.selectedAttributes != null) {
+      _selectedVariants = Map.from(widget.selectedAttributes!);
+    }
   }
 
   Future<void> _initializeOdooClient() async {
@@ -94,11 +101,8 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
             'volume',
             'taxes_id',
             'seller_ids',
-            'attribute_line_ids',
-            'property_account_income_id',
-            'property_account_expense_id',
-            'stock_quant_ids',
             'product_tmpl_id',
+            'product_template_attribute_value_ids',
           ],
         },
       });
@@ -108,21 +112,22 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
         final templateId = productData['product_tmpl_id'][0] as int;
         List<Map<String, dynamic>> attributes = [];
 
-        try {
-          final attributeLineResult = await client.callKw({
-            'model': 'product.template.attribute.line',
-            'method': 'search_read',
-            'args': [
-              [
-                ['product_tmpl_id', '=', templateId]
-              ]
-            ],
-            'kwargs': {
-              'fields': ['product_tmpl_id', 'attribute_id', 'value_ids'],
-            },
-          });
+        // Fetch attribute lines for the product template
+        final attributeLineResult = await client.callKw({
+          'model': 'product.template.attribute.line',
+          'method': 'search_read',
+          'args': [
+            [
+              ['product_tmpl_id', '=', templateId]
+            ]
+          ],
+          'kwargs': {
+            'fields': ['product_tmpl_id', 'attribute_id', 'value_ids'],
+          },
+        });
 
-          final attributeIds = (attributeLineResult as List)
+        if (attributeLineResult.isNotEmpty) {
+          final attributeIds = attributeLineResult
               .map((attr) => attr['attribute_id'][0] as int)
               .toSet()
               .toList();
@@ -139,7 +144,7 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
             },
           });
 
-          final valueIds = (attributeLineResult as List)
+          final valueIds = attributeLineResult
               .expand((attr) => attr['value_ids'] as List)
               .toSet()
               .toList();
@@ -192,10 +197,7 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
             templateAttributeValueMap.putIfAbsent(templateId, () => {});
             templateAttributeValueMap[templateId]!
                 .putIfAbsent(attributeId, () => {});
-            templateAttributeValueMap[templateId]![attributeId]!
-                .putIfAbsent(valueId, () => {});
             templateAttributeValueMap[templateId]![attributeId]![valueId] = {
-              'name': attributeValueMap[valueId] ?? 'Unknown',
               'price_extra': priceExtra,
             };
           }
@@ -211,20 +213,17 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
             final extraCosts = <String, double>{
               for (var id in valueIds)
                 attributeValueMap[id as int]!:
-                    (templateAttributeValueMap[templateId]?[attributeId]
-                                ?[id as int]?['price_extra'] as num?)
-                            ?.toDouble() ??
+                    templateAttributeValueMap[templateId]?[attributeId]
+                            ?[id as int]?['price_extra'] as double? ??
                         0.0
             };
+
             attributes.add({
               'name': attributeName,
               'values': values,
               'extraCost': extraCosts,
             });
           }
-        } catch (e) {
-          developer.log("Error fetching attributes: $e");
-          attributes = [];
         }
 
         String? imageUrl;
@@ -269,26 +268,19 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
                   'https://placeholder.com/product_alt_2',
                 ];
 
-          _selectedVariants.clear();
-          for (var attr in attributes) {
-            if (attr['values'].isNotEmpty) {
-              _selectedVariants[attr['name']] = attr['values'][0];
+          if (widget.selectedAttributes == null && attributes.isNotEmpty) {
+            _selectedVariants.clear();
+            for (var attr in attributes) {
+              if (attr['values'].isNotEmpty) {
+                _selectedVariants[attr['name']] = attr['values'][0];
+              }
             }
           }
         });
 
-        developer.log("Successfully fetched product: ${productData['name']}");
-        developer.log("Product details:");
-        developer.log("Default Code: ${productData['default_code'] ?? 'N/A'}");
-        developer.log("Seller IDs: ${productData['seller_ids']}");
-        developer.log("Taxes IDs: ${productData['taxes_id']}");
-        developer.log("Category: ${productData['categ_id']}");
-        if (attributes.isNotEmpty) {
-          developer.log(
-              "Attributes: ${attributes.map((a) => '${a['name']}: ${a['values'].join(', ')} (Extra Costs: ${a['extraCost']})').join('; ')}");
-        } else {
-          developer.log("Attributes: None");
-        }
+        developer.log("Fetched product: ${productData['name']}");
+        developer.log(
+            "Attributes: ${attributes.isNotEmpty ? attributes.map((a) => '${a['name']}: ${a['values'].join(', ')}').join('; ') : 'None'}");
       } else {
         setState(() {
           _productData = {
@@ -305,7 +297,7 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
         developer.log("No product found for ID: ${widget.productId}");
       }
     } catch (e) {
-      developer.log("Error loading product: $e");
+      developer.log("Error loading product data: $e");
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Error loading product: $e')),
       );
@@ -324,13 +316,11 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
 
   double _calculateFinalPrice() {
     double finalPrice = _productData['list_price']?.toDouble() ?? 0.0;
-
     final attributes =
         _productData['attributes'] as List<Map<String, dynamic>>?;
     if (attributes != null) {
       for (var attribute in attributes) {
-        final attributeName = attribute['name'] as String;
-        final selectedValue = _selectedVariants[attributeName];
+        final selectedValue = _selectedVariants[attribute['name']];
         if (selectedValue != null) {
           final extraCosts = attribute['extraCost'] as Map<String, double>;
           final extraCost = extraCosts[selectedValue] ?? 0.0;
@@ -338,7 +328,6 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
         }
       }
     }
-
     return finalPrice;
   }
 
@@ -602,7 +591,7 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
                                 crossAxisAlignment: CrossAxisAlignment.end,
                                 children: [
                                   Text(
-                                    '${_calculateFinalPrice().toStringAsFixed(2)}',
+                                    '\$${_calculateFinalPrice().toStringAsFixed(2)}',
                                     style: const TextStyle(
                                       fontSize: 20,
                                       fontWeight: FontWeight.bold,
@@ -612,7 +601,7 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
                                   if (_productData['list_price'] !=
                                       _calculateFinalPrice())
                                     Text(
-                                      'Base: ${(_productData['list_price'] ?? 0.0).toStringAsFixed(2)}',
+                                      'Base: \$${(_productData['list_price'] ?? 0.0).toStringAsFixed(2)}',
                                       style: TextStyle(
                                         fontSize: 12,
                                         color: Colors.grey[600],
@@ -623,6 +612,17 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
                               ),
                             ],
                           ),
+                          if (widget.selectedAttributes != null) ...[
+                            const SizedBox(height: 8),
+                            Text(
+                              'Selected Variant: ${_selectedVariants.entries.map((e) => '${e.key}: ${e.value}').join(', ')}',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey[700],
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
                         ],
                       ),
                     ),
@@ -707,9 +707,9 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
                           content: Column(
                             children: [
                               _buildInfoRow('Sales Price',
-                                  '${(_productData['list_price'] ?? 0.0).toStringAsFixed(2)}'),
+                                  '\$${(_productData['list_price'] ?? 0.0).toStringAsFixed(2)}'),
                               _buildInfoRow('Cost',
-                                  '${(_productData['standard_price'] ?? (_productData['list_price'] * 0.7)).toStringAsFixed(2)}'),
+                                  '\$${(_productData['standard_price'] ?? (_productData['list_price'] * 0.7)).toStringAsFixed(2)}'),
                               _buildInfoRow('Profit Margin',
                                   '${(((_productData['list_price'] - (_productData['standard_price'] ?? (_productData['list_price'] * 0.7))) / _productData['list_price']) * 100).toStringAsFixed(0)}%'),
                             ],
@@ -750,7 +750,7 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
                                       title:
                                           Text('Order ${sale['order_id'][1]}'),
                                       subtitle: Text(
-                                          'Qty: ${sale['product_uom_qty']} | Price: ${sale['price_unit'].toStringAsFixed(2)}'),
+                                          'Qty: ${sale['product_uom_qty']} | Price: \$${sale['price_unit'].toStringAsFixed(2)}'),
                                       trailing: Text(DateFormat('yyyy-MM-dd')
                                           .format(DateTime.parse(
                                               sale['create_date']))),
@@ -908,9 +908,7 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
                         if (_productData['attributes'] != null &&
                             (_productData['attributes'] as List)
                                 .isNotEmpty) ...[
-                          SizedBox(
-                            height: 24,
-                          ),
+                          const SizedBox(height: 24),
                           _buildSectionCard(
                             title: 'Attributes',
                             content: Column(
@@ -1175,33 +1173,25 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
           spacing: 8,
           runSpacing: 8,
           children: values.map<Widget>((value) {
-            final isSelected = _selectedVariants[attribute['name']] == value;
+            final isSelected = widget.selectedAttributes != null &&
+                widget.selectedAttributes![attribute['name']] == value;
             final extraCost = extraCosts[value] ?? 0.0;
-            return InkWell(
-              onTap: () {
-                setState(() {
-                  _selectedVariants[attribute['name']] = value;
-                });
-              },
-              child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                decoration: BoxDecoration(
-                  color: isSelected ? primaryColor : Colors.white,
-                  border: Border.all(
-                    color: isSelected ? primaryColor : Colors.grey.shade300,
-                  ),
-                  borderRadius: BorderRadius.circular(8),
+            return Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              decoration: BoxDecoration(
+                color: isSelected ? primaryColor : Colors.white,
+                border: Border.all(
+                  color: isSelected ? primaryColor : Colors.grey.shade300,
                 ),
-                child: Text(
-                  extraCost != 0.0
-                      ? '$value (+${extraCost.toStringAsFixed(2)})'
-                      : value,
-                  style: TextStyle(
-                    color: isSelected ? Colors.white : Colors.black,
-                    fontWeight:
-                        isSelected ? FontWeight.bold : FontWeight.normal,
-                  ),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                extraCost != 0.0
+                    ? '$value (+\$${extraCost.toStringAsFixed(2)})'
+                    : value,
+                style: TextStyle(
+                  color: isSelected ? Colors.white : Colors.black,
+                  fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
                 ),
               ),
             );

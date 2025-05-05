@@ -85,6 +85,77 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
     );
   }
 
+  Future<void> _handleBackorder(
+      BuildContext context, Map<String, dynamic> picking) async {
+    final client = await SessionManager.getActiveClient();
+    if (client == null) return;
+
+    final provider =
+        Provider.of<SaleOrderDetailProvider>(context, listen: false);
+
+    try {
+      final backorderId = picking['backorder_id'];
+      if (backorderId == false) {
+        // Check if there are unfulfilled quantities
+        final moves = await client.callKw({
+          'model': 'stock.move',
+          'method': 'search_read',
+          'args': [
+            [
+              ['picking_id', '=', picking['id']]
+            ],
+            ['product_id', 'product_uom_qty', 'quantity'],
+          ],
+          'kwargs': {},
+        });
+
+        final hasUnfulfilled = moves.any((move) =>
+            (move['product_uom_qty'] as double) >
+            (move['quantity'] as double? ?? 0.0));
+
+        if (hasUnfulfilled) {
+          final createBackorder = await showDialog<bool>(
+            context: context,
+            builder: (context) => AlertDialog(
+              title: const Text('Create Backorder?'),
+              content: const Text(
+                  'Some quantities could not be fulfilled. Would you like to create a backorder for the remaining items?'),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: const Text('No'),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.pop(context, true),
+                  child: const Text('Yes'),
+                ),
+              ],
+            ),
+          );
+
+          if (createBackorder == true) {
+            await client.callKw({
+              'model': 'stock.picking',
+              'method': 'action_create_backorder',
+              'args': [
+                [picking['id']]
+              ],
+              'kwargs': {},
+            });
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Backorder created successfully')),
+            );
+            await provider.fetchOrderDetails();
+          }
+        }
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error handling backorder: $e')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return ChangeNotifierProvider(
@@ -208,7 +279,7 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
         : 'No Sales Team';
     final company =
         orderData['company_id'] is List && orderData['company_id'].length > 1
-            ? (orderData['company_id'] as List)[1] as String
+            ? (orderData['company_id'] as List)[1].toString()
             : 'Default Company';
     final orderLines =
         List<Map<String, dynamic>>.from(orderData['line_details'] ?? []);
@@ -218,22 +289,18 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
         List<Map<String, dynamic>>.from(orderData['invoice_details'] ?? []);
     final warehouseId = orderData['warehouse_id'] is List &&
             orderData['warehouse_id'].length > 1
-        ? (orderData['warehouse_id'] as List)[0] as int
+        ? (orderData['warehouse_id'] as List)[0]
         : 0;
 
     final currentState = orderData['state'] as String;
     final pickingIds = orderData['picking_ids'] as List? ?? [];
     final invoiceIds = orderData['invoice_ids'] as List? ?? [];
 
-    bool hasPendingDeliveries = false;
-    if (pickingIds.isNotEmpty) {
-      hasPendingDeliveries = true;
-    }
-
+    bool hasPendingDeliveries = pickingIds.isNotEmpty;
     bool hasInvoices = invoiceIds.isNotEmpty;
-
     bool showCancelOption =
         (currentState == 'draft') || (!hasPendingDeliveries && !hasInvoices);
+
     return Stack(
       children: [
         Column(
@@ -634,24 +701,96 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                             ),
                           ),
                           const SizedBox(height: 10),
-                          // In SaleOrderDetailPage, update the "Continue Sale Order" button code
-                          if (orderData['state'] == 'cancel' ||
-                              orderData['state'] == 'draft') ...[
+                          if (hasPendingDeliveries &&
+                              currentState != 'done') ...[
                             const SizedBox(height: 16),
                             SizedBox(
                               width: double.infinity,
                               child: ElevatedButton.icon(
-                                icon: const Icon(Icons.shopping_cart, color: Colors.white),
-                                label: const Text('Continue Sale Order', style: TextStyle(color: Colors.white)),
+                                icon: const Icon(Icons.local_shipping,
+                                    color: Colors.white),
+                                label: const Text('Start Picking',
+                                    style: TextStyle(color: Colors.white)),
+                                onPressed: () async {
+                                  // Find the first incomplete picking
+                                  final incompletePicking = pickings.firstWhere(
+                                    (picking) =>
+                                        picking['state'] != 'done' &&
+                                        picking['state'] != 'cancel',
+                                    orElse: () => {},
+                                  );
+                                  if (incompletePicking.isNotEmpty) {
+                                    final result = await Navigator.push(
+                                      context,
+                                      SlidingPageTransitionRL(
+                                        page: PickingPage(
+                                          picking: incompletePicking,
+                                          orderLines: orderLines,
+                                          warehouseId: warehouseId,
+                                          provider: provider,
+                                        ),
+                                      ),
+                                    );
+                                    if (result == true) {
+                                      await provider.fetchOrderDetails();
+                                      await _handleBackorder(
+                                          context, incompletePicking);
+                                      // Check if all pickings are done
+                                      final allDone = pickings
+                                          .every((p) => p['state'] == 'done');
+                                      if (allDone) {
+                                        // Navigator.push(
+                                        //   context,
+                                        //   SlidingPageTransitionRL(
+                                        //     page: DeliveryPage(
+                                        //       orderData: orderData,
+                                        //       provider: provider,
+                                        //     ),
+                                        //   ),
+                                        // );
+                                      }
+                                    }
+                                  } else {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                          content: Text(
+                                              'No pickings available to process')),
+                                    );
+                                  }
+                                },
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: primaryColor,
+                                  shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(8)),
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 16),
+                                ),
+                              ),
+                            ),
+                          ],
+                          if (orderData['state'] == 'draft') ...[
+                            const SizedBox(height: 16),
+                            SizedBox(
+                              width: double.infinity,
+                              child: ElevatedButton.icon(
+                                icon: const Icon(Icons.shopping_cart,
+                                    color: Colors.white),
+                                label: const Text('Continue Sale Order',
+                                    style: TextStyle(color: Colors.white)),
                                 onPressed: () async {
                                   // Fetch product images
-                                  final productImages = await _fetchProductImages(orderLines);
+                                  final productImages =
+                                      await _fetchProductImages(orderLines);
 
                                   // Prepare data for SaleOrderPage
-                                  final List<Product> selectedProducts = orderLines.map((line) {
-                                    final productName = line['product_id'] is List && line['product_id'].length > 1
-                                        ? (line['product_id'] as List)[1] as String
-                                        : line['name'] as String;
+                                  final List<Product> selectedProducts =
+                                      orderLines.map((line) {
+                                    final productName =
+                                        line['product_id'] is List &&
+                                                line['product_id'].length > 1
+                                            ? (line['product_id'] as List)[1]
+                                                as String
+                                            : line['name'] as String;
                                     final productId = line['product_id'] is List
                                         ? (line['product_id'] as List)[0] as int
                                         : 0;
@@ -660,46 +799,84 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                                       id: productId.toString(),
                                       name: productName,
                                       price: line['price_unit'] as double,
-                                      defaultCode: line['default_code'] as String? ?? 'N/A',
+                                      defaultCode:
+                                          line['default_code'] as String? ??
+                                              'N/A',
                                       imageUrl: imageUrl,
-                                      vanInventory: (line['qty_available'] as num?)?.toInt() ?? 0,
-                                      variantCount: line['product_variant_count'] as int? ?? 0, // Fixed: Provide default value for variantCount
-                                      // If variantCount is available in line, use: line['product_variant_count'] as int? ?? 0
-                                      attributes: [], // Valid for List<ProductAttribute>?
+                                      vanInventory:
+                                          (line['qty_available'] as num?)
+                                                  ?.toInt() ??
+                                              0,
+                                      variantCount:
+                                          line['product_variant_count']
+                                                  as int? ??
+                                              0,
+                                      attributes: [],
                                     );
                                   }).toList();
 
                                   final Map<String, int> quantities = {
                                     for (var line in orderLines)
                                       (line['product_id'] is List
-                                          ? (line['product_id'] as List)[0].toString()
-                                          : ''):
-                                      (line['product_uom_qty'] as double).toInt(),
+                                              ? (line['product_id'] as List)[0]
+                                                  .toString()
+                                              : ''):
+                                          (line['product_uom_qty'] as double)
+                                              .toInt(),
                                   };
 
-                                  final double totalAmount = orderData['amount_total'] as double;
-                                  final String orderId = orderData['name'] as String;
+                                  final double totalAmount =
+                                      orderData['amount_total'] as double;
+                                  final String orderId =
+                                      orderData['name'] as String;
 
-                                  Navigator.push(
-                                    context,
-                                    SlidingPageTransitionRL(
-                                      page: SaleOrderPage(
-                                        selectedProducts: selectedProducts,
-                                        quantities: quantities,
-                                        totalAmount: totalAmount,
-                                        orderId: orderId,
-                                        onClearSelections: () {
-                                          // Optional: Add logic to clear selections if needed
-                                        },
-                                        productAttributes: null, // Add product attributes if needed
+                                  // Extract customer details from orderData
+                                  final customerId =
+                                      orderData['partner_id'] is List
+                                          ? (orderData['partner_id'] as List)[0]
+                                              as int
+                                          : null;
+                                  final customerName =
+                                      orderData['partner_id'] is List
+                                          ? (orderData['partner_id'] as List)[1]
+                                              as String
+                                          : null;
+                                  final initialCustomer =
+                                      customerId != null && customerName != null
+                                          ? Customer(
+                                              id: customerId.toString(),
+                                              name: customerName)
+                                          : null;
+
+                                  if (initialCustomer != null) {
+                                    Navigator.push(
+                                      context,
+                                      SlidingPageTransitionRL(
+                                        page: SaleOrderPage(
+                                          selectedProducts: selectedProducts,
+                                          quantities: quantities,
+                                          totalAmount: totalAmount,
+                                          orderId: orderId,
+                                          initialCustomer: initialCustomer,
+                                          onClearSelections: () {},
+                                          productAttributes: null,
+                                        ),
                                       ),
-                                    ),
-                                  );
+                                    );
+                                  } else {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                          content: Text(
+                                              'Customer information is missing.')),
+                                    );
+                                  }
                                 },
                                 style: ElevatedButton.styleFrom(
                                   backgroundColor: primaryColor,
-                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                                  padding: const EdgeInsets.symmetric(vertical: 16),
+                                  shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(8)),
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 16),
                                 ),
                               ),
                             ),
@@ -773,59 +950,275 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                                 final backorderId =
                                     picking['backorder_id'] != false;
 
-                                Future<Map<String, double>>
+                                Future<Map<String, dynamic>>
                                     getPickingProgress() async {
                                   final client =
                                       await SessionManager.getActiveClient();
-                                  final moveLines = await client!.callKw({
-                                    'model': 'stock.move.line',
-                                    'method': 'search_read',
-                                    'args': [
-                                      [
-                                        ['picking_id', '=', picking['id']]
-                                      ],
-                                      ['product_id', 'quantity', 'move_id'],
-                                    ],
-                                    'kwargs': {},
-                                  });
-                                  final moveIds = moveLines
-                                      .map((line) =>
-                                          (line['move_id'] as List)[0] as int)
-                                      .toList();
-                                  final moves = await client.callKw({
-                                    'model': 'stock.move',
-                                    'method': 'search_read',
-                                    'args': [
-                                      [
-                                        ['id', 'in', moveIds]
-                                      ],
-                                      ['id', 'product_uom_qty'],
-                                    ],
-                                    'kwargs': {},
-                                  });
-                                  final moveQtyMap = {
-                                    for (var move in moves)
-                                      move['id'] as int:
-                                          move['product_uom_qty'] as double
-                                  };
-                                  double totalPicked = 0;
-                                  double totalOrdered = 0;
-                                  for (var line in moveLines) {
-                                    final moveId =
-                                        (line['move_id'] as List)[0] as int;
-                                    totalPicked +=
-                                        (line['quantity'] as double? ?? 0.0);
-                                    totalOrdered += moveQtyMap[moveId] ?? 0.0;
+                                  if (client == null) {
+                                    debugPrint('No active Odoo client found.');
+                                    return {
+                                      'picked': 0.0,
+                                      'ordered': 1.0,
+                                      'is_fully_picked': false
+                                    };
                                   }
-                                  return {
-                                    'picked': totalPicked,
-                                    'ordered': totalOrdered
-                                  };
+
+                                  try {
+                                    // Check available fields for stock.move.line
+                                    final fieldCheck = await client.callKw({
+                                      'model': 'ir.model.fields',
+                                      'method': 'search_read',
+                                      'args': [
+                                        [
+                                          ['model', '=', 'stock.move.line'],
+                                          [
+                                            'name',
+                                            'in',
+                                            [
+                                              'quantity',
+                                              'product_qty',
+                                              'qty_done',
+                                            ]
+                                          ],
+                                        ],
+                                        ['name'],
+                                      ],
+                                      'kwargs': {},
+                                    });
+
+                                    final availableFields = fieldCheck
+                                        .map((f) => f['name'] as String)
+                                        .toSet();
+                                    final pickedField =
+                                        availableFields.contains('quantity')
+                                            ? 'quantity'
+                                            : 'qty_done';
+                                    final orderedField =
+                                        availableFields.contains('product_qty')
+                                            ? 'product_qty'
+                                            : 'reserved_qty';
+
+                                    // Fetch stock.move.line records
+                                    final moveLines = await client.callKw({
+                                      'model': 'stock.move.line',
+                                      'method': 'search_read',
+                                      'args': [
+                                        [
+                                          ['picking_id', '=', picking['id']],
+                                          [
+                                            'state',
+                                            'in',
+                                            [
+                                              'confirmed',
+                                              'partially_available',
+                                              'assigned'
+                                            ]
+                                          ],
+                                        ],
+                                        [
+                                          'product_id',
+                                          pickedField,
+                                          orderedField,
+                                          'lot_name',
+                                          'lot_id'
+                                        ],
+                                      ],
+                                      'kwargs': {},
+                                    }).catchError((e) {
+                                      debugPrint(
+                                          'Failed to fetch stock.move.line: $e');
+                                      return [];
+                                    });
+
+                                    final productQuantities =
+                                        <int, Map<String, double>>{};
+                                    bool allSerialsValid = true;
+
+                                    if (moveLines.isNotEmpty) {
+                                      // Process stock.move.line records
+                                      for (var line in moveLines) {
+                                        final productId =
+                                            line['product_id'] is List
+                                                ? (line['product_id']
+                                                    as List)[0] as int
+                                                : int.parse(line['product_id']
+                                                    .toString());
+                                        final pickedQty =
+                                            (line[pickedField] as num?)
+                                                    ?.toDouble() ??
+                                                0.0;
+                                        final orderedQty =
+                                            (line[orderedField] as num?)
+                                                    ?.toDouble() ??
+                                                0.0;
+
+                                        productQuantities.putIfAbsent(
+                                            productId,
+                                            () => {
+                                                  'picked': 0.0,
+                                                  'ordered': 0.0
+                                                });
+                                        productQuantities[productId]![
+                                            'picked'] = productQuantities[
+                                                productId]!['picked']! +
+                                            pickedQty;
+                                        productQuantities[productId]![
+                                            'ordered'] = productQuantities[
+                                                productId]!['ordered']! +
+                                            orderedQty;
+
+                                        final productResult =
+                                            await client.callKw({
+                                          'model': 'product.product',
+                                          'method': 'search_read',
+                                          'args': [
+                                            [
+                                              ['id', '=', productId]
+                                            ],
+                                            ['tracking'],
+                                          ],
+                                          'kwargs': {},
+                                        }).catchError((e) {
+                                          debugPrint(
+                                              'Failed to fetch product tracking: $e');
+                                          return [];
+                                        });
+
+                                        final tracking =
+                                            productResult.isNotEmpty
+                                                ? productResult[0]['tracking']
+                                                    as String
+                                                : 'none';
+
+                                        if (tracking == 'serial' &&
+                                            pickedQty > 0) {
+                                          final serials = (line['lot_name'] !=
+                                                      null &&
+                                                  line['lot_name'].isNotEmpty)
+                                              ? (line['lot_name'] as String)
+                                                  .split(',')
+                                              : (line['lot_id'] is List &&
+                                                      line['lot_id'].isNotEmpty)
+                                                  ? [
+                                                      line['lot_id'][1]
+                                                          as String
+                                                    ]
+                                                  : [];
+                                          if (serials.length !=
+                                                  pickedQty.toInt() ||
+                                              serials.any((s) => s.isEmpty)) {
+                                            allSerialsValid = false;
+                                          }
+                                        }
+                                      }
+                                    } else {
+                                      // Fallback to stock.move
+                                      debugPrint(
+                                          'No stock.move.line records found, falling back to stock.move');
+                                      final moves = await client.callKw({
+                                        'model': 'stock.move',
+                                        'method': 'search_read',
+                                        'args': [
+                                          [
+                                            ['picking_id', '=', picking['id']],
+                                            [
+                                              'state',
+                                              'in',
+                                              [
+                                                'confirmed',
+                                                'partially_available',
+                                                'assigned'
+                                              ]
+                                            ],
+                                          ],
+                                          [
+                                            'product_id',
+                                            'product_uom_qty',
+                                            'quantity'
+                                          ],
+                                        ],
+                                        'kwargs': {},
+                                      }).catchError((e) {
+                                        debugPrint(
+                                            'Failed to fetch stock.move: $e');
+                                        return [];
+                                      });
+
+                                      for (var move in moves) {
+                                        final productId =
+                                            move['product_id'] is List
+                                                ? (move['product_id']
+                                                    as List)[0] as int
+                                                : int.parse(move['product_id']
+                                                    .toString());
+                                        final orderedQty =
+                                            (move['product_uom_qty'] as num)
+                                                .toDouble();
+                                        final pickedQty =
+                                            (move['quantity'] as num?)
+                                                    ?.toDouble() ??
+                                                0.0;
+
+                                        productQuantities.putIfAbsent(
+                                            productId,
+                                            () => {
+                                                  'picked': 0.0,
+                                                  'ordered': 0.0
+                                                });
+                                        productQuantities[productId]![
+                                            'picked'] = productQuantities[
+                                                productId]!['picked']! +
+                                            pickedQty;
+                                        productQuantities[productId]![
+                                            'ordered'] = productQuantities[
+                                                productId]!['ordered']! +
+                                            orderedQty;
+                                      }
+                                    }
+
+                                    double totalPicked =
+                                        productQuantities.values.fold(0.0,
+                                            (sum, qty) => sum + qty['picked']!);
+                                    double totalOrdered =
+                                        productQuantities.values.fold(
+                                            0.0,
+                                            (sum, qty) =>
+                                                sum + qty['ordered']!);
+
+                                    if (totalOrdered == 0.0) {
+                                      totalOrdered = 1.0;
+                                    }
+
+                                    final isFullyPicked =
+                                        totalPicked >= totalOrdered &&
+                                            totalOrdered > 0 &&
+                                            allSerialsValid;
+
+                                    return {
+                                      'picked': totalPicked,
+                                      'ordered': totalOrdered,
+                                      'is_fully_picked': isFullyPicked,
+                                    };
+                                  } catch (e) {
+                                    debugPrint(
+                                        'Error fetching picking progress: $e');
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text(
+                                            'Failed to fetch picking progress: $e'),
+                                        backgroundColor: Colors.red,
+                                      ),
+                                    );
+                                    return {
+                                      'picked': 0.0,
+                                      'ordered': 1.0,
+                                      'is_fully_picked': false
+                                    };
+                                  }
                                 }
 
                                 return Card(
                                   elevation: 2,
-                                  margin: const EdgeInsets.only(bottom: 12),
                                   shape: RoundedRectangleBorder(
                                       borderRadius: BorderRadius.circular(12)),
                                   child: Padding(
@@ -834,15 +1227,23 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                                       crossAxisAlignment:
                                           CrossAxisAlignment.start,
                                       children: [
+                                        // Header Row with Title and Status
                                         Row(
                                           mainAxisAlignment:
                                               MainAxisAlignment.spaceBetween,
                                           children: [
-                                            Text(pickingName,
+                                            Expanded(
+                                              child: Text(
+                                                '$pickingName ($pickingType)',
                                                 style: const TextStyle(
-                                                    fontWeight: FontWeight.bold,
-                                                    fontSize: 16)),
-                                            FutureBuilder<Map<String, double>>(
+                                                  fontWeight: FontWeight.bold,
+                                                  fontSize: 16,
+                                                ),
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                              ),
+                                            ),
+                                            FutureBuilder<Map<String, dynamic>>(
                                               future: getPickingProgress(),
                                               builder: (context, snapshot) {
                                                 if (snapshot.connectionState ==
@@ -850,15 +1251,10 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                                                   return const SizedBox
                                                       .shrink();
                                                 }
-                                                final picked =
-                                                    snapshot.data?['picked'] ??
-                                                        0.0;
-                                                final ordered =
-                                                    snapshot.data?['ordered'] ??
-                                                        1.0;
-                                                final isFullyPicked =
-                                                    picked >= ordered &&
-                                                        ordered > 0;
+                                                final isFullyPicked = snapshot
+                                                            .data?[
+                                                        'is_fully_picked'] ??
+                                                    false;
                                                 return Row(
                                                   children: [
                                                     Container(
@@ -897,20 +1293,42 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                                                     ),
                                                     if (isFullyPicked &&
                                                         pickingState != 'done')
-                                                      const SizedBox(width: 8),
-                                                    if (isFullyPicked &&
-                                                        pickingState != 'done')
-                                                      Chip(
-                                                        label: const Text(
-                                                            'Fully Picked'),
-                                                        backgroundColor: Colors
-                                                            .green
-                                                            .withOpacity(0.2),
-                                                        labelStyle:
-                                                            const TextStyle(
+                                                      Padding(
+                                                        padding:
+                                                            const EdgeInsets
+                                                                .only(left: 8),
+                                                        child: Container(
+                                                          padding:
+                                                              const EdgeInsets
+                                                                  .symmetric(
+                                                                  horizontal: 8,
+                                                                  vertical: 4),
+                                                          decoration:
+                                                              BoxDecoration(
+                                                            color: Colors.green
+                                                                .withOpacity(
+                                                                    0.1),
+                                                            borderRadius:
+                                                                BorderRadius
+                                                                    .circular(
+                                                                        8),
+                                                            border: Border.all(
                                                                 color: Colors
                                                                     .green,
-                                                                fontSize: 12),
+                                                                width: 1),
+                                                          ),
+                                                          child: const Text(
+                                                            'Fully Picked',
+                                                            style: TextStyle(
+                                                              color:
+                                                                  Colors.green,
+                                                              fontSize: 12,
+                                                              fontWeight:
+                                                                  FontWeight
+                                                                      .bold,
+                                                            ),
+                                                          ),
+                                                        ),
                                                       ),
                                                   ],
                                                 );
@@ -918,105 +1336,188 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                                             ),
                                           ],
                                         ),
+
                                         const SizedBox(height: 12),
-                                        Text(pickingType,
-                                            style: TextStyle(
-                                                fontSize: 14,
-                                                color: Colors.grey[700])),
-                                        const SizedBox(height: 8),
+
+                                        // Type Info
+                                        Row(
+                                          children: [
+                                            Icon(Icons.inventory_2_outlined,
+                                                size: 16,
+                                                color: Colors.grey[700]),
+                                            const SizedBox(width: 8),
+                                            Text(
+                                              pickingType,
+                                              style: TextStyle(
+                                                  fontSize: 14,
+                                                  color: Colors.grey[700]),
+                                            ),
+                                          ],
+                                        ),
+
+                                        // Backorder Warning
                                         if (backorderId)
-                                          Row(
-                                            children: [
-                                              const Icon(Icons.info_outline,
-                                                  size: 16,
-                                                  color: Colors.amber),
-                                              const SizedBox(width: 4),
-                                              Text(
-                                                'This is a backorder',
-                                                style: TextStyle(
-                                                    fontSize: 14,
-                                                    fontStyle: FontStyle.italic,
-                                                    color: Colors.amber[800]),
+                                          Padding(
+                                            padding:
+                                                const EdgeInsets.only(top: 8),
+                                            child: Container(
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                      horizontal: 10,
+                                                      vertical: 6),
+                                              decoration: BoxDecoration(
+                                                color: Colors.amber
+                                                    .withOpacity(0.1),
+                                                borderRadius:
+                                                    BorderRadius.circular(8),
                                               ),
-                                            ],
+                                              child: Row(
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: [
+                                                  const Icon(Icons.info_outline,
+                                                      size: 16,
+                                                      color: Colors.amber),
+                                                  const SizedBox(width: 6),
+                                                  Text(
+                                                    'Backorder',
+                                                    style: TextStyle(
+                                                      fontSize: 13,
+                                                      fontWeight:
+                                                          FontWeight.w500,
+                                                      color: Colors.amber[800],
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
                                           ),
-                                        const SizedBox(height: 8),
-                                        if (scheduledDate != null)
-                                          _buildInfoRow(
-                                            Icons.calendar_today,
-                                            'Scheduled Date',
-                                            DateFormat('yyyy-MM-dd HH:mm')
-                                                .format(scheduledDate),
+
+                                        // Date Information
+                                        if (scheduledDate != null ||
+                                            dateCompleted != null)
+                                          Padding(
+                                            padding:
+                                                const EdgeInsets.only(top: 12),
+                                            child: Container(
+                                              padding: const EdgeInsets.all(10),
+                                              decoration: BoxDecoration(
+                                                color: Colors.grey[50],
+                                                borderRadius:
+                                                    BorderRadius.circular(8),
+                                              ),
+                                              child: Column(
+                                                crossAxisAlignment:
+                                                    CrossAxisAlignment.start,
+                                                children: [
+                                                  if (scheduledDate != null)
+                                                    Row(
+                                                      children: [
+                                                        Icon(
+                                                            Icons
+                                                                .calendar_today,
+                                                            size: 14,
+                                                            color: Colors
+                                                                .grey[700]),
+                                                        const SizedBox(
+                                                            width: 8),
+                                                        Text(
+                                                          'Scheduled: ${DateFormat('yyyy-MM-dd HH:mm').format(scheduledDate)}',
+                                                          style: TextStyle(
+                                                              fontSize: 13,
+                                                              color: Colors
+                                                                  .grey[800]),
+                                                        ),
+                                                      ],
+                                                    ),
+                                                  if (scheduledDate != null &&
+                                                      dateCompleted != null)
+                                                    const SizedBox(height: 6),
+                                                  if (dateCompleted != null)
+                                                    Row(
+                                                      children: [
+                                                        Icon(
+                                                            Icons
+                                                                .check_circle_outline,
+                                                            size: 14,
+                                                            color: Colors
+                                                                .green[700]),
+                                                        const SizedBox(
+                                                            width: 8),
+                                                        Text(
+                                                          'Completed: ${DateFormat('yyyy-MM-dd HH:mm').format(dateCompleted)}',
+                                                          style: TextStyle(
+                                                              fontSize: 13,
+                                                              color: Colors
+                                                                  .grey[800]),
+                                                        ),
+                                                      ],
+                                                    ),
+                                                ],
+                                              ),
+                                            ),
                                           ),
-                                        if (dateCompleted != null)
-                                          _buildInfoRow(
-                                            Icons.check_circle_outline,
-                                            'Completed Date',
-                                            DateFormat('yyyy-MM-dd HH:mm')
-                                                .format(dateCompleted),
-                                          ),
-                                        const SizedBox(height: 8),
-                                        pickingState == 'cancel'
-                                            ? const SizedBox.shrink()
-                                            : FutureBuilder<
-                                                Map<String, double>>(
-                                                future: getPickingProgress(),
-                                                builder: (context, snapshot) {
-                                                  if (snapshot
-                                                          .connectionState ==
-                                                      ConnectionState.waiting) {
-                                                    return const Center(
-                                                      child: Row(
-                                                        mainAxisAlignment:
-                                                            MainAxisAlignment
-                                                                .center,
-                                                        children: [
-                                                          Text(
-                                                            'Loading progress...',
-                                                            style: TextStyle(
-                                                              fontSize: 14,
-                                                              color:
-                                                                  Colors.grey,
-                                                              fontStyle:
-                                                                  FontStyle
-                                                                      .italic,
-                                                            ),
-                                                          ),
-                                                          SizedBox(width: 12),
-                                                          SizedBox(
-                                                            width: 30,
-                                                            height: 30,
-                                                            child: CircularProgressIndicator(
-                                                                strokeWidth: 3,
-                                                                color:
-                                                                    primaryColor),
-                                                          ),
-                                                        ],
+
+                                        // Progress Bar
+                                        if (pickingState != 'cancel')
+                                          FutureBuilder<Map<String, dynamic>>(
+                                            future: getPickingProgress(),
+                                            builder: (context, snapshot) {
+                                              if (snapshot.connectionState ==
+                                                  ConnectionState.waiting) {
+                                                return Padding(
+                                                  padding: const EdgeInsets
+                                                      .symmetric(vertical: 16),
+                                                  child: Row(
+                                                    mainAxisAlignment:
+                                                        MainAxisAlignment
+                                                            .center,
+                                                    children: [
+                                                      Text(
+                                                        'Loading progress...',
+                                                        style: TextStyle(
+                                                          fontSize: 13,
+                                                          color:
+                                                              Colors.grey[600],
+                                                          fontStyle:
+                                                              FontStyle.italic,
+                                                        ),
                                                       ),
-                                                    );
-                                                  }
+                                                      const SizedBox(width: 12),
+                                                      SizedBox(
+                                                        width: 16,
+                                                        height: 16,
+                                                        child:
+                                                            CircularProgressIndicator(
+                                                          strokeWidth: 2,
+                                                          color: primaryColor,
+                                                        ),
+                                                      ),
+                                                    ],
+                                                  ),
+                                                );
+                                              }
 
-                                                  final picked = snapshot
-                                                          .data?['picked'] ??
+                                              final picked =
+                                                  snapshot.data?['picked'] ??
                                                       0.0;
-                                                  final ordered = snapshot
-                                                          .data?['ordered'] ??
+                                              final ordered =
+                                                  snapshot.data?['ordered'] ??
                                                       1.0;
-                                                  final progress =
-                                                      (picked / ordered)
-                                                          .clamp(0.0, 1.0);
-                                                  final isFullyPicked =
-                                                      picked >= ordered &&
-                                                          ordered > 0;
+                                              final progress =
+                                                  (picked / ordered)
+                                                      .clamp(0.0, 1.0);
 
-                                                  return Padding(
-                                                    padding:
-                                                        const EdgeInsets.all(
-                                                            6.0),
-                                                    child: Column(
-                                                      crossAxisAlignment:
-                                                          CrossAxisAlignment
-                                                              .start,
+                                              return Padding(
+                                                padding: const EdgeInsets.only(
+                                                    top: 16),
+                                                child: Column(
+                                                  crossAxisAlignment:
+                                                      CrossAxisAlignment.start,
+                                                  children: [
+                                                    Row(
+                                                      mainAxisAlignment:
+                                                          MainAxisAlignment
+                                                              .spaceBetween,
                                                       children: [
                                                         Text(
                                                           'Picking Progress',
@@ -1028,170 +1529,211 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                                                                 .grey[800],
                                                           ),
                                                         ),
-                                                        const SizedBox(
-                                                            height: 8),
-                                                        ClipRRect(
-                                                          borderRadius:
-                                                              BorderRadius
-                                                                  .circular(10),
-                                                          child:
-                                                              LinearProgressIndicator(
-                                                            value: progress,
-                                                            minHeight: 10,
-                                                            backgroundColor:
-                                                                Colors
-                                                                    .grey[300],
-                                                            valueColor:
-                                                                const AlwaysStoppedAnimation<
-                                                                        Color>(
-                                                                    Colors
-                                                                        .green),
-                                                          ),
-                                                        ),
-                                                        const SizedBox(
-                                                            height: 6),
                                                         Text(
-                                                          'Picked: ${picked.toStringAsFixed(0)} / ${ordered.toStringAsFixed(0)}',
+                                                          '${(progress * 100).toInt()}%',
                                                           style: TextStyle(
-                                                              fontSize: 13,
-                                                              color: Colors
-                                                                  .grey[700]),
+                                                            fontWeight:
+                                                                FontWeight.w600,
+                                                            fontSize: 14,
+                                                            color: progress ==
+                                                                    1.0
+                                                                ? Colors.green
+                                                                : Colors
+                                                                    .grey[800],
+                                                          ),
                                                         ),
                                                       ],
                                                     ),
-                                                  );
-                                                },
-                                              ),
-                                        const SizedBox(height: 12),
-                                        pickingState == 'cancel'
-                                            ? const SizedBox.shrink()
-                                            : FutureBuilder<
-                                                Map<String, double>>(
-                                                future: getPickingProgress(),
-                                                builder: (context, snapshot) {
-                                                  if (snapshot
-                                                          .connectionState ==
-                                                      ConnectionState.waiting) {
-                                                    return const SizedBox
-                                                        .shrink();
-                                                  }
+                                                    const SizedBox(height: 8),
+                                                    Stack(
+                                                      children: [
+                                                        ClipRRect(
+                                                          borderRadius:
+                                                              BorderRadius
+                                                                  .circular(6),
+                                                          child:
+                                                              LinearProgressIndicator(
+                                                            value: progress,
+                                                            minHeight: 8,
+                                                            backgroundColor:
+                                                                Colors
+                                                                    .grey[200],
+                                                            valueColor:
+                                                                AlwaysStoppedAnimation<
+                                                                    Color>(
+                                                              progress == 1.0
+                                                                  ? Colors.green
+                                                                  : primaryColor,
+                                                            ),
+                                                          ),
+                                                        ),
+                                                      ],
+                                                    ),
+                                                    const SizedBox(height: 6),
+                                                    Text(
+                                                      'Picked: ${picked.toStringAsFixed(0)} / ${ordered.toStringAsFixed(0)} items',
+                                                      style: TextStyle(
+                                                          fontSize: 13,
+                                                          color:
+                                                              Colors.grey[700]),
+                                                    ),
+                                                  ],
+                                                ),
+                                              );
+                                            },
+                                          ),
 
-                                                  final picked = snapshot
-                                                          .data?['picked'] ??
-                                                      0.0;
-                                                  final ordered = snapshot
-                                                          .data?['ordered'] ??
-                                                      1.0;
-                                                  final isFullyPicked =
-                                                      picked >= ordered &&
-                                                          ordered > 0;
+                                        // Action Buttons
+                                        if (pickingState != 'cancel')
+                                          FutureBuilder<Map<String, dynamic>>(
+                                            future: getPickingProgress(),
+                                            builder: (context, snapshot) {
+                                              if (snapshot.connectionState ==
+                                                  ConnectionState.waiting) {
+                                                return const SizedBox.shrink();
+                                              }
 
-                                                  return Row(
-                                                    mainAxisAlignment:
-                                                        MainAxisAlignment
-                                                            .spaceEvenly,
-                                                    children: [
+                                              final isFullyPicked =
+                                                  snapshot.data?[
+                                                          'is_fully_picked'] ??
+                                                      false;
+
+                                              return Padding(
+                                                padding: const EdgeInsets.only(
+                                                    top: 16),
+                                                child: Row(
+                                                  children: [
+                                                    Expanded(
+                                                      child:
+                                                          ElevatedButton.icon(
+                                                        icon: const Icon(
+                                                          Icons.visibility,
+                                                          size: 18,
+                                                          color: Colors.white,
+                                                        ),
+                                                        label: const Text(
+                                                            'View Details'),
+                                                        onPressed: () {
+                                                          Navigator.push(
+                                                            context,
+                                                            SlidingPageTransitionRL(
+                                                              page:
+                                                                  DeliveryDetailsPage(
+                                                                pickingData:
+                                                                    picking,
+                                                                provider:
+                                                                    provider,
+                                                              ),
+                                                            ),
+                                                          );
+                                                        },
+                                                        style: ElevatedButton
+                                                            .styleFrom(
+                                                          backgroundColor:
+                                                              primaryColor,
+                                                          foregroundColor:
+                                                              Colors.white,
+                                                          elevation: 0,
+                                                          padding:
+                                                              const EdgeInsets
+                                                                  .symmetric(
+                                                                  vertical: 12),
+                                                          shape:
+                                                              RoundedRectangleBorder(
+                                                            borderRadius:
+                                                                BorderRadius
+                                                                    .circular(
+                                                                        8),
+                                                          ),
+                                                        ),
+                                                      ),
+                                                    ),
+                                                    if (pickingState !=
+                                                        'done') ...[
+                                                      const SizedBox(width: 12),
                                                       Expanded(
                                                         child:
                                                             ElevatedButton.icon(
-                                                          icon: const Icon(
-                                                              Icons.visibility,
-                                                              color:
-                                                                  Colors.white),
-                                                          label: const Text(
-                                                              'View Details',
-                                                              style: TextStyle(
-                                                                  color: Colors
-                                                                      .white)),
-                                                          onPressed: () {
-                                                            Navigator.push(
+                                                          icon: Icon(
+                                                            isFullyPicked
+                                                                ? Icons.edit
+                                                                : Icons
+                                                                    .check_circle,
+                                                            size: 18,
+                                                            color: Colors.white,
+                                                          ),
+                                                          label: Text(
+                                                            isFullyPicked
+                                                                ? 'Edit Picking'
+                                                                : 'Pick Products',
+                                                          ),
+                                                          onPressed: () async {
+                                                            final result =
+                                                                await Navigator
+                                                                    .push(
                                                               context,
                                                               SlidingPageTransitionRL(
-                                                                page: DeliveryDetailsPage(
-                                                                    pickingData:
-                                                                        picking,
-                                                                    provider:
-                                                                        provider),
+                                                                page:
+                                                                    PickingPage(
+                                                                  picking:
+                                                                      picking,
+                                                                  orderLines:
+                                                                      orderLines,
+                                                                  warehouseId:
+                                                                      warehouseId,
+                                                                  provider:
+                                                                      provider,
+                                                                ),
                                                               ),
                                                             );
+                                                            if (result ==
+                                                                true) {
+                                                              await provider
+                                                                  .fetchOrderDetails();
+                                                              await _handleBackorder(
+                                                                  context,
+                                                                  picking);
+                                                              final allDone = pickings
+                                                                  .every((p) =>
+                                                                      p['state'] ==
+                                                                      'done');
+                                                              if (allDone) {
+                                                                // Navigator code commented out in original
+                                                              }
+                                                            }
                                                           },
                                                           style: ElevatedButton
                                                               .styleFrom(
                                                             backgroundColor:
-                                                                primaryColor,
-                                                            shape: RoundedRectangleBorder(
-                                                                borderRadius:
-                                                                    BorderRadius
-                                                                        .circular(
-                                                                            8)),
+                                                                isFullyPicked
+                                                                    ? Colors
+                                                                        .orange
+                                                                    : Colors
+                                                                        .green,
+                                                            foregroundColor:
+                                                                Colors.white,
+                                                            elevation: 0,
+                                                            padding:
+                                                                const EdgeInsets
+                                                                    .symmetric(
+                                                                    vertical:
+                                                                        12),
+                                                            shape:
+                                                                RoundedRectangleBorder(
+                                                              borderRadius:
+                                                                  BorderRadius
+                                                                      .circular(
+                                                                          8),
+                                                            ),
                                                           ),
                                                         ),
                                                       ),
-                                                      if (pickingState !=
-                                                          'done') ...[
-                                                        const SizedBox(
-                                                            width: 10),
-                                                        Expanded(
-                                                          child: ElevatedButton
-                                                              .icon(
-                                                            icon: const Icon(
-                                                                Icons
-                                                                    .check_circle,
-                                                                color: Colors
-                                                                    .white),
-                                                            label: Text(
-                                                              isFullyPicked
-                                                                  ? 'Edit Picking'
-                                                                  : 'Pick Products',
-                                                              style: const TextStyle(
-                                                                  color: Colors
-                                                                      .white),
-                                                            ),
-                                                            onPressed:
-                                                                () async {
-                                                              final result =
-                                                                  await Navigator
-                                                                      .push(
-                                                                context,
-                                                                SlidingPageTransitionRL(
-                                                                  page:
-                                                                      PickingPage(
-                                                                    picking:
-                                                                        picking,
-                                                                    orderLines:
-                                                                        orderLines,
-                                                                    warehouseId:
-                                                                        warehouseId,
-                                                                    provider:
-                                                                        provider,
-                                                                  ),
-                                                                ),
-                                                              );
-                                                              if (result ==
-                                                                  true) {
-                                                                // Refresh order details after successful picking
-                                                                await provider
-                                                                    .fetchOrderDetails();
-                                                              }
-                                                            },
-                                                            style:
-                                                                ElevatedButton
-                                                                    .styleFrom(
-                                                              backgroundColor:
-                                                                  Colors.green,
-                                                              shape: RoundedRectangleBorder(
-                                                                  borderRadius:
-                                                                      BorderRadius
-                                                                          .circular(
-                                                                              8)),
-                                                            ),
-                                                          ),
-                                                        ),
-                                                      ],
                                                     ],
-                                                  );
-                                                },
-                                              ),
+                                                  ],
+                                                ),
+                                              );
+                                            },
+                                          ),
                                       ],
                                     ),
                                   ),
@@ -1545,7 +2087,6 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                                           content: Text(
                                               'Order cancelled successfully')),
                                     );
-                                    // Optionally, navigate back to the previous page
                                     Navigator.pop(context);
                                   } catch (e) {
                                     Navigator.pop(context); // Close the dialog

@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../assets/widgets and consts/cached_data.dart';
 import 'login_provider.dart'; // Import the new LoginProvider
 
 class Login extends StatelessWidget {
-  const Login({super.key});
+  final DataSyncManager datasync = DataSyncManager();
+
+  Login({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -295,7 +298,8 @@ class Login extends StatelessWidget {
                                                       ? null
                                                       : () =>
                                                           provider.handleSignIn(
-                                                              context),
+                                                              context,
+                                                              datasync),
                                                   style:
                                                       ElevatedButton.styleFrom(
                                                     backgroundColor:
@@ -314,17 +318,17 @@ class Login extends StatelessWidget {
                                                           mainAxisSize:
                                                               MainAxisSize.min,
                                                           children: [
-                                                            SizedBox(
-                                                              height: 20,
-                                                              width: 20,
-                                                              child:
-                                                                  CircularProgressIndicator(
-                                                                color: Colors
-                                                                    .white,
-                                                                strokeWidth: 2,
-                                                              ),
-                                                            ),
-                                                            SizedBox(width: 12),
+                                                            // SizedBox(
+                                                            //   height: 20,
+                                                            //   width: 20,
+                                                            //   child:
+                                                            //       CircularProgressIndicator(
+                                                            //     color: Colors
+                                                            //         .white,
+                                                            //     strokeWidth: 2,
+                                                            //   ),
+                                                            // ),
+                                                            // SizedBox(width: 12),
                                                             Text(
                                                               'Signing In...',
                                                               style: TextStyle(

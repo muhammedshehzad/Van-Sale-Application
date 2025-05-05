@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-
+import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
 import '../authentication/cyllo_session_model.dart';
 
 class Invoice {
@@ -31,6 +33,407 @@ class Invoice {
   });
 }
 
+
+class OdooProvider extends ChangeNotifier {
+  final String baseUrl;
+  final String database;
+  final String username;
+  final String password;
+
+  String? uid;
+  String? accessToken;
+  Map<String, dynamic>? currentOrder;
+  List<dynamic>? orderLines;
+
+  OdooProvider({
+    required this.baseUrl,
+    required this.database,
+    required this.username,
+    required this.password,
+  });
+
+  Future<void> initialize() async {
+    await _authenticate();
+  }
+
+  Future<void> _authenticate() async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/web/session/authenticate'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'jsonrpc': '2.0',
+          'params': {
+            'db': database,
+            'login': username,
+            'password': password,
+          }
+        }),
+      );
+
+      final Map<String, dynamic> result = jsonDecode(response.body);
+
+      if (result.containsKey('error')) {
+        throw Exception(result['error']['message'] ?? 'Authentication failed');
+      }
+
+      uid = result['result']['uid'].toString();
+      accessToken = result['result']['session_id'];
+    } catch (e) {
+      throw Exception('Authentication failed: ${e.toString()}');
+    }
+  }
+
+  Future<Map<String, dynamic>?> getPickingById(String pickingId) async {
+    if (uid == null) await _authenticate();
+
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/web/dataset/call_kw'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Cookie': 'session_id=${accessToken ?? ""}',
+        },
+        body: jsonEncode({
+          'jsonrpc': '2.0',
+          'method': 'call',
+          'params': {
+            'model': 'stock.picking',
+            'method': 'read',
+            'args': [
+              [int.parse(pickingId)],
+              [
+                'name', 'state', 'scheduled_date', 'origin',
+                'location_id', 'location_dest_id', 'partner_id'
+              ]
+            ],
+            'kwargs': {},
+          }
+        }),
+      );
+
+      final Map<String, dynamic> result = jsonDecode(response.body);
+
+      if (result.containsKey('error')) {
+        throw Exception(result['error']['message'] ?? 'Failed to get picking');
+      }
+
+      if (result['result'].isEmpty) return null;
+      return result['result'][0];
+    } catch (e) {
+      throw Exception('Failed to get picking: ${e.toString()}');
+    }
+  }
+
+  Future<List<dynamic>> getPickingLines(String pickingId) async {
+    if (uid == null) await _authenticate();
+
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/web/dataset/call_kw'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Cookie': 'session_id=${accessToken ?? ""}',
+        },
+        body: jsonEncode({
+          'jsonrpc': '2.0',
+          'method': 'call',
+          'params': {
+            'model': 'stock.move.line',
+            'method': 'search_read',
+            'args': [
+              [['picking_id', '=', int.parse(pickingId)]],
+              [
+                'id', 'product_id', 'product_uom_qty', 'qty_done',
+                'location_id', 'location_dest_id', 'product_uom',
+                'lot_id', 'picking_id', 'state'
+              ]
+            ],
+            'kwargs': {},
+          }
+        }),
+      );
+
+      final Map<String, dynamic> result = jsonDecode(response.body);
+
+      if (result.containsKey('error')) {
+        throw Exception(result['error']['message'] ?? 'Failed to get picking lines');
+      }
+
+      // Fetch product names for all products
+      List<dynamic> lines = result['result'];
+      await _enrichProductData(lines);
+
+      return lines;
+    } catch (e) {
+      throw Exception('Failed to get picking lines: ${e.toString()}');
+    }
+  }
+
+  Future<void> _enrichProductData(List<dynamic> lines) async {
+    if (lines.isEmpty) return;
+
+    try {
+      // Extract all product IDs
+      List<int> productIds = lines.map<int>((line) => line['product_id'][0] as int).toList();
+
+      // Get product details
+      final response = await http.post(
+        Uri.parse('$baseUrl/web/dataset/call_kw'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Cookie': 'session_id=${accessToken ?? ""}',
+        },
+        body: jsonEncode({
+          'jsonrpc': '2.0',
+          'method': 'call',
+          'params': {
+            'model': 'product.product',
+            'method': 'read',
+            'args': [
+              productIds,
+              ['name', 'default_code', 'barcode']
+            ],
+            'kwargs': {},
+          }
+        }),
+      );
+
+      final Map<String, dynamic> result = jsonDecode(response.body);
+
+      if (result.containsKey('error')) {
+        throw Exception(result['error']['message'] ?? 'Failed to get product details');
+      }
+
+      // Create a map for quick lookup
+      Map<int, Map<String, dynamic>> productsMap = {};
+      for (var product in result['result']) {
+        productsMap[product['id']] = product;
+      }
+
+      // Get location names
+      Set<int> locationIds = {};
+      for (var line in lines) {
+        locationIds.add(line['location_id'][0] as int);
+      }
+
+      final locationsResponse = await http.post(
+        Uri.parse('$baseUrl/web/dataset/call_kw'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Cookie': 'session_id=${accessToken ?? ""}',
+        },
+        body: jsonEncode({
+          'jsonrpc': '2.0',
+          'method': 'call',
+          'params': {
+            'model': 'stock.location',
+            'method': 'read',
+            'args': [
+              locationIds.toList(),
+              ['name', 'complete_name']
+            ],
+            'kwargs': {},
+          }
+        }),
+      );
+
+      final Map<String, dynamic> locationsResult = jsonDecode(locationsResponse.body);
+
+      Map<int, Map<String, dynamic>> locationsMap = {};
+      for (var location in locationsResult['result']) {
+        locationsMap[location['id']] = location;
+      }
+
+      // Update lines with product and location details
+      for (var line in lines) {
+        int productId = line['product_id'][0];
+        if (productsMap.containsKey(productId)) {
+          line['product_name'] = productsMap[productId]!['name'];
+          line['product_code'] = productsMap[productId]!['default_code'] ?? '';
+          line['barcode'] = productsMap[productId]!['barcode'] ?? '';
+        }
+
+        int locationId = line['location_id'][0];
+        if (locationsMap.containsKey(locationId)) {
+          line['location_name'] = locationsMap[locationId]!['complete_name'] ?? locationsMap[locationId]!['name'];
+        }
+      }
+    } catch (e) {
+      print('Error enriching product data: ${e.toString()}');
+      // Continue with basic data if enrichment fails
+    }
+  }
+
+  Future<Map<String, dynamic>?> searchProduct(String query, String warehouseId) async {
+    if (uid == null) await _authenticate();
+
+    try {
+      // First try exact barcode match
+      var domain = [
+        '|',
+        ['barcode', '=', query],
+        ['default_code', '=', query]
+      ];
+
+      var response = await http.post(
+        Uri.parse('$baseUrl/web/dataset/call_kw'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Cookie': 'session_id=${accessToken ?? ""}',
+        },
+        body: jsonEncode({
+          'jsonrpc': '2.0',
+          'method': 'call',
+          'params': {
+            'model': 'product.product',
+            'method': 'search_read',
+            'args': [
+              domain,
+              ['id', 'name', 'default_code', 'barcode']
+            ],
+            'kwargs': {
+              'limit': 1,
+            },
+          }
+        }),
+      );
+
+      var result = jsonDecode(response.body);
+
+      if (result.containsKey('error')) {
+        throw Exception(result['error']['message'] ?? 'Failed to search product');
+      }
+
+      if (result['result'].isNotEmpty) {
+        return result['result'][0];
+      }
+
+      // If no exact match, try partial name search
+      domain = [
+        ['name', 'ilike', query]
+      ];
+
+      response = await http.post(
+        Uri.parse('$baseUrl/web/dataset/call_kw'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Cookie': 'session_id=${accessToken ?? ""}',
+        },
+        body: jsonEncode({
+          'jsonrpc': '2.0',
+          'method': 'call',
+          'params': {
+            'model': 'product.product',
+            'method': 'search_read',
+            'args': [
+              domain,
+              ['id', 'name', 'default_code', 'barcode']
+            ],
+            'kwargs': {
+              'limit': 1,
+            },
+          }
+        }),
+      );
+
+      result = jsonDecode(response.body);
+
+      if (result.containsKey('error')) {
+        throw Exception(result['error']['message'] ?? 'Failed to search product');
+      }
+
+      if (result['result'].isNotEmpty) {
+        return result['result'][0];
+      }
+
+      return null;
+    } catch (e) {
+      throw Exception('Failed to search product: ${e.toString()}');
+    }
+  }
+
+  Future<void> updatePickedQuantity(String pickingId, int moveLineId, double quantity) async {
+    if (uid == null) await _authenticate();
+
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/web/dataset/call_kw'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Cookie': 'session_id=${accessToken ?? ""}',
+        },
+        body: jsonEncode({
+          'jsonrpc': '2.0',
+          'method': 'call',
+          'params': {
+            'model': 'stock.move.line',
+            'method': 'write',
+            'args': [
+              [moveLineId],
+              {'qty_done': quantity}
+            ],
+            'kwargs': {},
+          }
+        }),
+      );
+
+      final Map<String, dynamic> result = jsonDecode(response.body);
+
+      if (result.containsKey('error')) {
+        throw Exception(result['error']['message'] ?? 'Failed to update quantity');
+      }
+    } catch (e) {
+      throw Exception('Failed to update quantity: ${e.toString()}');
+    }
+  }
+
+  Future<void> validatePicking(String pickingId) async {
+    if (uid == null) await _authenticate();
+
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/web/dataset/call_kw'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Cookie': 'session_id=${accessToken ?? ""}',
+        },
+        body: jsonEncode({
+          'jsonrpc': '2.0',
+          'method': 'call',
+          'params': {
+            'model': 'stock.picking',
+            'method': 'button_validate',
+            'args': [
+              [int.parse(pickingId)]
+            ],
+            'kwargs': {},
+          }
+        }),
+      );
+
+      final Map<String, dynamic> result = jsonDecode(response.body);
+
+      if (result.containsKey('error')) {
+        throw Exception(result['error']['message'] ?? 'Failed to validate picking');
+      }
+    } catch (e) {
+      throw Exception('Failed to validate picking: ${e.toString()}');
+    }
+  }
+
+  Future<void> fetchOrderDetails() async {
+    // Refresh order details after changes
+    if (currentOrder != null) {
+      final picking = await getPickingById(currentOrder!['id'].toString());
+      if (picking != null) {
+        currentOrder = picking;
+        orderLines = await getPickingLines(picking['id'].toString());
+        notifyListeners();
+      }
+    }
+  }
+}
 class SaleOrderDetailProvider extends ChangeNotifier {
   final Map<String, dynamic> orderData;
   Map<String, dynamic>? _orderDetails;
@@ -121,7 +524,8 @@ class SaleOrderDetailProvider extends ChangeNotifier {
         throw Exception('Cannot cancel a locked sale order.');
       }
       if (!['draft', 'sent', 'sale'].contains(currentState)) {
-        throw Exception('Sale order cannot be cancelled in its current state ($currentState).');
+        throw Exception(
+            'Sale order cannot be cancelled in its current state ($currentState).');
       }
 
       // Check for dependencies
@@ -138,8 +542,10 @@ class SaleOrderDetailProvider extends ChangeNotifier {
           'kwargs': {},
         });
 
-        if (pickings.any((picking) => picking['state'] != 'cancel' && picking['state'] != 'done')) {
-          throw Exception('Cannot cancel order: There are unprocessed deliveries.');
+        if (pickings.any((picking) =>
+            picking['state'] != 'cancel' && picking['state'] != 'done')) {
+          throw Exception(
+              'Cannot cancel order: There are unprocessed deliveries.');
         }
       }
 
@@ -157,7 +563,8 @@ class SaleOrderDetailProvider extends ChangeNotifier {
         });
 
         if (invoices.any((invoice) => invoice['state'] != 'cancel')) {
-          throw Exception('Cannot cancel order: There are unprocessed invoices.');
+          throw Exception(
+              'Cannot cancel order: There are unprocessed invoices.');
         }
       }
 
@@ -190,7 +597,8 @@ class SaleOrderDetailProvider extends ChangeNotifier {
 
       final newState = updatedOrderState[0]['state'] as String;
       if (newState != 'cancel') {
-        throw Exception('Failed to cancel the sale order. Current state: $newState');
+        throw Exception(
+            'Failed to cancel the sale order. Current state: $newState');
       }
 
       // Refresh order details
@@ -204,7 +612,9 @@ class SaleOrderDetailProvider extends ChangeNotifier {
       _isLoading = false;
       notifyListeners();
     }
-  }  Future<void> fetchOrderDetails() async {
+  }
+
+  Future<void> fetchOrderDetails() async {
     _isLoading = true;
     _error = null;
     notifyListeners();
@@ -328,16 +738,9 @@ class SaleOrderDetailProvider extends ChangeNotifier {
           order['picking_ids'] is List &&
           order['picking_ids'].isNotEmpty) {
         final pickingFields = await getValidFields('stock.picking', [
-          'name',
-          'partner_id',
-          'scheduled_date',
-          'date_done',
-          'state',
-          'origin',
-          'priority',
-          'backorder_id',
-          'move_ids',
-          'picking_type_id'
+          'name', 'partner_id', 'scheduled_date', 'date_done', 'state',
+          'origin', 'priority', 'backorder_id', 'move_ids', 'picking_type_id',
+          'move_line_ids_without_package' // Add this to get actual move lines
         ]);
         final pickings = await client.callKw({
           'model': 'stock.picking',
@@ -350,6 +753,9 @@ class SaleOrderDetailProvider extends ChangeNotifier {
           ],
           'kwargs': {},
         });
+
+
+
         order['picking_details'] = pickings;
       } else {
         order['picking_details'] = [];
@@ -678,12 +1084,12 @@ class SaleOrderDetailProvider extends ChangeNotifier {
   }
 
   Future<void> confirmPicking(
-      int pickingId,
-      Map<int, double> pickedQuantities,
-      Map<int, String?> lotSerialNumbers,
-      bool validateImmediately, {
-        bool createBackorder = false,
-      }) async {
+    int pickingId,
+    Map<int, double> pickedQuantities,
+    Map<int, String?> lotSerialNumbers,
+    bool validateImmediately, {
+    bool createBackorder = false,
+  }) async {
     final client = await SessionManager.getActiveClient();
     if (client == null) {
       throw Exception('No active Odoo session found.');
@@ -734,8 +1140,8 @@ class SaleOrderDetailProvider extends ChangeNotifier {
       // Fetch stock moves to get ordered quantities
       final moveIds = moveLines
           .map((line) => line['move_id'] is List
-          ? (line['move_id'] as List)[0] as int
-          : line['move_id'] as int)
+              ? (line['move_id'] as List)[0] as int
+              : line['move_id'] as int)
           .toList();
       final moveResult = await client.callKw({
         'model': 'stock.move',
@@ -854,7 +1260,9 @@ class SaleOrderDetailProvider extends ChangeNotifier {
       debugPrint('Error confirming picking: $e');
       throw Exception('Failed to confirm picking: $e');
     }
-  }  Future<Map<int, double>> fetchStockAvailability(
+  }
+
+  Future<Map<int, double>> fetchStockAvailability(
       List<Map<String, dynamic>> products, int warehouseId) async {
     final client = await SessionManager.getActiveClient();
     if (client == null) return {};
@@ -1126,6 +1534,33 @@ class SaleOrderDetailProvider extends ChangeNotifier {
         return 'CANCELLED';
       default:
         return state.toUpperCase();
+    }
+  }
+}
+
+extension SaleOrderDetailProviderCache on SaleOrderDetailProvider {
+  // Load order details from cached data
+  Future<void> setOrderDetailsFromCache(dynamic cachedOrderDetails) async {
+    try {
+      if (cachedOrderDetails is Map) {
+        _orderDetails = Map<String, dynamic>.from(cachedOrderDetails);
+        notifyListeners();
+      }
+    } catch (e) {
+      print('Error setting order details from cache: $e');
+      throw Exception('Failed to set order details from cache: $e');
+    }
+  }
+
+  // Prepare order details data for caching
+  dynamic getOrderDetailsForCache() {
+    try {
+      return _orderDetails != null
+          ? Map<String, dynamic>.from(_orderDetails!)
+          : {};
+    } catch (e) {
+      print('Error getting order details for cache: $e');
+      throw Exception('Failed to get order details for cache: $e');
     }
   }
 }
