@@ -725,7 +725,6 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                                       SlidingPageTransitionRL(
                                         page: PickingPage(
                                           picking: incompletePicking,
-                                          orderLines: orderLines,
                                           warehouseId: warehouseId,
                                           provider: provider,
                                         ),
@@ -1677,8 +1676,6 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                                                                     PickingPage(
                                                                   picking:
                                                                       picking,
-                                                                  orderLines:
-                                                                      orderLines,
                                                                   warehouseId:
                                                                       warehouseId,
                                                                   provider:

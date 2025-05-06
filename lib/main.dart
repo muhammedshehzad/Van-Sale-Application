@@ -26,7 +26,6 @@ final appTheme = ThemeData(
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await initializeCameras();
   runApp(
     MultiProvider(
       providers: [

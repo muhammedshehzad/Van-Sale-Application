@@ -13,11 +13,7 @@ import 'package:flutter/services.dart';
 
 import '../providers/sale_order_detail_provider.dart';
 
-late List<CameraDescription> cameras;
 
-Future<void> initializeCameras() async {
-  cameras = await availableCameras();
-}
 
 class DeliveryDetailsPage extends StatefulWidget {
   final Map<String, dynamic> pickingData;
@@ -60,6 +56,92 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
     _serialNumberControllers.forEach((_, controllers) =>
         controllers.forEach((controller) => controller.dispose()));
     super.dispose();
+  }
+  Future<void> _confirmDelivery(BuildContext context, int pickingId, Map<String, dynamic> pickingDetail, List<Map<String, dynamic>> moveLines) async {
+    // Validation checks
+    String? errorMessage;
+
+    // Check if picking is already done
+    if (pickingDetail['state'] == 'done') {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('This delivery is already confirmed.'),
+          backgroundColor: Colors.green,
+        ),
+      );
+      return;
+    }
+
+    // Validate signature
+    if (_signature == null) {
+      errorMessage = 'Please provide a customer signature.';
+    }
+
+    // Validate at least one delivery photo
+    // if (errorMessage == null && _deliveryPhotos.isEmpty) {
+    //   errorMessage = 'Please capture at least one delivery photo.';
+    // }
+
+    // Validate serial numbers for serial-tracked products
+    if (errorMessage == null) {
+      for (var line in moveLines) {
+        final tracking = line['tracking'] as String? ?? 'none';
+        final moveLineId = line['id'] as int;
+        final productName = (line['product_id'] as List)[1] as String;
+        final quantity = line['quantity'] as double;
+
+        if (tracking == 'serial' && quantity > 0) {
+          final controllers = _serialNumberControllers[moveLineId];
+          if (controllers == null || controllers.length != quantity.toInt()) {
+            errorMessage = 'Please provide all required serial numbers for $productName.';
+            break;
+          }
+
+          for (int i = 0; i < controllers.length; i++) {
+            final serial = controllers[i].text.trim();
+            if (serial.isEmpty) {
+              errorMessage = 'Serial number ${i + 1} for $productName is required.';
+              break;
+            }
+
+            // Basic serial number format validation (example: alphanumeric, min length)
+            if (!RegExp(r'^[a-zA-Z0-9]{3,}$').hasMatch(serial)) {
+              errorMessage = 'Serial number ${i + 1} for $productName is invalid. Use alphanumeric characters (minimum 3 characters).';
+              break;
+            }
+
+            // Check for duplicate serial numbers within the same product
+            if (controllers
+                .asMap()
+                .entries
+                .where((entry) => entry.key != i && entry.value.text.trim() == serial)
+                .isNotEmpty) {
+              errorMessage = 'Duplicate serial number detected for $productName: $serial';
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    // Show error if validation failed
+    if (errorMessage != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(errorMessage),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 5),
+        ),
+      );
+      return;
+    }
+
+    // Proceed with submission if all validations pass
+    try {
+      await _submitDelivery(context, pickingId);
+    } catch (e) {
+      // Error handling already exists in _submitDelivery
+    }
   }
 
   // Existing _fetchDeliveryDetails method remains unchanged
@@ -372,17 +454,20 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
           [
             ['id', '=', pickingId]
           ],
-          ['state'],
+          ['state', 'company_id', 'location_id', 'location_dest_id'],
         ],
         'kwargs': {},
       });
-      final currentState = pickingStateResult[0]['state'] as String;
+      if (pickingStateResult.isEmpty) {
+        throw Exception('Picking ID $pickingId not found.');
+      }
+      final pickingData = pickingStateResult[0] as Map<String, dynamic>;
+      final currentState = pickingData['state'] as String;
       print('Picking state before validation: $currentState');
 
       // If picking is already done, skip validation and return success
       if (currentState == 'done') {
-        print(
-            'Picking is already in "done" state, no further validation needed.');
+        print('Picking is already in "done" state, no further validation needed.');
         setState(() {
           _deliveryDetailsFuture = _fetchDeliveryDetails(context);
         });
@@ -419,8 +504,7 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
           'method': 'create',
           'args': [
             {
-              'name':
-                  'Delivery Signature - ${DateTime.now().toIso8601String()}',
+              'name': 'Delivery Signature - ${DateTime.now().toIso8601String()}',
               'datas': _signature,
               'res_model': 'stock.picking',
               'res_id': pickingId,
@@ -440,8 +524,7 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
           'method': 'create',
           'args': [
             {
-              'name':
-                  'Delivery Photo ${i + 1} - ${DateTime.now().toIso8601String()}',
+              'name': 'Delivery Photo ${i + 1} - ${DateTime.now().toIso8601String()}',
               'datas': _deliveryPhotos[i],
               'res_model': 'stock.picking',
               'res_id': pickingId,
@@ -485,7 +568,7 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
           [
             ['picking_id', '=', pickingId]
           ],
-          ['id', 'quantity_done', 'product_uom_qty', 'product_id'],
+          ['id', 'quantity_done', 'product_uom_qty', 'product_id', 'location_id', 'location_dest_id'],
         ],
         'kwargs': {},
       });
@@ -503,30 +586,43 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
             'id',
             'move_id',
             'product_id',
-            'qty_done', // Use qty_done
+            'qty_done',
             'lot_id',
             'lot_name',
             'tracking',
             'company_id',
             'location_id',
-            'location_dest_id'
+            'location_dest_id',
           ],
         ],
         'kwargs': {},
       });
       print('Stock.move.line records fetched: $moveLineRecords');
 
+      // Validate move and move line data
+      if (moveRecords.isEmpty) {
+        throw Exception('No stock moves found for picking ID $pickingId.');
+      }
+      if (moveLineRecords.isEmpty) {
+        throw Exception('No stock move lines found for picking ID $pickingId.');
+      }
+
       // Update stock.move and assign serial numbers
       for (var move in moveRecords) {
         final moveId = move['id'] as int;
-        final currentDoneQty =
-            (move['quantity_done'] as num?)?.toDouble() ?? 0.0;
-        final demandedQty =
-            (move['product_uom_qty'] as num?)?.toDouble() ?? 0.0;
+        final currentDoneQty = (move['quantity_done'] as num?)?.toDouble() ?? 0.0;
+        final demandedQty = (move['product_uom_qty'] as num?)?.toDouble() ?? 0.0;
         final productId = (move['product_id'] as List)[0] as int;
         final productName = (move['product_id'] as List)[1] as String;
-        print(
-            'Move $moveId ($productName): quantity_done=$currentDoneQty, demanded=$demandedQty');
+        final locationId = move['location_id'] != false ? (move['location_id'] as List)[0] as int : null;
+        final locationDestId = move['location_dest_id'] != false ? (move['location_dest_id'] as List)[0] as int : null;
+
+        print('Move $moveId ($productName): quantity_done=$currentDoneQty, demanded=$demandedQty');
+
+        // Validate required fields
+        if (locationId == null || locationDestId == null) {
+          throw Exception('Move $moveId is missing location_id or location_dest_id.');
+        }
 
         if (currentDoneQty == 0.0 && demandedQty > 0.0) {
           print('Updating quantity_done for move $moveId to $demandedQty');
@@ -550,18 +646,23 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
           final moveLineId = moveLine['id'] as int;
           final qtyDone = (moveLine['qty_done'] as num?)?.toDouble() ?? 0.0;
           final tracking = moveLine['tracking'] as String? ?? 'none';
+          final moveLineLocationId = moveLine['location_id'] != false ? (moveLine['location_id'] as List)[0] as int : null;
+          final moveLineLocationDestId = moveLine['location_dest_id'] != false ? (moveLine['location_dest_id'] as List)[0] as int : null;
+
+          // Validate move line fields
+          if (moveLineLocationId == null || moveLineLocationDestId == null) {
+            throw Exception('Move line $moveLineId is missing location_id or location_dest_id.');
+          }
+
           if (tracking == 'serial' && demandedQty > 0) {
-            final serialNumberControllers =
-                _serialNumberControllers[moveLineId];
-            if (serialNumberControllers == null ||
-                serialNumberControllers.length != demandedQty.toInt()) {
+            final serialNumberControllers = _serialNumberControllers[moveLineId];
+            if (serialNumberControllers == null || serialNumberControllers.length != demandedQty.toInt()) {
               throw Exception(
                   'Insufficient serial numbers provided for product $productName. Expected ${demandedQty.toInt()} serial numbers.');
             }
 
             if (demandedQty > 1) {
-              print(
-                  'Splitting move line $moveLineId for quantity $demandedQty');
+              print('Splitting move line $moveLineId for quantity $demandedQty');
               await client.callKw({
                 'model': 'stock.move.line',
                 'method': 'unlink',
@@ -575,13 +676,11 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
               for (int i = 0; i < demandedQty.toInt(); i++) {
                 final serialNumber = serialNumberControllers[i].text.trim();
                 if (serialNumber.isEmpty) {
-                  throw Exception(
-                      'Serial number ${i + 1} required for product $productName.');
+                  throw Exception('Serial number ${i + 1} required for product $productName.');
                 }
 
                 // Validate serial number uniqueness
-                print(
-                    'Validating serial number: $serialNumber for product $productName');
+                print('Validating serial number: $serialNumber for product $productName');
                 final existingSerial = await client.callKw({
                   'model': 'stock.lot',
                   'method': 'search_read',
@@ -593,19 +692,18 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
                     ['id'],
                   ],
                   'kwargs': {},
+                  'context': {'company_id': pickingData['company_id'] != false ? (pickingData['company_id'] as List)[0] : 1},
                 });
 
                 int? lotId;
                 if (existingSerial.isNotEmpty) {
-                  throw Exception(
-                      'Serial number $serialNumber is already assigned to product $productName.');
+                  throw Exception('Serial number $serialNumber is already assigned to product $productName.');
                 } else {
                   int companyId = moveLine['company_id'] != false
                       ? (moveLine['company_id'] as List)[0] as int
-                      : 1;
+                      : (pickingData['company_id'] != false ? (pickingData['company_id'] as List)[0] as int : 1);
                   print('Using company_id: $companyId for stock.lot creation');
-                  print(
-                      'Creating new stock.lot for serial number: $serialNumber');
+                  print('Creating new stock.lot for serial number: $serialNumber');
                   lotId = await client.callKw({
                     'model': 'stock.lot',
                     'method': 'create',
@@ -617,13 +715,13 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
                       }
                     ],
                     'kwargs': {},
+                    'context': {'company_id': companyId},
                   }) as int;
                   print('Created stock.lot ID: $lotId');
                 }
 
                 // Create new move line
-                print(
-                    'Creating new move line for serial number: $serialNumber');
+                print('Creating new move line for serial number: $serialNumber');
                 final newMoveLineId = await client.callKw({
                   'model': 'stock.move.line',
                   'method': 'create',
@@ -631,19 +729,15 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
                     {
                       'move_id': moveId,
                       'product_id': productId,
-                      'qty_done': 1.0, // Use qty_done
+                      'qty_done': 1.0,
                       'lot_id': lotId,
                       'lot_name': serialNumber,
                       'picking_id': pickingId,
                       'company_id': moveLine['company_id'] != false
                           ? (moveLine['company_id'] as List)[0]
-                          : 1,
-                      'location_id': moveLine['location_id'] != false
-                          ? (moveLine['location_id'] as List)[0]
-                          : false,
-                      'location_dest_id': moveLine['location_dest_id'] != false
-                          ? (moveLine['location_dest_id'] as List)[0]
-                          : false,
+                          : (pickingData['company_id'] != false ? (pickingData['company_id'] as List)[0] : 1),
+                      'location_id': moveLineLocationId,
+                      'location_dest_id': moveLineLocationDestId,
                     }
                   ],
                   'kwargs': {},
@@ -658,7 +752,7 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
                     [
                       ['id', '=', newMoveLineId]
                     ],
-                    ['lot_id', 'lot_name', 'qty_done'], // Use qty_done
+                    ['lot_id', 'lot_name', 'qty_done'],
                   ],
                   'kwargs': {},
                 });
@@ -674,13 +768,11 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
               // Handle single quantity
               final serialNumber = serialNumberControllers[0].text.trim();
               if (serialNumber.isEmpty) {
-                throw Exception(
-                    'Serial number required for product $productName.');
+                throw Exception('Serial number required for product $productName.');
               }
 
               // Validate serial number uniqueness
-              print(
-                  'Validating serial number: $serialNumber for product $productName');
+              print('Validating serial number: $serialNumber for product $productName');
               final existingSerial = await client.callKw({
                 'model': 'stock.lot',
                 'method': 'search_read',
@@ -692,19 +784,18 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
                   ['id'],
                 ],
                 'kwargs': {},
+                'context': {'company_id': pickingData['company_id'] != false ? (pickingData['company_id'] as List)[0] : 1},
               });
 
               int? lotId;
               if (existingSerial.isNotEmpty) {
-                throw Exception(
-                    'Serial number $serialNumber is already assigned to product $productName.');
+                throw Exception('Serial number $serialNumber is already assigned to product $productName.');
               } else {
                 int companyId = moveLine['company_id'] != false
                     ? (moveLine['company_id'] as List)[0] as int
-                    : 1;
+                    : (pickingData['company_id'] != false ? (pickingData['company_id'] as List)[0] : 1);
                 print('Using company_id: $companyId for stock.lot creation');
-                print(
-                    'Creating new stock.lot for serial number: $serialNumber');
+                print('Creating new stock.lot for serial number: $serialNumber');
                 lotId = await client.callKw({
                   'model': 'stock.lot',
                   'method': 'create',
@@ -716,6 +807,7 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
                     }
                   ],
                   'kwargs': {},
+                  'context': {'company_id': companyId},
                 }) as int;
                 print('Created stock.lot ID: $lotId');
               }
@@ -730,7 +822,7 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
                   {
                     'lot_id': lotId,
                     'lot_name': serialNumber,
-                    'qty_done': 1.0, // Use qty_done
+                    'qty_done': 1.0,
                   },
                 ],
                 'kwargs': {},
@@ -745,7 +837,7 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
                   [
                     ['id', '=', moveLineId]
                   ],
-                  ['lot_id', 'lot_name', 'qty_done'], // Use qty_done
+                  ['lot_id', 'lot_name', 'qty_done'],
                 ],
                 'kwargs': {},
               });
@@ -769,7 +861,7 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
             [
               ['picking_id', '=', pickingId]
             ],
-            ['id', 'quantity_done', 'product_uom_qty', 'product_id'],
+            ['id', 'quantity_done', 'product_uom_qty', 'product_id', 'location_id', 'location_dest_id'],
           ],
           'kwargs': {},
         });
@@ -787,30 +879,37 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
               'id',
               'move_id',
               'product_id',
-              'qty_done', // Use qty_done
+              'qty_done',
               'lot_id',
               'lot_name',
               'tracking',
-              'company_id'
+              'company_id',
+              'location_id',
+              'location_dest_id',
             ],
           ],
           'kwargs': {},
         });
-        print(
-            'Updated stock.move.line records fetched: $updatedMoveLineRecords');
+        print('Updated stock.move.line records fetched: $updatedMoveLineRecords');
 
         // Perform pre-validation checks
         print('Performing pre-validation checks...');
         for (var move in updatedMoveRecords) {
           final moveId = move['id'] as int;
-          final demandedQty =
-              (move['product_uom_qty'] as num?)?.toDouble() ?? 0.0;
+          final demandedQty = (move['product_uom_qty'] as num?)?.toDouble() ?? 0.0;
           final doneQty = (move['quantity_done'] as num?)?.toDouble() ?? 0.0;
+          final locationId = move['location_id'] != false ? (move['location_id'] as List)[0] as int : null;
+          final locationDestId = move['location_dest_id'] != false ? (move['location_dest_id'] as List)[0] as int : null;
 
-          // Check if quantity_done matches product_uom_qty
+          // Checkprj: Check if quantity_done matches product_uom_qty
           if (doneQty != demandedQty) {
             throw Exception(
                 'Move $moveId has mismatched quantities: done=$doneQty, demanded=$demandedQty');
+          }
+
+          // Verify locations
+          if (locationId == null || locationDestId == null) {
+            throw Exception('Move $moveId is missing location_id or location_dest_id.');
           }
 
           // Verify corresponding stock.move.line records
@@ -826,6 +925,12 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
           for (var moveLine in relatedMoveLines) {
             final tracking = moveLine['tracking'] as String? ?? 'none';
             final qtyDone = moveLine['qty_done'] as double;
+            final moveLineLocationId = moveLine['location_id'] != false ? (moveLine['location_id'] as List)[0] as int : null;
+            final moveLineLocationDestId = moveLine['location_dest_id'] != false ? (moveLine['location_dest_id'] as List)[0] as int : null;
+
+            if (moveLineLocationId == null || moveLineLocationDestId == null) {
+              throw Exception('Move line ${moveLine['id']} is missing location_id or location_dest_id.');
+            }
             if (tracking == 'serial') {
               if (qtyDone != 1.0) {
                 throw Exception(
@@ -888,10 +993,8 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
             }).timeout(const Duration(seconds: 30), onTimeout: () {
               throw TimeoutException('Validation timed out after 30 seconds');
             });
-            print(
-                'Validation attempt $attempt succeeded, result: $validationResult');
-            if (validationResult is Map &&
-                validationResult.containsKey('res_id')) {
+            print('Validation attempt $attempt succeeded, result: $validationResult');
+            if (validationResult is Map && validationResult.containsKey('res_id')) {
               final wizardId = validationResult['res_id'] as int;
               await client.callKw({
                 'model': 'stock.immediate.transfer',
@@ -905,17 +1008,17 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
             }
             break;
           } catch (e) {
-            print(
-                'Validation attempt $attempt failed: $e, Full error: ${e.toString()}');
+            print('Validation attempt $attempt failed: $e, Full error: ${e.toString()}');
             if (e is OdooException) {
               lastErrorMessage = e.message;
               print('OdooException details: ${e.toString()}');
-              if (e.message
-                  .contains('You need to supply a Lot/Serial Number')) {
+              if (e.message.contains('You need to supply a Lot/Serial Number')) {
                 throw Exception(
                     'Serial number required for one or more products. Please ensure all serial numbers are provided.');
               } else if (e.message.contains('Not enough inventory')) {
                 throw Exception('Insufficient stock for one or more products.');
+              } else if (e.message.contains('ValueError')) {
+                throw Exception('Invalid data provided: $lastErrorMessage. Please check all inputs and try again.');
               }
             }
             if (attempt == maxRetries) {
@@ -928,13 +1031,13 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
                 ],
                 'kwargs': {
                   'body':
-                      'Failed to validate delivery after $maxRetries attempts. Error: ${lastErrorMessage ?? e}. Please review and validate manually.',
+                  'Failed to validate delivery after $maxRetries attempts. Error: ${lastErrorMessage ?? e}. Please review and validate manually.',
                   'message_type': 'comment',
                   'subtype_id': 1,
                 },
               });
               throw Exception(
-                  'Failed to validate picking after $maxRetries attempts. A message has been posted to the picking for manual review: ${lastErrorMessage ?? e}');
+                  'Failed to validate picking after $maxRetries attempts. Error: ${lastErrorMessage ?? e}. A message has been posted to the picking for manual review.');
             }
             await Future.delayed(Duration(seconds: attempt * 2));
           }
@@ -955,33 +1058,36 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
       String errorMessage = 'An error occurred while confirming the delivery.';
       if (e is OdooException) {
         if (e.message.contains('serial number has already been assigned')) {
-          errorMessage =
-              'The provided serial number is already assigned. Please use a unique serial number.';
+          errorMessage = 'The provided serial number is already assigned. Please use a unique serial number.';
         } else if (e.message.contains('Not enough inventory')) {
           errorMessage = 'Insufficient stock for one or more products.';
-        } else if (e.message
-            .contains('You need to supply a Lot/Serial Number')) {
-          errorMessage =
-              'A serial number is required for one or more products. Please ensure all serial numbers are provided.';
+        } else if (e.message.contains('You need to supply a Lot/Serial Number')) {
+          errorMessage = 'A serial number is required for one or more products. Please ensure all serial numbers are provided.';
+        } else if (e.message.contains('ValueError')) {
+          errorMessage = 'Invalid data provided: ${e.message}. Please check all inputs and try again.';
+        } else {
+          errorMessage = 'Server error: ${e.message}. Please try again or contact support.';
         }
       } else if (e.toString().contains('Serial number required')) {
-        errorMessage =
-            'Please provide serial numbers for all tracked products.';
+        errorMessage = 'Please provide serial numbers for all tracked products.';
       } else if (e.toString().contains('already assigned')) {
-        errorMessage =
-            'One or more serial numbers are already assigned. Please use unique serial numbers.';
+        errorMessage = 'One or more serial numbers are already assigned. Please use unique serial numbers.';
       } else if (e.toString().contains('is not a subtype of type')) {
-        errorMessage =
-            'An unexpected error occurred. Please try again or contact support.';
+        errorMessage = 'An unexpected data type error occurred. Please try again or contact support.';
+      } else if (e.toString().contains('missing location_id or location_dest_id')) {
+        errorMessage = 'Location information is missing for one or more stock moves or lines.';
       }
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(errorMessage)),
+        SnackBar(
+          content: Text(errorMessage),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 5),
+        ),
       );
     } finally {
       setState(() => _isLoading = false);
     }
   }
-
   Future<void> _captureSignature() async {
     final result = await Navigator.push(
       context,
@@ -999,43 +1105,6 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
 
   Future<void> _capturePhoto() async {
     final status = await Permission.camera.request();
-    if (status.isGranted) {
-      try {
-        if (cameras.isEmpty) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('No cameras available')),
-          );
-          return;
-        }
-        final result = await Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) => CameraScreen(camera: cameras.first),
-          ),
-        );
-        if (result != null) {
-          final base64Image = base64Encode(result);
-          setState(() {
-            _deliveryPhotos.add(base64Image);
-          });
-        }
-      } catch (e) {
-        print('Error capturing photo: $e');
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error capturing photo: $e')),
-        );
-      }
-    } else if (status.isDenied || status.isPermanentlyDenied) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Text('Camera permission is required to take photos.'),
-          action: SnackBarAction(
-            label: 'Settings',
-            onPressed: () => openAppSettings(),
-          ),
-        ),
-      );
-    }
   }
 
   Widget _buildDeliveryStatusChip(String state) {
@@ -1167,146 +1236,96 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Card(
-                      elevation: 2,
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12)),
-                      child: Padding(
-                        padding: const EdgeInsets.all(16.0),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Text(
-                                  'Delivery Status',
-                                  style: TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.grey[800],
-                                  ),
-                                ),
-                                _buildDeliveryStatusChip(pickingState),
-                              ],
-                            ),
-                            const SizedBox(height: 16),
-                            Text(
-                              'Reference Information',
-                              style: TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.grey[700],
-                              ),
-                            ),
-                            const Divider(),
-                            _buildInfoRow(Icons.confirmation_number_outlined,
-                                'Delivery Reference', pickingName),
-                            if (pickingDetail['origin'] != false)
-                              _buildInfoRow(
-                                  Icons.source_outlined,
-                                  'Source Document',
-                                  pickingDetail['origin'] as String),
-                            if (pickingDetail['user_id'] != false)
-                              _buildInfoRow(
-                                  Icons.person_outline,
-                                  'Responsible',
-                                  (pickingDetail['user_id'] as List)[1]
-                                      as String),
-                            const SizedBox(height: 16),
-                            Text(
-                              'Delivery Schedule',
-                              style: TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.grey[700],
-                              ),
-                            ),
-                            const Divider(),
-                            if (scheduledDate != null)
-                              _buildInfoRow(
-                                  Icons.calendar_today,
-                                  'Scheduled Date',
-                                  DateFormat('yyyy-MM-dd HH:mm')
-                                      .format(scheduledDate)),
-                            if (dateCompleted != null)
-                              _buildInfoRow(
-                                  Icons.check_circle_outline,
-                                  'Completed Date',
-                                  DateFormat('yyyy-MM-dd HH:mm')
-                                      .format(dateCompleted)),
-                            const SizedBox(height: 16),
-                            Text(
-                              'Location Information',
-                              style: TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.grey[700],
-                              ),
-                            ),
-                            const Divider(),
-                            if (pickingDetail['location_id'] != false)
-                              _buildInfoRow(
-                                  Icons.location_on_outlined,
-                                  'Source Location',
-                                  (pickingDetail['location_id'] as List)[1]
-                                      as String),
-                            if (pickingDetail['location_dest_id'] != false)
-                              _buildInfoRow(
-                                  Icons.pin_drop_outlined,
-                                  'Destination Location',
-                                  (pickingDetail['location_dest_id'] as List)[1]
-                                      as String),
-                            if (partnerAddress != null) ...[
-                              const SizedBox(height: 16),
+                    Padding(
+                      padding: const EdgeInsets.all(0.0),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
                               Text(
-                                'Customer Information',
+                                'Delivery Status',
                                 style: TextStyle(
-                                  fontSize: 14,
+                                  fontSize: 16,
                                   fontWeight: FontWeight.bold,
-                                  color: Colors.grey[700],
+                                  color: Colors.grey[800],
                                 ),
                               ),
-                              const Divider(),
-                              _buildInfoRow(
-                                  Icons.business_outlined,
-                                  'Customer',
-                                  (pickingDetail['partner_id'] as List)[1]
-                                      as String),
-                              _buildInfoRow(Icons.location_city_outlined,
-                                  'Address', _formatAddress(partnerAddress)),
-                              if (partnerAddress['phone'] != false)
-                                _buildInfoRow(Icons.phone_outlined, 'Phone',
-                                    partnerAddress['phone'] as String),
-                              if (partnerAddress['email'] != false)
-                                _buildInfoRow(Icons.email_outlined, 'Email',
-                                    partnerAddress['email'] as String),
+                              _buildDeliveryStatusChip(pickingState),
                             ],
-                            if (pickingDetail['carrier_id'] != false ||
-                                pickingDetail['weight'] != false) ...[
-                              const SizedBox(height: 16),
-                              Text(
-                                'Shipping Information',
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.grey[700],
-                                ),
-                              ),
-                              const Divider(),
-                              if (pickingDetail['carrier_id'] != false)
-                                _buildInfoRow(
-                                    Icons.local_shipping_outlined,
-                                    'Carrier',
-                                    (pickingDetail['carrier_id'] as List)[1]
-                                        as String),
-                              if (pickingDetail['weight'] != false)
-                                _buildInfoRow(Icons.scale_outlined, 'Weight',
-                                    '${pickingDetail['weight']} kg'),
-                            ],
+                          ),
+                          const SizedBox(height: 16),
+                          // Text(
+                          //   'Reference Information',
+                          //   style: TextStyle(
+                          //     fontSize: 14,
+                          //     fontWeight: FontWeight.bold,
+                          //     color: Colors.grey[700],
+                          //   ),
+                          // ),
+                          // const Divider(),
+                          _buildInfoRow(Icons.confirmation_number_outlined,
+                              'Delivery Reference', pickingName),
+                          if (pickingDetail['origin'] != false)
+                            _buildInfoRow(
+                                Icons.source_outlined,
+                                'Source Document',
+                                pickingDetail['origin'] as String),
+                          if (pickingDetail['user_id'] != false)
+                            _buildInfoRow(
+                                Icons.person_outline,
+                                'Responsible',
+                                (pickingDetail['user_id'] as List)[1]
+                                    as String),
+                          // const SizedBox(height: 16),
+                          // Text(
+                          //   'Delivery Schedule',
+                          //   style: TextStyle(
+                          //     fontSize: 14,
+                          //     fontWeight: FontWeight.bold,
+                          //     color: Colors.grey[700],
+                          //   ),
+                          // ),
+                          // const Divider(),
+                          if (scheduledDate != null)
+                            _buildInfoRow(
+                                Icons.calendar_today,
+                                'Scheduled Date',
+                                DateFormat('yyyy-MM-dd HH:mm')
+                                    .format(scheduledDate)),
+                          if (dateCompleted != null)
+                            _buildInfoRow(
+                                Icons.check_circle_outline,
+                                'Completed Date',
+                                DateFormat('yyyy-MM-dd HH:mm')
+                                    .format(dateCompleted)),
+                          // const SizedBox(height: 16),
+                          // Text(
+                          //   'Location Information',
+                          //   style: TextStyle(
+                          //     fontSize: 14,
+                          //     fontWeight: FontWeight.bold,
+                          //     color: Colors.grey[700],
+                          //   ),
+                          // ),
+                          // const Divider(),
+                          if (pickingDetail['location_id'] != false)
+                            _buildInfoRow(
+                                Icons.location_on_outlined,
+                                'Source Location',
+                                (pickingDetail['location_id'] as List)[1]
+                                    as String),
+                          if (pickingDetail['location_dest_id'] != false)
+                            _buildInfoRow(
+                                Icons.pin_drop_outlined,
+                                'Destination Location',
+                                (pickingDetail['location_dest_id'] as List)[1]
+                                    as String),
+                          if (partnerAddress != null) ...[
                             // const SizedBox(height: 16),
                             // Text(
-                            //   'Progress',
+                            //   'Customer Information',
                             //   style: TextStyle(
                             //     fontSize: 14,
                             //     fontWeight: FontWeight.bold,
@@ -1314,110 +1333,155 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
                             //   ),
                             // ),
                             // const Divider(),
-                            // const SizedBox(height: 8),
-                            // LinearProgressIndicator(
-                            //   value: totalOrdered > 0
-                            //       ? (totalPicked / totalOrdered).clamp(0.0, 1.0)
-                            //       : 0.0,
-                            //   backgroundColor: Colors.grey[300],
-                            //   color: Colors.green,
-                            // ),
-                            // const SizedBox(height: 8),
-                            // Row(
-                            //   mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            //   children: [
-                            //     Text(
-                            //       'Picked: ${totalPicked.toStringAsFixed(2)} / ${totalOrdered.toStringAsFixed(2)}',
-                            //       style: TextStyle(color: Colors.grey[700]),
-                            //     ),
-                            //     Text(
-                            //       'Completion: ${totalOrdered > 0 ? ((totalPicked / totalOrdered) * 100).toStringAsFixed(0) : "0"}%',
-                            //       style: const TextStyle(
-                            //           color: Colors.green,
-                            //           fontWeight: FontWeight.bold),
-                            //     ),
-                            //   ],
-                            // ),
-                            if (pickingDetail['note'] != false) ...[
-                              const SizedBox(height: 16),
-                              Text(
-                                'Notes',
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.grey[700],
-                                ),
-                              ),
-                              const Divider(),
-                              Container(
-                                padding: const EdgeInsets.all(8),
-                                decoration: BoxDecoration(
-                                  color: Colors.grey[100],
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: Text(pickingDetail['note'] as String),
-                              ),
-                            ],
-                            if (statusHistory.isNotEmpty) ...[
-                              const SizedBox(height: 16),
-                              Text(
-                                'Activity History',
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.grey[700],
-                                ),
-                              ),
-                              const Divider(),
-                              TimelineWidget(
-                                events: statusHistory.map((event) {
-                                  debugPrint(
-                                      'Processing statusHistory event: $event'); // Log the event
-                                  final date =
-                                      DateTime.parse(event['date'] as String);
-                                  String authorName = 'System';
-                                  if (event['author_id'] != null &&
-                                      event['author_id'] != false) {
-                                    final author = event['author_id'];
-                                    debugPrint(
-                                        'author_id: $author (type: ${author.runtimeType})'); // Log author_id
-                                    if (author is List &&
-                                        author.length > 1 &&
-                                        author[1] is String) {
-                                      authorName = author[1] as String;
-                                    } else {
-                                      debugPrint(
-                                          'Invalid author_id format: $author');
-                                    }
-                                  }
-                                  String? activityType;
-                                  if (event['activity_type_id'] != null &&
-                                      event['activity_type_id'] != false) {
-                                    final activity = event['activity_type_id'];
-                                    debugPrint(
-                                        'activity_type_id: $activity (type: ${activity.runtimeType})'); // Log activity_type_id
-                                    if (activity is List &&
-                                        activity.length > 1 &&
-                                        activity[1] is String) {
-                                      activityType = activity[1] as String;
-                                    } else {
-                                      debugPrint(
-                                          'Invalid activity_type_id format: $activity');
-                                    }
-                                  }
-                                  return {
-                                    'date': date,
-                                    'title': authorName,
-                                    'description': event['body'] as String? ??
-                                        'No description',
-                                    'status': event['state'] as String?,
-                                    'activity_type': activityType,
-                                  };
-                                }).toList(),
-                              ),
-                            ],
+                            _buildInfoRow(
+                                Icons.business_outlined,
+                                'Customer',
+                                (pickingDetail['partner_id'] as List)[1]
+                                    as String),
+                            _buildInfoRow(Icons.location_city_outlined,
+                                'Address', _formatAddress(partnerAddress)),
+                            if (partnerAddress['phone'] != false)
+                              _buildInfoRow(Icons.phone_outlined, 'Phone',
+                                  partnerAddress['phone'] as String),
+                            if (partnerAddress['email'] != false)
+                              _buildInfoRow(Icons.email_outlined, 'Email',
+                                  partnerAddress['email'] as String),
                           ],
-                        ),
+                          if (pickingDetail['carrier_id'] != false ||
+                              pickingDetail['weight'] != false) ...[
+                            // const SizedBox(height: 16),
+                            // Text(
+                            //   'Shipping Information',
+                            //   style: TextStyle(
+                            //     fontSize: 14,
+                            //     fontWeight: FontWeight.bold,
+                            //     color: Colors.grey[700],
+                            //   ),
+                            // ),
+                            // const Divider(),
+                            if (pickingDetail['carrier_id'] != false)
+                              _buildInfoRow(
+                                  Icons.local_shipping_outlined,
+                                  'Carrier',
+                                  (pickingDetail['carrier_id'] as List)[1]
+                                      as String),
+                            if (pickingDetail['weight'] != false)
+                              _buildInfoRow(Icons.scale_outlined, 'Weight',
+                                  '${pickingDetail['weight']} kg'),
+                          ],
+                          // const SizedBox(height: 16),
+                          // Text(
+                          //   'Progress',
+                          //   style: TextStyle(
+                          //     fontSize: 14,
+                          //     fontWeight: FontWeight.bold,
+                          //     color: Colors.grey[700],
+                          //   ),
+                          // ),
+                          // const Divider(),
+                          // const SizedBox(height: 8),
+                          // LinearProgressIndicator(
+                          //   value: totalOrdered > 0
+                          //       ? (totalPicked / totalOrdered).clamp(0.0, 1.0)
+                          //       : 0.0,
+                          //   backgroundColor: Colors.grey[300],
+                          //   color: Colors.green,
+                          // ),
+                          // const SizedBox(height: 8),
+                          // Row(
+                          //   mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          //   children: [
+                          //     Text(
+                          //       'Picked: ${totalPicked.toStringAsFixed(2)} / ${totalOrdered.toStringAsFixed(2)}',
+                          //       style: TextStyle(color: Colors.grey[700]),
+                          //     ),
+                          //     Text(
+                          //       'Completion: ${totalOrdered > 0 ? ((totalPicked / totalOrdered) * 100).toStringAsFixed(0) : "0"}%',
+                          //       style: const TextStyle(
+                          //           color: Colors.green,
+                          //           fontWeight: FontWeight.bold),
+                          //     ),
+                          //   ],
+                          // ),
+                          if (pickingDetail['note'] != false) ...[
+                            const SizedBox(height: 16),
+                            Text(
+                              'Notes',
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.grey[700],
+                              ),
+                            ),
+                            const Divider(),
+                            Container(
+                              padding: const EdgeInsets.all(8),
+                              decoration: BoxDecoration(
+                                color: Colors.grey[100],
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Text(pickingDetail['note'] as String),
+                            ),
+                          ],
+                          if (statusHistory.isNotEmpty) ...[
+                            const SizedBox(height: 16),
+                            Text(
+                              'Activity History',
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.grey[700],
+                              ),
+                            ),
+                            const Divider(),
+                            TimelineWidget(
+                              events: statusHistory.map((event) {
+                                debugPrint(
+                                    'Processing statusHistory event: $event'); // Log the event
+                                final date =
+                                    DateTime.parse(event['date'] as String);
+                                String authorName = 'System';
+                                if (event['author_id'] != null &&
+                                    event['author_id'] != false) {
+                                  final author = event['author_id'];
+                                  debugPrint(
+                                      'author_id: $author (type: ${author.runtimeType})'); // Log author_id
+                                  if (author is List &&
+                                      author.length > 1 &&
+                                      author[1] is String) {
+                                    authorName = author[1] as String;
+                                  } else {
+                                    debugPrint(
+                                        'Invalid author_id format: $author');
+                                  }
+                                }
+                                String? activityType;
+                                if (event['activity_type_id'] != null &&
+                                    event['activity_type_id'] != false) {
+                                  final activity = event['activity_type_id'];
+                                  debugPrint(
+                                      'activity_type_id: $activity (type: ${activity.runtimeType})'); // Log activity_type_id
+                                  if (activity is List &&
+                                      activity.length > 1 &&
+                                      activity[1] is String) {
+                                    activityType = activity[1] as String;
+                                  } else {
+                                    debugPrint(
+                                        'Invalid activity_type_id format: $activity');
+                                  }
+                                }
+                                return {
+                                  'date': date,
+                                  'title': authorName,
+                                  'description': event['body'] as String? ??
+                                      'No description',
+                                  'status': event['state'] as String?,
+                                  'activity_type': activityType,
+                                };
+                              }).toList(),
+                            ),
+                          ],
+                        ],
                       ),
                     ),
                   ],
@@ -1426,95 +1490,30 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
 
               // Products Tab (unchanged)
               SingleChildScrollView(
-                padding: const EdgeInsets.all(16.0),
+                padding: const EdgeInsets.all(12.0),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Card(
-                      elevation: 2,
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12)),
-                      child: Padding(
-                        padding: const EdgeInsets.all(16.0),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Text(
-                                  'Products Summary',
-                                  style: TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.grey[800],
-                                  ),
-                                ),
-                                Text(
-                                  '${moveLines.length} items',
-                                  style: TextStyle(
-                                    color: Colors.grey[600],
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 8),
-                            const Divider(),
-                            const SizedBox(height: 8),
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Text('Total Ordered',
-                                    style: TextStyle(color: Colors.grey[700])),
-                                Text(
-                                  totalOrdered.toStringAsFixed(2),
-                                  style: const TextStyle(
-                                      fontWeight: FontWeight.bold),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 8),
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Text('Total Picked',
-                                    style: TextStyle(color: Colors.grey[700])),
-                                Text(
-                                  totalPicked.toStringAsFixed(2),
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    color: totalPicked >= totalOrdered
-                                        ? Colors.green
-                                        : Colors.red,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 8),
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Text('Total Value',
-                                    style: TextStyle(color: Colors.grey[700])),
-                                Text(
-                                  '\$${totalValue.toStringAsFixed(2)}',
-                                  style: const TextStyle(
-                                      fontWeight: FontWeight.bold),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text('Products',
+                            style: TextStyle(
+                                fontSize: 16, fontWeight: FontWeight.w600)),
+                        Text('${moveLines.length} items',
+                            style: const TextStyle(fontSize: 14)),
+                      ],
                     ),
-                    const SizedBox(height: 16),
-                    Text(
-                      'Product Details',
-                      style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.grey[800]),
+                    const SizedBox(height: 8),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text('Ordered: $totalOrdered',
+                            style: const TextStyle(fontSize: 14)),
+                        Text('Picked: $totalPicked',
+                            style:
+                                TextStyle(fontSize: 14, color: Colors.green)),
+                      ],
                     ),
                     const SizedBox(height: 8),
                     ListView.builder(
@@ -1523,59 +1522,30 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
                       itemCount: moveLines.length,
                       itemBuilder: (context, index) {
                         final line = moveLines[index];
-                        debugPrint('Line $index: $line');
-
                         final productId = line['product_id'];
-                        if (productId is! List) {
-                          debugPrint(
-                              'Error: product_id is not a List, it is ${productId.runtimeType} with value $productId');
+                        if (productId is! List)
                           return const ListTile(
                               title: Text('Invalid product data'));
-                        }
-                        final productName = (productId as List).length > 1
+                        final productName = productId.length > 1
                             ? productId[1] as String
                             : 'Unknown Product';
-                        debugPrint(
-                            'productName for line $index: $productName (type: ${productName.runtimeType})');
-
                         final pickedQty = line['quantity'] as double? ?? 0.0;
-                        debugPrint(
-                            'pickedQty for line $index: $pickedQty (type: ${pickedQty.runtimeType})');
-
                         final orderedQty =
                             line['ordered_qty'] as double? ?? 0.0;
-                        debugPrint(
-                            'orderedQty for line $index: $orderedQty (type: ${orderedQty.runtimeType})');
-
                         final productCode = line['product_code'] is String
                             ? line['product_code'] as String
                             : '';
-                        debugPrint(
-                            'productCode for line $index: $productCode (type: ${productCode.runtimeType})');
-
                         final productBarcode = line['product_barcode'] is String
                             ? line['product_barcode'] as String
                             : '';
-                        debugPrint(
-                            'productBarcode for line $index: $productBarcode (type: ${productBarcode.runtimeType})');
-
                         final uomName = line['uom_name'] is String
                             ? line['uom_name'] as String
                             : 'Units';
-                        debugPrint(
-                            'uomName for line $index: $uomName (type: ${uomName.runtimeType})');
-
                         final priceUnit = line['price_unit'] as double? ?? 0.0;
-                        debugPrint(
-                            'priceUnit for line $index: $priceUnit (type: ${priceUnit.runtimeType})');
-
                         final lotName = line['lot_name'] != false &&
                                 line['lot_name'] is String
                             ? line['lot_name'] as String
                             : null;
-                        debugPrint(
-                            'lotName for line $index: $lotName (type: ${lotName?.runtimeType ?? 'null'})');
-
                         final productImage = line['product_image'];
                         Widget imageWidget;
                         if (productImage != null &&
@@ -1583,175 +1553,81 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
                             productImage is String) {
                           try {
                             imageWidget = Image.memory(
-                              base64Decode(productImage as String),
-                              fit: BoxFit.cover,
-                            );
+                                base64Decode(productImage),
+                                fit: BoxFit.cover,
+                                width: 40,
+                                height: 40);
                           } catch (e) {
-                            debugPrint(
-                                'Error decoding productImage for line $index: $e');
                             imageWidget = Icon(Icons.inventory_2,
-                                color: Colors.grey[400], size: 30);
+                                color: Colors.grey[400], size: 24);
                           }
                         } else {
                           imageWidget = Icon(Icons.inventory_2,
-                              color: Colors.grey[400], size: 30);
+                              color: Colors.grey[400], size: 24);
                         }
-
                         final lineValue = priceUnit * pickedQty;
-                        debugPrint('lineValue for line $index: $lineValue');
 
-                        return Card(
-                          elevation: 1,
-                          margin: const EdgeInsets.only(bottom: 12),
-                          child: Padding(
-                            padding: const EdgeInsets.all(12.0),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 8.0),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Container(
+                                width: 40,
+                                height: 40,
+                                decoration: BoxDecoration(
+                                  color: Colors.grey[100],
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: imageWidget,
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    Container(
-                                      width: 60,
-                                      height: 60,
-                                      decoration: BoxDecoration(
-                                        color: Colors.grey[200],
-                                        borderRadius: BorderRadius.circular(8),
-                                      ),
-                                      child: imageWidget,
+                                    Text(productName,
+                                        style: const TextStyle(
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.w600)),
+                                    if (productCode.isNotEmpty)
+                                      Text('SKU: $productCode',
+                                          style: const TextStyle(
+                                              fontSize: 12,
+                                              color: Colors.grey)),
+                                    if (productBarcode.isNotEmpty)
+                                      Text('Barcode: $productBarcode',
+                                          style: const TextStyle(
+                                              fontSize: 12,
+                                              color: Colors.grey)),
+                                    if (lotName != null)
+                                      Text('Lot: $lotName',
+                                          style: const TextStyle(
+                                              fontSize: 12,
+                                              color: Colors.grey)),
+                                    const SizedBox(height: 4),
+                                    Row(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.spaceBetween,
+                                      children: [
+                                        Text('Ordered: $orderedQty $uomName',
+                                            style:
+                                                const TextStyle(fontSize: 12)),
+                                        Text('Picked: $pickedQty $uomName',
+                                            style: TextStyle(
+                                                fontSize: 12,
+                                                color: pickedQty >= orderedQty
+                                                    ? Colors.green
+                                                    : Colors.orange)),
+                                      ],
                                     ),
-                                    const SizedBox(width: 12),
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          Text(
-                                            productName,
-                                            style: const TextStyle(
-                                              fontWeight: FontWeight.bold,
-                                              fontSize: 16,
-                                            ),
-                                          ),
-                                          if (productCode.isNotEmpty)
-                                            Text(
-                                              'SKU: $productCode',
-                                              style: TextStyle(
-                                                  color: Colors.grey[700],
-                                                  fontSize: 13),
-                                            ),
-                                          if (productBarcode.isNotEmpty)
-                                            Text(
-                                              'Barcode: $productBarcode',
-                                              style: TextStyle(
-                                                  color: Colors.grey[700],
-                                                  fontSize: 13),
-                                            ),
-                                          if (lotName != null)
-                                            Text(
-                                              'Lot: $lotName',
-                                              style: TextStyle(
-                                                  color: Colors.grey[700],
-                                                  fontSize: 13),
-                                            ),
-                                        ],
-                                      ),
-                                    ),
+                                    Text(
+                                        'Value: \$${lineValue.toStringAsFixed(2)}',
+                                        style: const TextStyle(fontSize: 12)),
                                   ],
                                 ),
-                                const Divider(height: 24),
-                                Row(
-                                  mainAxisAlignment:
-                                      MainAxisAlignment.spaceBetween,
-                                  children: [
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          Text(
-                                            'Ordered',
-                                            style: TextStyle(
-                                                color: Colors.grey[600],
-                                                fontSize: 12),
-                                          ),
-                                          Text(
-                                            '${orderedQty.toStringAsFixed(2)} $uomName',
-                                            style: const TextStyle(
-                                                fontWeight: FontWeight.bold),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          Text(
-                                            'Picked',
-                                            style: TextStyle(
-                                                color: Colors.grey[600],
-                                                fontSize: 12),
-                                          ),
-                                          Text(
-                                            '${pickedQty.toStringAsFixed(2)} $uomName',
-                                            style: TextStyle(
-                                              fontWeight: FontWeight.bold,
-                                              color: pickedQty >= orderedQty
-                                                  ? Colors.green
-                                                  : Colors.orange,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.end,
-                                        children: [
-                                          Text(
-                                            'Value',
-                                            style: TextStyle(
-                                                color: Colors.grey[600],
-                                                fontSize: 12),
-                                          ),
-                                          Text(
-                                            '\$${lineValue.toStringAsFixed(2)}',
-                                            style: const TextStyle(
-                                              fontWeight: FontWeight.bold,
-                                              color: Colors.black,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: 8),
-                                LinearProgressIndicator(
-                                  value: orderedQty > 0
-                                      ? (pickedQty / orderedQty).clamp(0.0, 1.0)
-                                      : 0.0,
-                                  backgroundColor: Colors.grey[200],
-                                  color: pickedQty >= orderedQty
-                                      ? Colors.green
-                                      : Colors.orange,
-                                  minHeight: 5,
-                                ),
-                                const SizedBox(height: 8),
-                                Text(
-                                  '${orderedQty > 0 ? ((pickedQty / orderedQty) * 100).toStringAsFixed(0) : 0}% complete',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: pickedQty >= orderedQty
-                                        ? Colors.green
-                                        : Colors.grey[600],
-                                  ),
-                                ),
-                              ],
-                            ),
+                              ),
+                            ],
                           ),
                         );
                       },
@@ -1766,241 +1642,229 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Card(
-                      elevation: 2,
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12)),
-                      child: Padding(
-                        padding: const EdgeInsets.all(16.0),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Delivery Confirmation',
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Delivery Confirmation',
+                          style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.grey[800]),
+                        ),
+                        const SizedBox(height: 16),
+                        if (pickingDetail['state'] == 'done') ...[
+                          const Icon(Icons.check_circle,
+                              color: Colors.green, size: 48),
+                          const SizedBox(height: 8),
+                          const Text(
+                              'This delivery has been completed and confirmed.',
+                              style:
+                                  TextStyle(fontSize: 16, color: Colors.green)),
+                        ] else ...[
+                          // Signature Section
+                          Text('Customer Signature',
                               style: TextStyle(
-                                  fontSize: 18,
+                                  fontSize: 16,
                                   fontWeight: FontWeight.bold,
-                                  color: Colors.grey[800]),
-                            ),
-                            const SizedBox(height: 16),
-                            if (pickingDetail['state'] == 'done') ...[
-                              const Icon(Icons.check_circle,
-                                  color: Colors.green, size: 48),
-                              const SizedBox(height: 8),
-                              const Text(
-                                  'This delivery has been completed and confirmed.',
-                                  style: TextStyle(
-                                      fontSize: 16, color: Colors.green)),
-                            ] else ...[
-                              // Signature Section
-                              Text('Customer Signature',
-                                  style: TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.bold,
-                                      color: Colors.grey[800])),
-                              const SizedBox(height: 8),
-                              _signature == null
-                                  ? ElevatedButton.icon(
-                                      onPressed: _captureSignature,
-                                      icon: const Icon(Icons.draw,
-                                          color: Colors.white),
-                                      label: const Text(
-                                        'Capture Signature',
-                                        style: TextStyle(color: Colors.white),
-                                      ),
-                                      style: ElevatedButton.styleFrom(
-                                        backgroundColor:
-                                            const Color(0xFFA12424),
-                                        minimumSize:
-                                            const Size(double.infinity, 48),
-                                      ),
-                                    )
-                                  : Stack(
-                                      alignment: Alignment.topRight,
+                                  color: Colors.grey[800])),
+                          const SizedBox(height: 8),
+                          _signature == null
+                              ? ElevatedButton.icon(
+                                  onPressed: _captureSignature,
+                                  icon: const Icon(Icons.draw,
+                                      color: Colors.white),
+                                  label: const Text(
+                                    'Capture Signature',
+                                    style: TextStyle(color: Colors.white),
+                                  ),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: const Color(0xFFA12424),
+                                    minimumSize:
+                                        const Size(double.infinity, 48),
+                                  ),
+                                )
+                              : Stack(
+                                  alignment: Alignment.topRight,
+                                  children: [
+                                    Container(
+                                      height: 150,
+                                      width: double.infinity,
+                                      decoration: BoxDecoration(
+                                          border:
+                                              Border.all(color: Colors.grey),
+                                          borderRadius:
+                                              BorderRadius.circular(8)),
+                                      child: Image.memory(
+                                          base64Decode(_signature!),
+                                          fit: BoxFit.contain),
+                                    ),
+                                    IconButton(
+                                      icon: const Icon(Icons.refresh,
+                                          color: Colors.grey),
+                                      onPressed: () =>
+                                          setState(() => _signature = null),
+                                    ),
+                                  ],
+                                ),
+                          const SizedBox(height: 24),
+
+                          // Delivery Photos Section
+                          Text('Delivery Photos',
+                              style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.grey[800])),
+                          const SizedBox(height: 8),
+                          // ElevatedButton.icon(
+                          //   onPressed: _capturePhoto,
+                          //   icon: const Icon(Icons.camera_alt,
+                          //       color: Colors.white),
+                          //   label: const Text(
+                          //     'Take Photo',
+                          //     style: TextStyle(color: Colors.white),
+                          //   ),
+                          //   style: ElevatedButton.styleFrom(
+                          //     backgroundColor: const Color(0xFFA12424),
+                          //     minimumSize: const Size(double.infinity, 48),
+                          //   ),
+                          // ),
+                          if (_deliveryPhotos.isNotEmpty) ...[
+                            const SizedBox(height: 12),
+                            SizedBox(
+                              height: 100,
+                              child: ListView.builder(
+                                scrollDirection: Axis.horizontal,
+                                itemCount: _deliveryPhotos.length,
+                                itemBuilder: (context, index) {
+                                  return Container(
+                                    margin: const EdgeInsets.only(right: 8),
+                                    width: 100,
+                                    decoration: BoxDecoration(
+                                        border: Border.all(color: Colors.grey),
+                                        borderRadius: BorderRadius.circular(8)),
+                                    child: Stack(
+                                      fit: StackFit.expand,
                                       children: [
-                                        Container(
-                                          height: 150,
-                                          width: double.infinity,
-                                          decoration: BoxDecoration(
-                                              border: Border.all(
-                                                  color: Colors.grey),
-                                              borderRadius:
-                                                  BorderRadius.circular(8)),
-                                          child: Image.memory(
-                                              base64Decode(_signature!),
-                                              fit: BoxFit.contain),
-                                        ),
-                                        IconButton(
-                                          icon: const Icon(Icons.refresh,
-                                              color: Colors.grey),
-                                          onPressed: () =>
-                                              setState(() => _signature = null),
+                                        Image.memory(
+                                            base64Decode(
+                                                _deliveryPhotos[index]),
+                                            fit: BoxFit.cover),
+                                        Positioned(
+                                          top: 0,
+                                          right: 0,
+                                          child: GestureDetector(
+                                            onTap: () => setState(() =>
+                                                _deliveryPhotos
+                                                    .removeAt(index)),
+                                            child: Container(
+                                              padding: const EdgeInsets.all(2),
+                                              decoration: const BoxDecoration(
+                                                  color: Colors.red,
+                                                  shape: BoxShape.circle),
+                                              child: const Icon(Icons.close,
+                                                  size: 16,
+                                                  color: Colors.white),
+                                            ),
+                                          ),
                                         ),
                                       ],
                                     ),
-                              const SizedBox(height: 24),
-
-                              // Delivery Photos Section
-                              Text('Delivery Photos',
-                                  style: TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.bold,
-                                      color: Colors.grey[800])),
-                              const SizedBox(height: 8),
-                              ElevatedButton.icon(
-                                onPressed: _capturePhoto,
-                                icon: const Icon(Icons.camera_alt,
-                                    color: Colors.white),
-                                label: const Text(
-                                  'Take Photo',
-                                  style: TextStyle(color: Colors.white),
-                                ),
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: const Color(0xFFA12424),
-                                  minimumSize: const Size(double.infinity, 48),
-                                ),
+                                  );
+                                },
                               ),
-                              if (_deliveryPhotos.isNotEmpty) ...[
-                                const SizedBox(height: 12),
-                                SizedBox(
-                                  height: 100,
-                                  child: ListView.builder(
-                                    scrollDirection: Axis.horizontal,
-                                    itemCount: _deliveryPhotos.length,
-                                    itemBuilder: (context, index) {
-                                      return Container(
-                                        margin: const EdgeInsets.only(right: 8),
-                                        width: 100,
-                                        decoration: BoxDecoration(
-                                            border:
-                                                Border.all(color: Colors.grey),
-                                            borderRadius:
-                                                BorderRadius.circular(8)),
-                                        child: Stack(
-                                          fit: StackFit.expand,
-                                          children: [
-                                            Image.memory(
-                                                base64Decode(
-                                                    _deliveryPhotos[index]),
-                                                fit: BoxFit.cover),
-                                            Positioned(
-                                              top: 0,
-                                              right: 0,
-                                              child: GestureDetector(
-                                                onTap: () => setState(() =>
-                                                    _deliveryPhotos
-                                                        .removeAt(index)),
-                                                child: Container(
-                                                  padding:
-                                                      const EdgeInsets.all(2),
-                                                  decoration:
-                                                      const BoxDecoration(
-                                                          color: Colors.red,
-                                                          shape:
-                                                              BoxShape.circle),
-                                                  child: const Icon(Icons.close,
-                                                      size: 16,
-                                                      color: Colors.white),
-                                                ),
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      );
-                                    },
-                                  ),
-                                ),
-                              ],
-                              const SizedBox(height: 24),
-
-                              // Serial Numbers Section
-                              // In the Confirmation Tab, replace the Serial Numbers section
-                              Text('Serial Numbers',
-                                  style: TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.bold,
-                                      color: Colors.grey[800])),
-                              const SizedBox(height: 8),
-                              ...moveLines.expand((line) {
-                                final tracking =
-                                    line['tracking'] as String? ?? 'none';
-                                final moveLineId = line['id'] as int;
-                                final productName =
-                                    (line['product_id'] as List)[1] as String;
-                                final quantity = line['quantity'] as double;
-                                if (tracking == 'serial' && quantity > 0) {
-                                  // Initialize controllers for each serial number
-                                  if (!_serialNumberControllers
-                                      .containsKey(moveLineId)) {
-                                    _serialNumberControllers[moveLineId] =
-                                        List.generate(quantity.toInt(),
-                                            (_) => TextEditingController());
-                                  }
-                                  return List.generate(quantity.toInt(),
-                                      (index) {
-                                    return Padding(
-                                      padding:
-                                          const EdgeInsets.only(bottom: 12.0),
-                                      child: TextField(
-                                        controller: _serialNumberControllers[
-                                            moveLineId]![index],
-                                        decoration: InputDecoration(
-                                          labelText:
-                                              'Serial Number ${index + 1} for $productName',
-                                          border: OutlineInputBorder(
-                                              borderRadius:
-                                                  BorderRadius.circular(8)),
-                                          hintText:
-                                              'Enter serial number ${index + 1}',
-                                        ),
-                                      ),
-                                    );
-                                  });
-                                }
-                                return [const SizedBox.shrink()];
-                              }).toList(),
-                              const SizedBox(height: 24),
-
-                              // Delivery Notes Section
-                              Text('Delivery Notes',
-                                  style: TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.bold,
-                                      color: Colors.grey[800])),
-                              const SizedBox(height: 8),
-                              TextField(
-                                controller: _noteController,
-                                maxLines: 4,
-                                decoration: InputDecoration(
-                                  hintText:
-                                      'Add any special notes about this delivery...',
-                                  border: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(8)),
-                                ),
-                              ),
-                              const SizedBox(height: 24),
-
-                              // Confirm Delivery Button
-                              ElevatedButton.icon(
-                                onPressed: _isLoading
-                                    ? null
-                                    : () => _submitDelivery(
-                                        context, pickingDetail['id'] as int),
-                                icon: const Icon(Icons.check_circle,
-                                    color: Colors.white),
-                                label: const Text(
-                                  'Confirm Delivery',
-                                  style: TextStyle(color: Colors.white),
-                                ),
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: Colors.green,
-                                  minimumSize: const Size(double.infinity, 48),
-                                ),
-                              ),
-                            ],
+                            ),
                           ],
-                        ),
-                      ),
+                          const SizedBox(height: 24),
+
+                          // Serial Numbers Section
+                          // In the Confirmation Tab, replace the Serial Numbers section
+                          Text('Serial Numbers',
+                              style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.grey[800])),
+                          const SizedBox(height: 8),
+                          ...moveLines.expand((line) {
+                            final tracking =
+                                line['tracking'] as String? ?? 'none';
+                            final moveLineId = line['id'] as int;
+                            final productName =
+                                (line['product_id'] as List)[1] as String;
+                            final quantity = line['quantity'] as double;
+                            if (tracking == 'serial' && quantity > 0) {
+                              // Initialize controllers for each serial number
+                              if (!_serialNumberControllers
+                                  .containsKey(moveLineId)) {
+                                _serialNumberControllers[moveLineId] =
+                                    List.generate(quantity.toInt(),
+                                        (_) => TextEditingController());
+                              }
+                              return List.generate(quantity.toInt(), (index) {
+                                return Padding(
+                                  padding: const EdgeInsets.only(bottom: 12.0),
+                                  child: TextField(
+                                    controller: _serialNumberControllers[
+                                        moveLineId]![index],
+                                    decoration: InputDecoration(
+                                      labelText:
+                                          'Serial Number ${index + 1} for $productName',
+                                      border: OutlineInputBorder(
+                                          borderRadius:
+                                              BorderRadius.circular(8)),
+                                      hintText:
+                                          'Enter serial number ${index + 1}',
+                                    ),
+                                  ),
+                                );
+                              });
+                            }
+                            return [const SizedBox.shrink()];
+                          }).toList(),
+                          const SizedBox(height: 24),
+
+                          // Delivery Notes Section
+                          Text('Delivery Notes',
+                              style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.grey[800])),
+                          const SizedBox(height: 8),
+                          TextField(
+                            controller: _noteController,
+                            maxLines: 4,
+                            decoration: InputDecoration(
+                              hintText:
+                                  'Add any special notes about this delivery...',
+                              border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(8)),
+                            ),
+                          ),
+                          const SizedBox(height: 24),
+
+                          // Confirm Delivery Button
+                          ElevatedButton.icon(
+                            onPressed: _isLoading
+                                ? null
+                                : () => _confirmDelivery(
+                                      context,
+                                      pickingDetail['id'] as int,
+                                      pickingDetail,
+                                      moveLines,
+                                    ),
+                            icon: const Icon(Icons.check_circle,
+                                color: Colors.white),
+                            label: const Text(
+                              'Confirm Delivery',
+                              style: TextStyle(color: Colors.white),
+                            ),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.green,
+                              minimumSize: const Size(double.infinity, 48),
+                            ),
+                          ),
+                        ],
+                      ],
                     ),
                   ],
                 ),
@@ -2341,64 +2205,4 @@ class SignaturePainter extends CustomPainter {
   bool shouldRepaint(SignaturePainter oldDelegate) => true;
 }
 
-class CameraScreen extends StatefulWidget {
-  final CameraDescription camera;
 
-  const CameraScreen({Key? key, required this.camera}) : super(key: key);
-
-  @override
-  _CameraScreenState createState() => _CameraScreenState();
-}
-
-class _CameraScreenState extends State<CameraScreen> {
-  late CameraController _controller;
-  late Future<void> _initializeControllerFuture;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = CameraController(
-      widget.camera,
-      ResolutionPreset.medium,
-    );
-    _initializeControllerFuture = _controller.initialize();
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Take Photo')),
-      body: FutureBuilder<void>(
-        future: _initializeControllerFuture,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.done) {
-            return CameraPreview(_controller);
-          } else {
-            return const Center(child: CircularProgressIndicator());
-          }
-        },
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () async {
-          try {
-            await _initializeControllerFuture;
-            final XFile image = await _controller.takePicture();
-            final bytes = await image.readAsBytes();
-            Navigator.pop(context, bytes);
-          } catch (e) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('Error: $e')),
-            );
-          }
-        },
-        child: const Icon(Icons.camera_alt),
-      ),
-    );
-  }
-}

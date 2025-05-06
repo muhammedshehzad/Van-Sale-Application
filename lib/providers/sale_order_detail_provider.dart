@@ -157,7 +157,8 @@ class OdooProvider extends ChangeNotifier {
       final Map<String, dynamic> result = jsonDecode(response.body);
 
       if (result.containsKey('error')) {
-        throw Exception(result['error']['message'] ?? 'Failed to get picking lines');
+        throw Exception(
+            result['error']['message'] ?? 'Failed to get picking lines');
       }
 
       // Fetch product names for all products
@@ -175,7 +176,8 @@ class OdooProvider extends ChangeNotifier {
 
     try {
       // Extract all product IDs
-      List<int> productIds = lines.map<int>((line) => line['product_id'][0] as int).toList();
+      List<int> productIds = lines.map<int>((
+          line) => line['product_id'][0] as int).toList();
 
       // Get product details
       final response = await http.post(
@@ -202,7 +204,8 @@ class OdooProvider extends ChangeNotifier {
       final Map<String, dynamic> result = jsonDecode(response.body);
 
       if (result.containsKey('error')) {
-        throw Exception(result['error']['message'] ?? 'Failed to get product details');
+        throw Exception(
+            result['error']['message'] ?? 'Failed to get product details');
       }
 
       // Create a map for quick lookup
@@ -238,7 +241,8 @@ class OdooProvider extends ChangeNotifier {
         }),
       );
 
-      final Map<String, dynamic> locationsResult = jsonDecode(locationsResponse.body);
+      final Map<String, dynamic> locationsResult = jsonDecode(
+          locationsResponse.body);
 
       Map<int, Map<String, dynamic>> locationsMap = {};
       for (var location in locationsResult['result']) {
@@ -256,7 +260,8 @@ class OdooProvider extends ChangeNotifier {
 
         int locationId = line['location_id'][0];
         if (locationsMap.containsKey(locationId)) {
-          line['location_name'] = locationsMap[locationId]!['complete_name'] ?? locationsMap[locationId]!['name'];
+          line['location_name'] = locationsMap[locationId]!['complete_name'] ??
+              locationsMap[locationId]!['name'];
         }
       }
     } catch (e) {
@@ -265,7 +270,8 @@ class OdooProvider extends ChangeNotifier {
     }
   }
 
-  Future<Map<String, dynamic>?> searchProduct(String query, String warehouseId) async {
+  Future<Map<String, dynamic>?> searchProduct(String query,
+      String warehouseId) async {
     if (uid == null) await _authenticate();
 
     try {
@@ -302,7 +308,8 @@ class OdooProvider extends ChangeNotifier {
       var result = jsonDecode(response.body);
 
       if (result.containsKey('error')) {
-        throw Exception(result['error']['message'] ?? 'Failed to search product');
+        throw Exception(
+            result['error']['message'] ?? 'Failed to search product');
       }
 
       if (result['result'].isNotEmpty) {
@@ -340,7 +347,8 @@ class OdooProvider extends ChangeNotifier {
       result = jsonDecode(response.body);
 
       if (result.containsKey('error')) {
-        throw Exception(result['error']['message'] ?? 'Failed to search product');
+        throw Exception(
+            result['error']['message'] ?? 'Failed to search product');
       }
 
       if (result['result'].isNotEmpty) {
@@ -353,7 +361,8 @@ class OdooProvider extends ChangeNotifier {
     }
   }
 
-  Future<void> updatePickedQuantity(String pickingId, int moveLineId, double quantity) async {
+  Future<void> updatePickedQuantity(String pickingId, int moveLineId,
+      double quantity) async {
     if (uid == null) await _authenticate();
 
     try {
@@ -381,7 +390,8 @@ class OdooProvider extends ChangeNotifier {
       final Map<String, dynamic> result = jsonDecode(response.body);
 
       if (result.containsKey('error')) {
-        throw Exception(result['error']['message'] ?? 'Failed to update quantity');
+        throw Exception(
+            result['error']['message'] ?? 'Failed to update quantity');
       }
     } catch (e) {
       throw Exception('Failed to update quantity: ${e.toString()}');
@@ -415,7 +425,8 @@ class OdooProvider extends ChangeNotifier {
       final Map<String, dynamic> result = jsonDecode(response.body);
 
       if (result.containsKey('error')) {
-        throw Exception(result['error']['message'] ?? 'Failed to validate picking');
+        throw Exception(
+            result['error']['message'] ?? 'Failed to validate picking');
       }
     } catch (e) {
       throw Exception('Failed to validate picking: ${e.toString()}');
@@ -434,6 +445,7 @@ class OdooProvider extends ChangeNotifier {
     }
   }
 }
+
 class SaleOrderDetailProvider extends ChangeNotifier {
   final Map<String, dynamic> orderData;
   Map<String, dynamic>? _orderDetails;
@@ -442,6 +454,25 @@ class SaleOrderDetailProvider extends ChangeNotifier {
   bool _showActions = false;
   final currencyFormat = NumberFormat.currency(symbol: '\$');
   bool _isCreatingInvoice = false;
+  List<Map<String, dynamic>> _pickings = [];
+  List<Map<String, dynamic>> _orderLines = [];
+  List<Map<String, dynamic>> _invoices = [];
+  Map<int, double> _stockAvailability = {};
+  String? _errorMessage;
+
+  Map<String, dynamic>? get orderDetails => _orderDetails;
+
+  List<Map<String, dynamic>> get pickings => _pickings;
+
+  List<Map<String, dynamic>> get orderLines => _orderLines;
+
+  List<Map<String, dynamic>> get invoices => _invoices;
+
+  Map<int, double> get stockAvailability => _stockAvailability;
+
+  String? get errorMessage => _errorMessage;
+
+  bool get isLoading => _isLoading;
 
   SaleOrderDetailProvider({required this.orderData}) {
     fetchOrderDetails();
@@ -473,9 +504,7 @@ class SaleOrderDetailProvider extends ChangeNotifier {
 
   Map<String, dynamic>? get invoiceData => _invoiceData;
 
-  Map<String, dynamic>? get orderDetails => _orderDetails;
 
-  bool get isLoading => _isLoading;
 
   String? get error => _error;
 
@@ -543,7 +572,7 @@ class SaleOrderDetailProvider extends ChangeNotifier {
         });
 
         if (pickings.any((picking) =>
-            picking['state'] != 'cancel' && picking['state'] != 'done')) {
+        picking['state'] != 'cancel' && picking['state'] != 'done')) {
           throw Exception(
               'Cannot cancel order: There are unprocessed deliveries.');
         }
@@ -625,8 +654,8 @@ class SaleOrderDetailProvider extends ChangeNotifier {
         throw Exception('No active Odoo session found. Please log in again.');
       }
 
-      Future<List<String>> getValidFields(
-          String model, List<String> requestedFields) async {
+      Future<List<String>> getValidFields(String model,
+          List<String> requestedFields) async {
         final availableFields = await client.callKw({
           'model': model,
           'method': 'fields_get',
@@ -755,7 +784,6 @@ class SaleOrderDetailProvider extends ChangeNotifier {
         });
 
 
-
         order['picking_details'] = pickings;
       } else {
         order['picking_details'] = [];
@@ -796,7 +824,7 @@ class SaleOrderDetailProvider extends ChangeNotifier {
               invoice['invoice_line_ids'] is List &&
               invoice['invoice_line_ids'].isNotEmpty) {
             final invoiceLineFields =
-                await getValidFields('account.move.line', [
+            await getValidFields('account.move.line', [
               'name',
               'product_id',
               'quantity',
@@ -855,14 +883,18 @@ class SaleOrderDetailProvider extends ChangeNotifier {
                   'kwargs': {},
                 });
                 line['tax_ids'] =
-                    List.from(line['tax_ids']).asMap().entries.map((entry) {
-                  final taxId = entry.value;
-                  final tax = taxResult.firstWhere(
-                    (t) => t['id'] == taxId,
-                    orElse: () => {'name': ''},
-                  );
-                  return [taxId, tax['name'] as String];
-                }).toList();
+                    List
+                        .from(line['tax_ids'])
+                        .asMap()
+                        .entries
+                        .map((entry) {
+                      final taxId = entry.value;
+                      final tax = taxResult.firstWhere(
+                            (t) => t['id'] == taxId,
+                        orElse: () => {'name': ''},
+                      );
+                      return [taxId, tax['name'] as String];
+                    }).toList();
               } else {
                 line['tax_ids'] = [];
               }
@@ -1024,7 +1056,7 @@ class SaleOrderDetailProvider extends ChangeNotifier {
         'partner_id': partnerId,
         'can_edit_wizard': true,
         'payment_difference_handling':
-            paymentDifference == 'mark_fully_paid' ? 'reconcile' : 'open',
+        paymentDifference == 'mark_fully_paid' ? 'reconcile' : 'open',
         if (paymentDifference == 'mark_fully_paid' &&
             writeoffAccountId != null) ...{
           'writeoff_account_id': writeoffAccountId,
@@ -1083,13 +1115,12 @@ class SaleOrderDetailProvider extends ChangeNotifier {
     }
   }
 
-  Future<void> confirmPicking(
-    int pickingId,
-    Map<int, double> pickedQuantities,
-    Map<int, String?> lotSerialNumbers,
-    bool validateImmediately, {
-    bool createBackorder = false,
-  }) async {
+  Future<void> confirmPicking(int pickingId,
+      Map<int, double> pickedQuantities,
+      Map<int, String?> lotSerialNumbers,
+      bool validateImmediately, {
+        bool createBackorder = false,
+      }) async {
     final client = await SessionManager.getActiveClient();
     if (client == null) {
       throw Exception('No active Odoo session found.');
@@ -1139,9 +1170,10 @@ class SaleOrderDetailProvider extends ChangeNotifier {
 
       // Fetch stock moves to get ordered quantities
       final moveIds = moveLines
-          .map((line) => line['move_id'] is List
-              ? (line['move_id'] as List)[0] as int
-              : line['move_id'] as int)
+          .map((line) =>
+      line['move_id'] is List
+          ? (line['move_id'] as List)[0] as int
+          : line['move_id'] as int)
           .toList();
       final moveResult = await client.callKw({
         'model': 'stock.move',
@@ -1268,7 +1300,7 @@ class SaleOrderDetailProvider extends ChangeNotifier {
     if (client == null) return {};
 
     final productIds =
-        products.map((p) => (p['product_id'] as List)[0] as int).toList();
+    products.map((p) => (p['product_id'] as List)[0] as int).toList();
     final quantResult = await client.callKw({
       'model': 'stock.quant',
       'method': 'search_read',
@@ -1309,8 +1341,8 @@ class SaleOrderDetailProvider extends ChangeNotifier {
     }
   }
 
-  Map<String, dynamic> getStatusDetails(
-      String state, String invoiceStatus, List<dynamic> pickings) {
+  Map<String, dynamic> getStatusDetails(String state, String invoiceStatus,
+      List<dynamic> pickings) {
     String statusMessage = '';
     String detailedMessage = '';
     bool showWarning = false;
@@ -1319,7 +1351,7 @@ class SaleOrderDetailProvider extends ChangeNotifier {
       case 'draft':
         statusMessage = 'Draft Quotation';
         detailedMessage =
-            'This quotation has not been sent to the customer yet.';
+        'This quotation has not been sent to the customer yet.';
         break;
       case 'sent':
         statusMessage = 'Quotation Sent';
@@ -1329,7 +1361,7 @@ class SaleOrderDetailProvider extends ChangeNotifier {
         statusMessage = 'Sales Order Confirmed';
         if (invoiceStatus == 'to invoice') {
           detailedMessage =
-              'The sales order is confirmed but waiting to be invoiced.';
+          'The sales order is confirmed but waiting to be invoiced.';
           showWarning = true;
         } else if (invoiceStatus == 'invoiced') {
           detailedMessage = 'The sales order is confirmed and fully invoiced.';
@@ -1537,7 +1569,203 @@ class SaleOrderDetailProvider extends ChangeNotifier {
     }
   }
 }
+extension SaleOrderDetailProviderNew on SaleOrderDetailProvider{
 
+  Future<void> fetchOrderDetails(int orderId) async {
+    _isLoading = true;
+    notifyListeners();
+
+    final client = await SessionManager.getActiveClient();
+    if (client == null) {
+      _errorMessage = 'No active Odoo session found.';
+      _isLoading = false;
+      notifyListeners();
+      return;
+    }
+
+    try {
+      // Fetch sale order
+      final orderResult = await client.callKw({
+        'model': 'sale.order',
+        'method': 'search_read',
+        'args': [
+          [['id', '=', orderId]],
+          [
+            'id',
+            'name',
+            'partner_id',
+            'state',
+            'date_order',
+            'amount_total',
+            'order_line',
+            'picking_ids',
+            'invoice_ids',
+            'delivery_status',
+          ],
+        ],
+        'kwargs': {},
+      });
+
+      if (orderResult.isEmpty) {
+        _errorMessage = 'Sale order not found.';
+        _isLoading = false;
+        notifyListeners();
+        return;
+      }
+
+      _orderDetails = orderResult[0];
+
+      // Fetch order lines
+      final orderLineIds = _orderDetails!['order_line'] as List;
+      if (orderLineIds.isNotEmpty) {
+        _orderLines = await client.callKw({
+          'model': 'sale.order.line',
+          'method': 'search_read',
+          'args': [
+            [['id', 'in', orderLineIds]],
+            [
+              'id',
+              'product_id',
+              'name',
+              'product_uom_qty',
+              'price_unit',
+              'price_subtotal'
+            ],
+          ],
+          'kwargs': {},
+        });
+      }
+
+      // Fetch pickings
+      final pickingIds = _orderDetails!['picking_ids'] as List;
+      if (pickingIds.isNotEmpty) {
+        _pickings = await client.callKw({
+          'model': 'stock.picking',
+          'method': 'search_read',
+          'args': [
+            [['id', 'in', pickingIds]],
+            [
+              'id',
+              'name',
+              'state',
+              'location_id',
+              'location_dest_id',
+              'move_ids'
+            ],
+          ],
+          'kwargs': {},
+        });
+      }
+
+      // Fetch invoices
+      final invoiceIds = _orderDetails!['invoice_ids'] as List;
+      if (invoiceIds.isNotEmpty) {
+        _invoices = await client.callKw({
+          'model': 'account.move',
+          'method': 'search_read',
+          'args': [
+            [['id', 'in', invoiceIds]],
+            ['id', 'name', 'state', 'amount_total', 'invoice_date'],
+          ],
+          'kwargs': {},
+        });
+      }
+
+      // Fetch stock availability for products
+      final productIds = _orderLines.map((
+          line) => (line['product_id'] as List)[0]).toSet().toList();
+      if (productIds.isNotEmpty) {
+        final stockQuantResult = await client.callKw({
+          'model': 'stock.quant',
+          'method': 'search_read',
+          'args': [
+            [
+              ['product_id', 'in', productIds],
+              ['location_id.usage', '=', 'internal'],
+              ['quantity', '>', 0],
+            ],
+            ['product_id', 'quantity'],
+          ],
+          'kwargs': {},
+        });
+
+        _stockAvailability = {
+          for (var quant in stockQuantResult) (quant['product_id'] as List)[0] as int: quant['quantity'] as double,
+        };
+      }
+
+      _errorMessage = null;
+    } catch (e) {
+      _errorMessage = 'Error fetching order details: $e';
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  Future<Map<int, double>> fetchStockAvailability(
+      List<Map<String, dynamic>> products, int warehouseId) async {
+    final client = await SessionManager.getActiveClient();
+    if (client == null) return {};
+
+    try {
+      final productIds = products
+          .map((p) => (p['product_id'] as List)[0])
+          .toSet()
+          .toList();
+      final stockQuantResult = await client.callKw({
+        'model': 'stock.quant',
+        'method': 'search_read',
+        'args': [
+          [
+            ['product_id', 'in', productIds],
+            ['location_id.warehouse_id', '=', warehouseId],
+            ['quantity', '>', 0],
+          ],
+          ['product_id', 'quantity'],
+        ],
+        'kwargs': {},
+      });
+
+      final availability = <int, double>{};
+      for (var quant in stockQuantResult) {
+        final productId = (quant['product_id'] as List)[0] as int;
+        availability[productId] =
+            (availability[productId] ?? 0.0) + (quant['quantity'] as double);
+      }
+
+      _stockAvailability = {..._stockAvailability, ...availability};
+      notifyListeners();
+      return availability;
+    } catch (e) {
+      debugPrint('Error fetching stock availability: $e');
+      return {};
+    }
+  }
+
+  Future<void> refreshOrderDetails(int orderId) async {
+    await fetchOrderDetails(orderId);
+  }
+
+  Future<bool> validatePicking(int pickingId) async {
+    final client = await SessionManager.getActiveClient();
+    if (client == null) return false;
+
+    try {
+      await client.callKw({
+        'model': 'stock.picking',
+        'method': 'button_validate',
+        'args': [[pickingId]],
+        'kwargs': {},
+      });
+      return true;
+    } catch (e) {
+      debugPrint('Error validating picking: $e');
+      return false;
+    }
+  }
+
+}
 extension SaleOrderDetailProviderCache on SaleOrderDetailProvider {
   // Load order details from cached data
   Future<void> setOrderDetailsFromCache(dynamic cachedOrderDetails) async {
