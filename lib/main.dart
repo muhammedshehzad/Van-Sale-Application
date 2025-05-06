@@ -8,6 +8,7 @@ import 'package:latest_van_sale_application/providers/order_picking_provider.dar
 import 'package:latest_van_sale_application/providers/sale_order_detail_provider.dart';
 import 'package:latest_van_sale_application/providers/sale_order_provider.dart';
 import 'package:latest_van_sale_application/secondary_pages/delivey_details_page.dart';
+import 'package:latest_van_sale_application/secondary_pages/products_picking_page.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'assets/widgets and consts/cached_data.dart';
@@ -37,6 +38,7 @@ void main() async {
         ChangeNotifierProvider(create: (_) => ProductsProvider()),
         ChangeNotifierProvider(create: (_) => LoginProvider()),
         ChangeNotifierProvider(create: (_) => DataSyncManager()),
+        ChangeNotifierProvider(create: (_) => DataProvider()),
         ChangeNotifierProvider(
             create: (_) => SaleOrderDetailProvider(orderData: {})),
       ],

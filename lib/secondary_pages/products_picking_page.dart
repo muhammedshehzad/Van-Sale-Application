@@ -1,22 +1,340 @@
-import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter_barcode_scanner/flutter_barcode_scanner.dart';
-import 'package:flutter_slidable/flutter_slidable.dart';
-import 'package:flutter/services.dart';
-import 'package:odoo_rpc/odoo_rpc.dart';
-import '../../../../authentication/cyllo_session_model.dart';
-import '../providers/order_picking_provider.dart';
-import '../providers/sale_order_detail_provider.dart';
+import 'dart:async';
+import '../authentication/cyllo_session_model.dart';
 
-const errorColor = Colors.red;
-const successColor = Colors.green;
-const warningColor = Colors.orange;
-const unavailableColor = Colors.red;
+class DataProvider with ChangeNotifier {
+  // Fetch stock availability for products
+  Future<Map<int, double>> fetchStockAvailability(
+    List<Map<String, dynamic>> products,
+    int warehouseId,
+  ) async {
+    try {
+      final client = await SessionManager.getActiveClient();
+      if (client == null) {
+        throw Exception('No active Odoo session');
+      }
+
+      final productIds = products
+          .map((product) => (product['product_id'] as List<dynamic>)[0] as int)
+          .toSet()
+          .toList();
+
+      final stockQuantResult = await client.callKw({
+        'model': 'stock.quant',
+        'method': 'search_read',
+        'args': [
+          [
+            ['product_id', 'in', productIds],
+            ['location_id.usage', '=', 'internal'],
+            ['quantity', '>', 0],
+            ['location_id.warehouse_id', '=', warehouseId],
+          ],
+          ['product_id', 'quantity', 'location_id'],
+        ],
+        'kwargs': {},
+      });
+
+      final Map<int, double> availability = {};
+      for (var quant in stockQuantResult) {
+        final productId = (quant['product_id'] as List<dynamic>)[0] as int;
+        final quantity = quant['quantity'] is num
+            ? (quant['quantity'] as num).toDouble()
+            : 0.0;
+        availability[productId] = (availability[productId] ?? 0.0) + quantity;
+      }
+
+      return availability;
+    } catch (e) {
+      debugPrint('Error fetching stock availability: $e');
+      throw Exception('Failed to fetch stock availability: $e');
+    }
+  }
+
+  // Fetch alternative locations for a product
+  Future<List<Map<String, dynamic>>> fetchAlternativeLocations(
+    int productId,
+    int warehouseId,
+  ) async {
+    try {
+      final client = await SessionManager.getActiveClient();
+      if (client == null) {
+        throw Exception('No active Odoo session');
+      }
+
+      final result = await client.callKw({
+        'model': 'stock.quant',
+        'method': 'search_read',
+        'args': [
+          [
+            ['product_id', '=', productId],
+            ['location_id.usage', '=', 'internal'],
+            ['quantity', '>', 0],
+            ['location_id.warehouse_id', '=', warehouseId],
+          ],
+          ['location_id', 'quantity'],
+        ],
+        'kwargs': {},
+      });
+
+      return List<Map<String, dynamic>>.from(result);
+    } catch (e) {
+      debugPrint('Error fetching alternative locations: $e');
+      return [];
+    }
+  }
+
+  // Fetch picking details by ID
+  Future<Map<String, dynamic>> fetchPickingDetails(int pickingId) async {
+    try {
+      final client = await SessionManager.getActiveClient();
+      if (client == null) {
+        throw Exception('No active Odoo session');
+      }
+
+      final result = await client.callKw({
+        'model': 'stock.picking',
+        'method': 'search_read',
+        'args': [
+          [
+            ['id', '=', pickingId]
+          ],
+          [
+            'name',
+            'state',
+            'origin',
+            'partner_id',
+            'location_id',
+            'location_dest_id',
+            'scheduled_date',
+            'date_done',
+            'note',
+          ],
+        ],
+        'kwargs': {},
+      });
+
+      if (result.isEmpty) {
+        throw Exception('Picking not found');
+      }
+
+      return Map<String, dynamic>.from(result[0]);
+    } catch (e) {
+      debugPrint('Error fetching picking details: $e');
+      rethrow;
+    }
+  }
+
+  // Fetch all pickings that need processing
+  Future<List<Map<String, dynamic>>> fetchPendingPickings() async {
+    try {
+      final client = await SessionManager.getActiveClient();
+      if (client == null) {
+        throw Exception('No active Odoo session');
+      }
+
+      final result = await client.callKw({
+        'model': 'stock.picking',
+        'method': 'search_read',
+        'args': [
+          [
+            [
+              'state',
+              'in',
+              ['assigned', 'confirmed']
+            ],
+            ['picking_type_id.code', '=', 'outgoing'],
+          ],
+          [
+            'id',
+            'name',
+            'state',
+            'partner_id',
+            'scheduled_date',
+            'origin',
+          ],
+        ],
+        'kwargs': {'order': 'scheduled_date asc'},
+      });
+
+      return List<Map<String, dynamic>>.from(result);
+    } catch (e) {
+      debugPrint('Error fetching pending pickings: $e');
+      return [];
+    }
+  }
+
+  // Create a new move line
+  Future<int?> createMoveLine(
+    int pickingId,
+    int productId,
+    double quantity,
+    int locationId,
+    int locationDestId, {
+    String? lotName,
+  }) async {
+    try {
+      final client = await SessionManager.getActiveClient();
+      if (client == null) {
+        throw Exception('No active Odoo session');
+      }
+
+      final moveResult = await client.callKw({
+        'model': 'stock.move',
+        'method': 'search_read',
+        'args': [
+          [
+            ['picking_id', '=', pickingId],
+            ['product_id', '=', productId],
+          ],
+          ['id'],
+        ],
+        'kwargs': {},
+      });
+
+      int moveId;
+      if (moveResult.isEmpty) {
+        final productResult = await client.callKw({
+          'model': 'product.product',
+          'method': 'search_read',
+          'args': [
+            [
+              ['id', '=', productId]
+            ],
+            ['name', 'uom_id'],
+          ],
+          'kwargs': {},
+        });
+
+        if (productResult.isEmpty) {
+          throw Exception('Product not found');
+        }
+
+        final product = productResult[0];
+        final uomId = (product['uom_id'] as List<dynamic>)[0] as int;
+
+        final createdMove = await client.callKw({
+          'model': 'stock.move',
+          'method': 'create',
+          'args': [
+            {
+              'name': product['name'] as String,
+              'product_id': productId,
+              'product_uom': uomId,
+              'product_uom_qty': quantity,
+              'picking_id': pickingId,
+              'location_id': locationId,
+              'location_dest_id': locationDestId,
+            },
+          ],
+          'kwargs': {},
+        });
+
+        moveId = createdMove as int;
+      } else {
+        moveId = moveResult[0]['id'] as int;
+      }
+
+      final values = <String, dynamic>{
+        'move_id': moveId,
+        'product_id': productId,
+        'quantity': quantity,
+        'product_uom_qty': quantity,
+        'picking_id': pickingId,
+        'location_id': locationId,
+        'location_dest_id': locationDestId,
+      };
+
+      if (lotName != null && lotName.isNotEmpty) {
+        values['lot_name'] = lotName;
+      }
+
+      final result = await client.callKw({
+        'model': 'stock.move.line',
+        'method': 'create',
+        'args': [values],
+        'kwargs': {},
+      });
+
+      return result as int?;
+    } catch (e) {
+      debugPrint('Error creating move line: $e');
+      throw Exception('Failed to create move line: $e');
+    }
+  }
+
+  // Update the quantity of a move line
+  Future<bool> updateMoveLineQuantity(
+    int moveLineId,
+    double quantity,
+    List<String>? lotSerialNumbers,
+  ) async {
+    try {
+      final client = await SessionManager.getActiveClient();
+      if (client == null) {
+        throw Exception('No active Odoo session');
+      }
+
+      final values = <String, dynamic>{
+        'quantity': quantity,
+        'qty_done': quantity,
+      };
+
+      if (lotSerialNumbers != null && lotSerialNumbers.isNotEmpty) {
+        values['lot_name'] = lotSerialNumbers.join(',');
+      }
+
+      await client.callKw({
+        'model': 'stock.move.line',
+        'method': 'write',
+        'args': [
+          [moveLineId],
+          values,
+        ],
+        'kwargs': {},
+      });
+
+      return true;
+    } catch (e) {
+      debugPrint('Error updating move line quantity: $e');
+      return false;
+    }
+  }
+
+  // Undo a move line
+  Future<bool> undoMoveLine(int moveLineId) async {
+    try {
+      final client = await SessionManager.getActiveClient();
+      if (client == null) {
+        throw Exception('No active Odoo session');
+      }
+
+      await client.callKw({
+        'model': 'stock.move.line',
+        'method': 'write',
+        'args': [
+          [moveLineId],
+          {
+            'quantity': 0.0,
+            'qty_done': 0.0,
+            'lot_name': null,
+          },
+        ],
+        'kwargs': {},
+      });
+
+      return true;
+    } catch (e) {
+      debugPrint('Error undoing move line: $e');
+      return false;
+    }
+  }
+}
 
 class PickingPage extends StatefulWidget {
   final Map<String, dynamic> picking;
   final int warehouseId;
-  final SaleOrderDetailProvider provider;
+  final DataProvider provider;
 
   const PickingPage({
     Key? key,
@@ -29,82 +347,462 @@ class PickingPage extends StatefulWidget {
   _PickingPageState createState() => _PickingPageState();
 }
 
-class _PickingPageState extends State<PickingPage> {
-  List<Map<String, dynamic>> pickingLines = [];
-  Map<int, double> pickedQuantities = {}; // Now keyed by moveLineId
-  Map<int, List<String>> lotSerialNumbers = {}; // Now keyed by moveLineId
-  Map<int, String> productTracking = {}; // Keyed by productId
-  Map<int, double> stockAvailability = {}; // Keyed by productId
-  Map<int, String> productLocations = {}; // Keyed by productId
-  Map<int, TextEditingController> quantityControllers = {}; // Keyed by moveLineId
-  Map<int, List<TextEditingController>> lotSerialControllers = {}; // Keyed by moveLineId
-  Map<String, Map<String, dynamic>> barcodeToMoveLine = {}; // Maps barcode to moveLine
-  final TextEditingController _searchController = TextEditingController();
-  String? errorMessage;
+class _PickingPageState extends State<PickingPage>
+    with SingleTickerProviderStateMixin, AutomaticKeepAliveClientMixin {
+  late TabController _tabController;
+  bool isProcessing = true;
   bool isInitialized = false;
-  bool isProcessing = false;
-  bool isScanning = false;
-  bool showCompletedItems = true;
+  String? errorMessage;
   String? scanMessage;
+  List<Map<String, dynamic>> pickingLines = [];
+  Map<int, double> pickedQuantities = {};
+  Map<int, double> pendingPickedQuantities = {};
+  Map<int, List<String>> lotSerialNumbers = {};
+  Map<int, List<String>> pendingLotSerialNumbers = {};
+  Map<int, String> productTracking = {};
+  Map<int, double> stockAvailability = {};
+  Map<int, String> productLocations = {};
+  Map<String, Map<String, dynamic>> barcodeToMoveLine = {};
+  Map<int, TextEditingController> quantityControllers = {};
+  Map<int, List<TextEditingController>> lotSerialControllers = {};
+  Map<int, int> locationIds = {};
   int? selectedMoveLineId;
-  List<Map<String, dynamic>> availableWarehouses = [];
-  List<Map<String, dynamic>> availableLocations = [];
-  int? selectedWarehouseId;
-  int? defaultLocationId;
-  Map<int, double> pendingPickedQuantities = {}; // Keyed by moveLineId
-  Map<int, List<String>> pendingLotSerialNumbers = {}; // Keyed by moveLineId
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
+  final TextEditingController _barcodeController = TextEditingController();
+  final TextEditingController _searchController = TextEditingController();
+  final FocusNode _barcodeFocusNode = FocusNode();
+  bool _isScanning = false;
+  String _sortCriteria = 'name'; // Sorting criteria: name, quantity, location
+  bool _sortAscending = true;
+  List<Map<String, dynamic>> filteredPickingLines = [];
+
+  @override
+  bool get wantKeepAlive => true;
 
   @override
   void initState() {
     super.initState();
+    _tabController = TabController(length: 3, vsync: this);
+    _searchController.addListener(_filterPickingLines);
     _initializePickingData();
-    _fetchWarehousesAndLocations();
   }
 
   @override
   void dispose() {
+    _tabController.dispose();
+    _barcodeController.dispose();
     _searchController.dispose();
+    _barcodeFocusNode.dispose();
     quantityControllers.forEach((_, controller) => controller.dispose());
-    lotSerialControllers.forEach((_, controllers) =>
-        controllers.forEach((controller) => controller.dispose()));
+    lotSerialControllers
+        .forEach((_, controllers) => controllers.forEach((c) => c.dispose()));
     super.dispose();
   }
 
-  Future<int?> _getOrCreateLot(
-      int productId, String lotName, bool isSerial) async {
-    final client = await SessionManager.getActiveClient();
-    if (client == null) return null;
+  String _normalizeTrackingValue(dynamic tracking) {
+    if (tracking == null) return 'none';
+    if (tracking is String) return tracking.toLowerCase();
+    return 'none';
+  }
 
-    final existingLots = await client.callKw({
-      'model': 'stock.lot',
-      'method': 'search_read',
-      'args': [
-        [
-          ['product_id', '=', productId],
-          ['name', '=', lotName],
-        ],
-        ['id'],
-      ],
-      'kwargs': {},
+  Future<void> _initializePickingData() async {
+    setState(() {
+      isProcessing = true;
+      isInitialized = false;
+      pickingLines.clear();
+      pickedQuantities.clear();
+      pendingPickedQuantities.clear();
+      lotSerialNumbers.clear();
+      pendingLotSerialNumbers.clear();
+      productTracking.clear();
+      stockAvailability.clear();
+      productLocations.clear();
+      barcodeToMoveLine.clear();
+      locationIds.clear();
+      quantityControllers.forEach((_, controller) => controller.dispose());
+      quantityControllers.clear();
+      lotSerialControllers
+          .forEach((_, controllers) => controllers.forEach((c) => c.dispose()));
+      lotSerialControllers.clear();
+      errorMessage = null;
+      selectedMoveLineId = null;
+      scanMessage = null;
     });
 
-    if (existingLots.isNotEmpty) {
-      return existingLots[0]['id'] as int;
-    }
+    try {
+      final pickingState = widget.picking['state'] as String?;
+      if (pickingState == null) {
+        throw Exception('Picking state is null');
+      }
+      if (pickingState == 'done' || pickingState == 'cancel') {
+        setState(() {
+          errorMessage =
+              'This picking is $pickingState and cannot be modified.';
+          isProcessing = false;
+          isInitialized = true;
+        });
+        _showErrorDialog('Picking Unavailable', errorMessage!);
+        return;
+      }
 
-    return await client.callKw({
-      'model': 'stock.lot',
-      'method': 'create',
-      'args': [
-        {
-          'product_id': productId,
-          'name': lotName,
-          'company_id': widget.picking['company_id'] is List
-              ? widget.picking['company_id'][0]
-              : widget.picking['company_id'],
-        },
-      ],
-      'kwargs': {},
+      final client = await SessionManager.getActiveClient();
+      if (client == null) {
+        setState(() {
+          errorMessage = 'No active Odoo session found.';
+          isProcessing = false;
+          isInitialized = true;
+        });
+        _showErrorDialog('Session Error', errorMessage!);
+        return;
+      }
+
+      final pickingId = widget.picking['id'] as int?;
+      if (pickingId == null) {
+        throw Exception('Picking ID is null');
+      }
+
+      if (pickingState == 'draft' || pickingState == 'confirmed') {
+        bool actionAssignSuccess = false;
+        for (int attempt = 1; attempt <= 3; attempt++) {
+          try {
+            await client.callKw({
+              'model': 'stock.picking',
+              'method': 'action_assign',
+              'args': [
+                [pickingId]
+              ],
+              'kwargs': {},
+            });
+            actionAssignSuccess = true;
+            break;
+          } catch (e) {
+            if (attempt == 3) {
+              throw Exception('Failed to assign picking after 3 attempts: $e');
+            }
+            await Future.delayed(const Duration(seconds: 1));
+          }
+        }
+        if (!actionAssignSuccess) {
+          throw Exception('action_assign failed after all retries');
+        }
+      }
+
+      final moveResult = await client.callKw({
+        'model': 'stock.move',
+        'method': 'search_read',
+        'args': [
+          [
+            ['picking_id', '=', pickingId]
+          ],
+          ['id', 'product_id', 'product_uom_qty', 'state'],
+        ],
+        'kwargs': {},
+      });
+
+      if (moveResult.isEmpty) {
+        setState(() {
+          errorMessage = 'No products assigned to this picking.';
+          isProcessing = false;
+          isInitialized = true;
+        });
+        _showErrorDialog(
+          'No Products',
+          'This picking has no products. Would you like to add one?',
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Exit'),
+            ),
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context);
+                _scanBarcode();
+              },
+              child: const Text('Add Product'),
+            ),
+          ],
+        );
+        return;
+      }
+
+      final productIds = moveResult
+          .map((move) => (move['product_id'] is List<dynamic> &&
+                  move['product_id'].isNotEmpty
+              ? move['product_id'][0] as int
+              : throw Exception('Invalid product_id format in move')))
+          .toSet()
+          .toList();
+
+      final productResult = await client.callKw({
+        'model': 'product.product',
+        'method': 'search_read',
+        'args': [
+          [
+            ['id', 'in', productIds]
+          ],
+          ['id', 'barcode', 'name', 'tracking', 'default_code'],
+        ],
+        'kwargs': {},
+      });
+
+      final moveLinesResult = await client.callKw({
+        'model': 'stock.move.line',
+        'method': 'search_read',
+        'args': [
+          [
+            ['picking_id', '=', pickingId]
+          ],
+          [
+            'id',
+            'product_id',
+            'move_id',
+            'lot_id',
+            'lot_name',
+            'location_id',
+            'quantity',
+          ],
+        ],
+        'kwargs': {},
+      });
+
+      final stockQuantResult = await client.callKw({
+        'model': 'stock.quant',
+        'method': 'search_read',
+        'args': [
+          [
+            ['product_id', 'in', productIds],
+            ['location_id.usage', '=', 'internal'],
+            ['quantity', '>', 0],
+          ],
+          ['product_id', 'location_id', 'quantity'],
+        ],
+        'kwargs': {},
+      });
+
+      final locationMap = <int, String>{};
+      final locationIdMap = <int, int>{};
+      for (var quant in stockQuantResult) {
+        final productId = (quant['product_id'] is List<dynamic> &&
+                quant['product_id'].isNotEmpty
+            ? quant['product_id'][0] as int
+            : throw Exception('Invalid product_id format in stock quant'));
+        final locationName = (quant['location_id'] is List<dynamic> &&
+                quant['location_id'].isNotEmpty
+            ? quant['location_id'][1] as String
+            : 'Unknown');
+        final locationId = (quant['location_id'] is List<dynamic> &&
+                quant['location_id'].isNotEmpty
+            ? quant['location_id'][0] as int
+            : 0);
+        locationMap[productId] = locationName;
+        locationIdMap[productId] = locationId;
+      }
+
+      // Fetch picking details to ensure location_id and location_dest_id are available
+      final pickingDetails =
+          await widget.provider.fetchPickingDetails(pickingId);
+      final defaultLocationId =
+          pickingDetails['location_id'] is List<dynamic> &&
+                  pickingDetails['location_id'].isNotEmpty
+              ? pickingDetails['location_id'][0] as int
+              : throw Exception('Invalid location_id in picking');
+      final defaultLocationDestId =
+          pickingDetails['location_dest_id'] is List<dynamic> &&
+                  pickingDetails['location_dest_id'].isNotEmpty
+              ? pickingDetails['location_dest_id'][0] as int
+              : throw Exception('Invalid location_dest_id in picking');
+
+      pickingLines = [];
+      for (var move in moveResult) {
+        final moveId = move['id'] as int;
+        final productId = (move['product_id'] is List<dynamic> &&
+                move['product_id'].isNotEmpty
+            ? move['product_id'][0] as int
+            : throw Exception('Invalid product_id format in move'));
+        final product = productResult.firstWhere(
+          (p) => p['id'] == productId,
+          orElse: () => {
+            'id': productId,
+            'name': 'Unknown',
+            'default_code': 'No Code',
+            'tracking': 'none',
+            'barcode': null,
+          },
+        );
+
+        final trackingType = _normalizeTrackingValue(product['tracking']);
+        final orderedQty = move['product_uom_qty'] as double;
+
+        final relatedMoveLines = moveLinesResult
+            .where(
+              (line) => line['move_id'] is int
+                  ? line['move_id'] == moveId
+                  : (line['move_id'] is List<dynamic> &&
+                          line['move_id'].isNotEmpty
+                      ? line['move_id'][0] == moveId
+                      : false),
+            )
+            .toList();
+        final pickedQty = relatedMoveLines.isNotEmpty
+            ? relatedMoveLines.fold<dynamic>(
+                0.0,
+                (sum, line) {
+                  final quantity = line['quantity'];
+                  if (quantity == null) return sum;
+                  if (quantity is num) return sum + quantity.toDouble();
+                  if (quantity is String) {
+                    final parsed = double.tryParse(quantity);
+                    return sum + (parsed ?? 0.0);
+                  }
+                  return sum;
+                },
+              )
+            : 0.0;
+
+        for (var moveLine
+            in relatedMoveLines.isNotEmpty ? relatedMoveLines : [{}]) {
+          final moveLineId =
+              moveLine.isNotEmpty ? moveLine['id'] as int? : null;
+          List<String> serialNumbers = [];
+          String locationName = locationMap[productId] ?? 'Not in stock';
+          var locationId = moveLine.isNotEmpty &&
+                  moveLine['location_id'] is List &&
+                  moveLine['location_id'].isNotEmpty
+              ? (moveLine['location_id'] as List<dynamic>)[0] as int
+              : (locationIdMap[productId] ?? defaultLocationId);
+
+          if (moveLine.isNotEmpty) {
+            if (moveLine['lot_name'] is String &&
+                (moveLine['lot_name'] as String).isNotEmpty) {
+              serialNumbers = (moveLine['lot_name'] as String)
+                  .split(',')
+                  .map((s) => s.trim())
+                  .toList();
+            } else if (moveLine['lot_id'] is List<dynamic> &&
+                (moveLine['lot_id'] as List<dynamic>).isNotEmpty) {
+              serialNumbers = [moveLine['lot_id'][1] as String];
+            }
+            if (moveLine['location_id'] is List<dynamic> &&
+                moveLine['location_id'].isNotEmpty) {
+              locationName = moveLine['location_id'][1] as String;
+              locationId = moveLine['location_id'][0] as int;
+            }
+          }
+
+          final line = {
+            'id': moveLineId,
+            'move_id': moveId,
+            'product_id': [productId, product['name']],
+            'product_name': product['name'] ?? 'Unnamed Product',
+            'product_code': product['default_code'] ?? 'No Code',
+            'ordered_qty': orderedQty,
+            'picked_qty': moveLine.isNotEmpty ? pickedQty : 0.0,
+            'uom': 'Units',
+            'location_id': locationId,
+            'location_name': locationName,
+            'lot_id': moveLine.isNotEmpty ? moveLine['lot_id'] : null,
+            'is_picked': pickedQty >= orderedQty && orderedQty > 0,
+            'is_available': stockAvailability[productId] != null &&
+                stockAvailability[productId]! > 0,
+            'tracking': trackingType,
+          };
+
+          pickingLines.add(line);
+
+          if (moveLineId != null) {
+            pickedQuantities[moveLineId] = pickedQty;
+            lotSerialNumbers[moveLineId] = serialNumbers;
+            locationIds[moveLineId] = locationId;
+            quantityControllers[moveLineId] =
+                TextEditingController(text: pickedQty.toStringAsFixed(2));
+            lotSerialControllers[moveLineId] = serialNumbers
+                .map((serial) => TextEditingController(text: serial))
+                .toList();
+          }
+
+          productTracking[productId] = trackingType;
+          productLocations[productId] = locationName;
+
+          if (product['barcode'] != null && product['barcode'] is String) {
+            barcodeToMoveLine[product['barcode'] as String] = {
+              'move_line_id': moveLineId,
+              'product_id': productId,
+              'name': product['name'],
+              'default_code': product['default_code'],
+            };
+          }
+        }
+      }
+
+      stockAvailability = await widget.provider.fetchStockAvailability(
+        pickingLines.map((line) => {'product_id': line['product_id']}).toList(),
+        widget.warehouseId,
+      );
+
+      for (var line in pickingLines) {
+        final productId = (line['product_id'] as List<dynamic>)[0] as int;
+        if (stockAvailability[productId] != null &&
+            stockAvailability[productId]! > 0) {
+          line['location_name'] = locationMap[productId] ?? 'Stock';
+          line['is_available'] = true;
+          line['location_id'] = locationIdMap[productId] ?? line['location_id'];
+          productLocations[productId] = line['location_name'] as String;
+        } else {
+          line['is_available'] = false;
+        }
+      }
+
+      _filterPickingLines();
+
+      setState(() {
+        isInitialized = true;
+        isProcessing = false;
+      });
+    } catch (e) {
+      final detailedErrorMessage = e.toString().contains('OdooException')
+          ? 'Failed to connect to the Odoo server. Please check your connection or server status. Error: $e'
+          : 'Error initializing picking: $e';
+      setState(() {
+        errorMessage = detailedErrorMessage;
+        isProcessing = false;
+        isInitialized = true;
+      });
+      debugPrint('detailedErrorMessage: $detailedErrorMessage');
+      _showErrorDialog('Initialization Error', detailedErrorMessage);
+    }
+  }
+
+  void _filterPickingLines() {
+    final query = _searchController.text.toLowerCase();
+    setState(() {
+      filteredPickingLines = pickingLines.where((line) {
+        final productName = line['product_name'].toString().toLowerCase();
+        final productCode = line['product_code'].toString().toLowerCase();
+        return productName.contains(query) || productCode.contains(query);
+      }).toList();
+
+      filteredPickingLines.sort((a, b) {
+        int compare;
+        switch (_sortCriteria) {
+          case 'name':
+            compare = a['product_name']
+                .toString()
+                .compareTo(b['product_name'].toString());
+            break;
+          case 'quantity':
+            compare = (a['ordered_qty'] as double)
+                .compareTo(b['ordered_qty'] as double);
+            break;
+          case 'location':
+            compare = a['location_name']
+                .toString()
+                .compareTo(b['location_name'].toString());
+            break;
+          default:
+            compare = 0;
+        }
+        return _sortAscending ? compare : -compare;
+      });
     });
   }
 
@@ -126,922 +824,688 @@ class _PickingPageState extends State<PickingPage> {
     );
   }
 
-  Future<void> _fetchWarehousesAndLocations() async {
-    final client = await SessionManager.getActiveClient();
-    if (client == null) {
-      setState(() => errorMessage = 'No active Odoo session found.');
-      return;
-    }
-
-    try {
-      final warehouseResult = await client.callKw({
-        'model': 'stock.warehouse',
-        'method': 'search_read',
-        'args': [
-          [
-            ['code', 'in', ['WH', 'WH1', 'WH2']],
-          ],
-          ['id', 'name', 'code'],
-        ],
-        'kwargs': {},
-      });
-
-      setState(() {
-        availableWarehouses = List<Map<String, dynamic>>.from(warehouseResult);
-        selectedWarehouseId = widget.warehouseId;
-      });
-
-      await _fetchLocationsForWarehouse(selectedWarehouseId);
-    } catch (e) {
-      setState(() => errorMessage = 'Error fetching warehouses: $e');
-      _showSnackBar('Error fetching warehouses: $e', errorColor);
-    }
-  }
-
-  Future<void> _fetchLocationsForWarehouse(int? warehouseId) async {
-    if (warehouseId == null) return;
-    final client = await SessionManager.getActiveClient();
-    if (client == null) return;
-
-    setState(() => isProcessing = true);
-    try {
-      final locationResult = await client.callKw({
-        'model': 'stock.location',
-        'method': 'search_read',
-        'args': [
-          [
-            ['warehouse_id', '=', warehouseId],
-            ['usage', '=', 'internal'],
-          ],
-          ['id', 'name'],
-        ],
-        'kwargs': {},
-      });
-
-      setState(() {
-        availableLocations = List<Map<String, dynamic>>.from(locationResult);
-        defaultLocationId = availableLocations.isNotEmpty
-            ? availableLocations[0]['id'] as int
-            : null;
-        isProcessing = false;
-      });
-    } catch (e) {
-      setState(() {
-        errorMessage = 'Error fetching locations: $e';
-        isProcessing = false;
-      });
-      _showSnackBar('Error fetching locations: $e', errorColor);
-    }
-  }
-
-  Future<void> _initializePickingData() async {
-    setState(() {
-      isProcessing = true;
-      isInitialized = false;
-      pickingLines.clear();
-      pickedQuantities.clear();
-      pendingPickedQuantities.clear();
-      lotSerialNumbers.clear();
-      pendingLotSerialNumbers.clear();
-      productTracking.clear();
-      stockAvailability.clear();
-      productLocations.clear();
-      barcodeToMoveLine.clear();
-      quantityControllers.forEach((_, controller) => controller.dispose());
-      quantityControllers.clear();
-      lotSerialControllers
-          .forEach((_, controllers) => controllers.forEach((c) => c.dispose()));
-      lotSerialControllers.clear();
-      errorMessage = null;
-      selectedMoveLineId = null;
-      scanMessage = null;
-    });
-
-    try {
-      debugPrint('Step 1: Checking picking state...');
-      final pickingState = widget.picking['state'] as String?;
-      if (pickingState == null) {
-        throw Exception('Picking state is null');
-      }
-      if (pickingState == 'done' || pickingState == 'cancel') {
-        setState(() {
-          errorMessage =
-          'This picking is $pickingState and cannot be modified.';
-          isProcessing = false;
-          isInitialized = true;
-        });
-        _showErrorDialog('Picking Unavailable', errorMessage!);
-        return;
-      }
-
-      debugPrint('Step 2: Getting active client...');
-      final client = await SessionManager.getActiveClient();
-      if (client == null) {
-        setState(() {
-          errorMessage = 'No active Odoo session found.';
-          isProcessing = false;
-          isInitialized = true;
-        });
-        _showErrorDialog('Session Error', errorMessage!);
-        return;
-      }
-
-      debugPrint('Step 3: Validating picking ID...');
-      final pickingId = widget.picking['id'] as int?;
-      if (pickingId == null) {
-        throw Exception('Picking ID is null');
-      }
-      debugPrint('Picking ID: $pickingId, State: $pickingState');
-
-      if (pickingState == 'draft' || pickingState == 'confirmed') {
-        debugPrint('Step 4: Calling action_assign...');
-        bool actionAssignSuccess = false;
-        for (int attempt = 1; attempt <= 3; attempt++) {
-          try {
-            await client.callKw({
-              'model': 'stock.picking',
-              'method': 'action_assign',
-              'args': [[pickingId]],
-              'kwargs': {},
-            });
-            actionAssignSuccess = true;
-            debugPrint('action_assign successful on attempt $attempt');
-            break;
-          } catch (e) {
-            debugPrint('action_assign failed on attempt $attempt: $e');
-            if (attempt == 3) {
-              throw Exception('Failed to assign picking after 3 attempts: $e');
-            }
-            await Future.delayed(Duration(seconds: 1));
-          }
-        }
-        if (!actionAssignSuccess) {
-          throw Exception('action_assign failed after all retries');
-        }
-      }
-
-      debugPrint('Step 5: Fetching stock moves...');
-      final moveResult = await client.callKw({
-        'model': 'stock.move',
-        'method': 'search_read',
-        'args': [
-          [['picking_id', '=', pickingId]],
-          ['id', 'product_id', 'product_uom_qty', 'state'],
-        ],
-        'kwargs': {},
-      });
-
-      if (moveResult.isEmpty) {
-        setState(() {
-          errorMessage = 'No products assigned to this picking.';
-          isProcessing = false;
-          isInitialized = true;
-        });
-        _showErrorDialog('No Products',
-            'This picking has no products. Would you like to add one?',
-            actions: [
-              TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('Exit')),
-              TextButton(
-                  onPressed: () {
-                    Navigator.pop(context);
-                    _scanBarcode();
-                  },
-                  child: const Text('Add Product')),
-            ]);
-        return;
-      }
-
-      debugPrint('Step 6: Fetching product IDs...');
-      final productIds = moveResult
-          .map((move) => (move['product_id'] as List)[0] as int)
-          .toSet()
-          .toList();
-      if (productIds.isEmpty) {
-        throw Exception('No product IDs found in move result');
-      }
-      debugPrint('Product IDs: $productIds');
-
-      debugPrint('Step 7: Fetching product details...');
-      final productResult = await client.callKw({
-        'model': 'product.product',
-        'method': 'search_read',
-        'args': [
-          [['id', 'in', productIds]],
-          ['id', 'barcode', 'name', 'tracking', 'default_code'],
-        ],
-        'kwargs': {},
-      });
-
-      debugPrint('Step 8: Fetching stock move lines...');
-      final moveLinesResult = await client.callKw({
-        'model': 'stock.move.line',
-        'method': 'search_read',
-        'args': [
-          [['picking_id', '=', pickingId]],
-          [
-            'id',
-            'product_id',
-            'move_id',
-            'lot_id',
-            'lot_name',
-            'location_id',
-            'quantity'
-          ],
-        ],
-        'kwargs': {},
-      });
-
-      debugPrint('Step 9: Fetching stock quantities...');
-      final stockQuantResult = await client.callKw({
-        'model': 'stock.quant',
-        'method': 'search_read',
-        'args': [
-          [
-            ['product_id', 'in', productIds],
-            ['location_id.usage', '=', 'internal'],
-            ['quantity', '>', 0],
-          ],
-          ['product_id', 'location_id', 'quantity'],
-        ],
-        'kwargs': {},
-      });
-
-      debugPrint('Step 10: Building location map...');
-      final locationMap = <int, String>{};
-      for (var quant in stockQuantResult) {
-        final productId = (quant['product_id'] as List)[0] as int;
-        final locationName = (quant['location_id'] as List)[1] as String;
-        locationMap[productId] = locationName;
-      }
-
-      debugPrint('Step 11: Processing picking lines...');
-      pickingLines = [];
-      for (var move in moveResult) {
-        final moveId = move['id'] as int;
-        final productId = (move['product_id'] as List)[0] as int;
-        final product = productResult.firstWhere(
-              (p) => p['id'] == productId,
-          orElse: () => {
-            'id': productId,
-            'name': 'Unknown',
-            'default_code': 'No Code',
-            'tracking': 'none',
-            'barcode': null,
-          },
-        );
-
-        final trackingType = _normalizeTrackingValue(product['tracking']);
-        final orderedQty = move['product_uom_qty'] as double;
-
-        final relatedMoveLines = moveLinesResult
-            .where(
-              (line) => line['move_id'] is int
-              ? line['move_id'] == moveId
-              : (line['move_id'] as List)[0] == moveId,
-        )
-            .toList();
-        final pickedQty = relatedMoveLines.isNotEmpty
-            ? relatedMoveLines.fold<double>(
-          0.0,
-              (double sum, line) {
-            final quantity = line['quantity'];
-            if (quantity == null) return sum;
-            if (quantity is num) return sum + quantity.toDouble();
-            if (quantity is String) {
-              final parsed = double.tryParse(quantity);
-              return sum + (parsed ?? 0.0);
-            }
-            return sum;
-          },
-        )
-            : 0.0;
-
-        for (var moveLine in relatedMoveLines.isNotEmpty
-            ? relatedMoveLines
-            : [{}]) {
-          final moveLineId = moveLine.isNotEmpty ? moveLine['id'] : null;
-          List<String> serialNumbers = [];
-          String locationName = locationMap[productId] ?? 'Not in stock';
-          var locationId = widget.picking['location_id'];
-          final locationDestId = widget.picking['location_dest_id'];
-
-          if (locationId == null || locationDestId == null) {
-            debugPrint('Picking has missing location configuration');
-          }
-
-          if (moveLine.isNotEmpty) {
-            if (moveLine['lot_name'] is String &&
-                (moveLine['lot_name'] as String).isNotEmpty) {
-              serialNumbers = (moveLine['lot_name'] as String)
-                  .split(',')
-                  .map((s) => s.trim())
-                  .toList();
-            } else if (moveLine['lot_id'] is List &&
-                (moveLine['lot_id'] as List).isNotEmpty) {
-              serialNumbers = [moveLine['lot_id'][1]];
-            }
-            if (moveLine['location_id'] is List) {
-              locationName = moveLine['location_id'][1];
-              locationId = moveLine['location_id'][0];
-            }
-          }
-
-          final line = {
-            'id': moveLineId,
-            'move_id': moveId,
-            'product_id': [productId, product['name']],
-            'product_name': product['name'] ?? 'Unnamed Product',
-            'product_code': product['default_code'] ?? 'No Code',
-            'ordered_qty': orderedQty,
-            'picked_qty': moveLine.isNotEmpty ? pickedQty : 0.0,
-            'uom': 'Units',
-            'location_id': locationId,
-            'location_name': locationName,
-            'lot_id': moveLine.isNotEmpty ? moveLine['lot_id'] : null,
-            'is_picked': pickedQty >= orderedQty && orderedQty > 0,
-            'is_available': moveLine.isNotEmpty,
-            'tracking': trackingType,
-          };
-
-          pickingLines.add(line);
-
-          if (moveLineId != null) {
-            pickedQuantities[moveLineId] = pickedQty;
-            lotSerialNumbers[moveLineId] = serialNumbers;
-            quantityControllers[moveLineId] =
-                TextEditingController(text: pickedQty.toStringAsFixed(2));
-            lotSerialControllers[moveLineId] = serialNumbers
-                .map((serial) => TextEditingController(text: serial))
-                .toList();
-          }
-
-          productTracking[productId] = trackingType;
-          productLocations[productId] = locationName;
-
-          if (product['barcode'] != null && product['barcode'] is String) {
-            barcodeToMoveLine[product['barcode']] = {
-              'move_line_id': moveLineId,
-              'product_id': productId,
-              'name': product['name'],
-              'default_code': product['default_code'],
-            };
-          }
-        }
-      }
-
-      debugPrint('Step 12: Fetching stock availability...');
-      stockAvailability = await widget.provider.fetchStockAvailability(
-        pickingLines.map((line) => {'product_id': line['product_id']}).toList(),
-        widget.warehouseId,
-      );
-
-      debugPrint('Step 13: Updating picking lines with stock availability...');
-      for (var line in pickingLines) {
-        final productId = (line['product_id'] as List)[0] as int;
-        if (stockAvailability[productId] != null &&
-            stockAvailability[productId]! > 0) {
-          line['location_name'] = locationMap[productId] ?? 'Stock';
-          line['is_available'] = true;
-          productLocations[productId] = line['location_name'];
-        }
-      }
-
-      debugPrint('Step 14: Finalizing initialization...');
-      setState(() {
-        isInitialized = true;
-        isProcessing = false;
-      });
-    } catch (e) {
-      String detailedErrorMessage = 'Error initializing picking: $e';
-      if (e.toString().contains('OdooException')) {
-        detailedErrorMessage =
-        'Failed to connect to the Odoo server. Please check your connection or server status. Error: $e';
-      }
-      setState(() {
-        errorMessage = detailedErrorMessage;
-        isProcessing = false;
-        isInitialized = true;
-      });
-      debugPrint('Initialization failed: $detailedErrorMessage');
-      _showErrorDialog('Initialization Error', errorMessage!);
-    }
-  }
-
-  String _normalizeTrackingValue(dynamic tracking) {
-    if (tracking == null) return 'none';
-    if (tracking is String) return tracking.toLowerCase();
-    if (tracking is bool) return tracking ? 'lot' : 'none';
-    return 'none';
-  }
-
   Future<void> _scanBarcode() async {
-    if (isScanning) return;
-    setState(() => isScanning = true);
+    if (_isScanning) return;
+    setState(() => _isScanning = true);
 
     try {
       final barcode = await FlutterBarcodeScanner.scanBarcode(
-        '#ff0000', // Use a fixed color for consistency
+        '#ff0000',
         'Cancel',
         true,
         ScanMode.BARCODE,
       );
 
       if (barcode == '-1') {
-        setState(() => scanMessage = 'Scan cancelled');
-        HapticFeedback.lightImpact();
+        setState(() {
+          scanMessage = 'Scan cancelled';
+          _isScanning = false;
+        });
         return;
       }
 
-      await _processScannedBarcode(barcode);
-      HapticFeedback.selectionClick();
-
-      if (selectedMoveLineId != null) {
-        final index = pickingLines.indexWhere((line) => line['id'] == selectedMoveLineId);
-        if (index != -1) {
-          Scrollable.ensureVisible(context,
-              duration: const Duration(milliseconds: 300),
-              curve: Curves.easeInOut);
-        }
-      }
+      _processBarcode(barcode);
     } catch (e) {
-      setState(() => scanMessage = 'Error scanning barcode: $e');
-      _showSnackBar('Error scanning barcode: $e', errorColor);
+      setState(() {
+        scanMessage = 'Error scanning barcode: $e';
+        _isScanning = false;
+      });
+      _showSnackBar('Error scanning barcode: $e', Colors.red);
     } finally {
-      setState(() => isScanning = false);
+      setState(() => _isScanning = false);
     }
   }
 
-  Future<void> _processScannedBarcode(String barcode) async {
-    debugPrint('Processing barcode: $barcode');
-    final client = await SessionManager.getActiveClient();
-    if (client == null) {
-      setState(() => scanMessage = 'No active Odoo session.');
-      return;
-    }
+  void _processBarcode(String barcode) {
+    if (barcodeToMoveLine.containsKey(barcode)) {
+      final moveLineData = barcodeToMoveLine[barcode]!;
+      final moveLineId = moveLineData['move_line_id'] as int?;
 
-    final moveLineData = barcodeToMoveLine[barcode];
-    if (moveLineData == null) {
-      final productResult = await client.callKw({
-        'model': 'product.product',
-        'method': 'search_read',
-        'args': [
-          [['barcode', '=', barcode]],
-          ['id', 'name', 'tracking', 'default_code'],
-        ],
-        'kwargs': {},
+      if (moveLineId == null) {
+        setState(
+            () => scanMessage = 'Invalid move line ID for barcode: $barcode');
+        _showSnackBar('Invalid move line ID', Colors.red);
+        return;
+      }
+
+      setState(() {
+        selectedMoveLineId = moveLineId;
+        scanMessage = 'Found: ${moveLineData['name']}';
       });
 
-      if (productResult.isNotEmpty) {
-        final newProduct = productResult[0];
-        final productId = newProduct['id'] as int;
-        final newMoveLine = await _createMoveLine(productId, newProduct['name']);
-        if (newMoveLine != null && newMoveLine['id'] != null) {
-          setState(() {
-            pickingLines.add(newMoveLine);
-            final moveLineId = newMoveLine['id'] as int;
-            barcodeToMoveLine[barcode] = {
-              'move_line_id': moveLineId,
-              'product_id': productId,
-              'name': newProduct['name'],
-              'default_code': newProduct['default_code'],
-            };
-            productTracking[productId] =
-                _normalizeTrackingValue(newProduct['tracking']);
-            productLocations[productId] = widget.picking['location_id'] is List
-                ? widget.picking['location_id'][1]
-                : 'Unknown';
-            selectedMoveLineId = moveLineId;
-            pendingPickedQuantities[moveLineId] = 0.0;
-            quantityControllers[moveLineId] =
-                TextEditingController(text: '0.00');
-            lotSerialControllers[moveLineId] = [];
-            pendingLotSerialNumbers[moveLineId] = [];
-            stockAvailability[productId] = 0.0;
-            scanMessage = 'New product added: ${newProduct['name']}';
-          });
-          widget.provider.fetchStockAvailability(
-            [
-              {
-                'product_id': [productId, newProduct['name']]
-              }
-            ],
-            selectedWarehouseId ?? widget.warehouseId,
-          ).then((avail) {
-            setState(
-                    () => stockAvailability[productId] = avail[productId] ?? 0.0);
-          });
-          return;
-        }
-      }
-
-      setState(() => scanMessage = 'Product not found for barcode: $barcode');
-      return;
-    }
-
-    final moveLineId = moveLineData['move_line_id'] as int;
-    final productId = moveLineData['product_id'] as int;
-    final moveLine = pickingLines.firstWhere(
-          (line) => line['id'] == moveLineId,
-      orElse: () => {},
-    );
-    if (moveLine.isEmpty) {
-      setState(() => scanMessage = 'Move line not found for barcode.');
-      return;
-    }
-
-    if (moveLine['is_picked']) {
-      setState(() =>
-      scanMessage = 'Product ${moveLine['product_name']} is already fully picked.');
-      return;
-    }
-
-    if (!moveLine['is_available']) {
-      setState(() => scanMessage = 'Product is not available in stock.');
-      return;
-    }
-
-    final orderedQty = moveLine['ordered_qty'] as double;
-    final availableQty = stockAvailability[productId] ?? 0.0;
-    final currentQty = pendingPickedQuantities[moveLineId] ??
-        pickedQuantities[moveLineId] ??
-        0.0;
-    final newQty = currentQty + 1;
-
-    if (availableQty == 0.0) {
-      setState(() => scanMessage = 'Stock unavailable for ${moveLine['product_name']}');
-      return;
-    }
-
-    if (newQty > min(orderedQty, availableQty)) {
-      setState(() => scanMessage =
-      'Cannot pick more than available (${availableQty.toStringAsFixed(2)}) or ordered (${orderedQty.toStringAsFixed(2)})');
-      return;
-    }
-
-    final tracking = productTracking[productId] ?? 'none';
-    if (tracking == 'serial') {
-      String? serial = await _promptForLotSerial(productId, tracking);
-      if (serial == null) {
-        setState(() =>
-        scanMessage = 'Serial number required for ${moveLine['product_name']}');
-        return;
-      }
-      _updatePendingPickedQuantity(moveLine, newQty, [
-        ...(pendingLotSerialNumbers[moveLineId] ??
-            lotSerialNumbers[moveLineId] ??
-            []),
-        serial
-      ]);
+      _showProductPickDialog(moveLineId);
     } else {
-      _updatePendingPickedQuantity(
-          moveLine,
-          newQty,
-          pendingLotSerialNumbers[moveLineId] ??
-              lotSerialNumbers[moveLineId] ??
-              []);
+      setState(() => scanMessage = 'Product not found: $barcode');
+      _showSnackBar('Product not found: $barcode', Colors.red);
+      _suggestAddingProduct(barcode);
     }
   }
 
-  void _updatePendingPickedQuantity(
-      Map<String, dynamic> line, double newQty, List<String> serials) {
-    debugPrint(
-        'Updating quantity for move line ${line['id']}: $newQty, serials: $serials');
-    final moveLineId = line['id'] as int;
-    final productId = (line['product_id'] as List)[0] as int;
-    final orderedQty = line['ordered_qty'] as double;
-    final availableQty = stockAvailability[productId] ?? 0.0;
-
-    if (line['is_picked'] && newQty >= orderedQty) {
-      setState(() => scanMessage =
-      'Product ${line['product_name']} is already fully picked.');
-      return;
-    }
-
-    if (!line['is_available']) {
-      setState(() => scanMessage = 'Cannot pick unavailable product.');
-      return;
-    }
-
-    if (newQty < 0) {
-      setState(() => scanMessage = 'Quantity cannot be negative.');
-      return;
-    }
-
-    if (newQty > min(orderedQty, availableQty)) {
-      setState(() => scanMessage =
-      'Cannot exceed available (${availableQty.toStringAsFixed(2)}) or ordered (${orderedQty.toStringAsFixed(2)})');
-      return;
-    }
-
-    final tracking = productTracking[productId] ?? 'none';
-    if (tracking == 'serial' &&
-        newQty > 0 &&
-        serials.length != newQty.toInt()) {
-      setState(() => scanMessage = 'Serial numbers required for all units');
-      return;
-    }
-
-    setState(() {
-      final index = pickingLines.indexWhere((item) => item['id'] == moveLineId);
-      if (index != -1) {
-        pickingLines[index]['picked_qty'] = newQty;
-        pickingLines[index]['is_picked'] = newQty >= orderedQty;
-        pendingPickedQuantities[moveLineId] = newQty;
-        pendingLotSerialNumbers[moveLineId] = serials;
-        quantityControllers[moveLineId]?.text = newQty.toStringAsFixed(2);
-
-        final currentControllers = lotSerialControllers[moveLineId] ?? [];
-        while (currentControllers.length > newQty.toInt()) {
-          currentControllers.removeLast().dispose();
-        }
-        while (currentControllers.length < newQty.toInt()) {
-          currentControllers.add(TextEditingController());
-        }
-        for (int i = 0; i < newQty.toInt(); i++) {
-          currentControllers[i].text = i < serials.length ? serials[i] : '';
-        }
-        lotSerialControllers[moveLineId] = currentControllers;
-
-        selectedMoveLineId = moveLineId;
-        scanMessage = 'Updated: ${line['product_name']}';
-      }
-    });
-  }
-
-  Future<String?> _promptForLotSerial(int productId, String tracking) async {
-    final controller = TextEditingController();
-    String? result;
-
-    await showDialog(
+  void _suggestAddingProduct(String barcode) {
+    showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text('${tracking == 'serial' ? 'Serial' : 'Lot'} Number'),
-        content: TextField(
-          controller: controller,
-          decoration: InputDecoration(
-            labelText: '${tracking == 'serial' ? 'Serial' : 'Lot'} Number',
-            border: const OutlineInputBorder(),
-            errorText: controller.text.isEmpty ? 'Required' : null,
-          ),
-          autofocus: true,
-          onChanged: (value) => controller.text = value,
-        ),
+        title: const Text('Product Not Found'),
+        content: Text('Barcode $barcode is not in this picking. Add it?'),
         actions: [
-          TextButton(
-            onPressed: () async {
-              final scanned = await FlutterBarcodeScanner.scanBarcode(
-                '#ff0000',
-                'Cancel',
-                true,
-                ScanMode.BARCODE,
-              );
-              if (scanned != '-1') {
-                controller.text = scanned;
-              }
-            },
-            child: const Text('Scan'),
-          ),
           TextButton(
             onPressed: () => Navigator.pop(context),
             child: const Text('Cancel'),
           ),
           TextButton(
-            onPressed: () {
-              if (controller.text.isNotEmpty) {
-                result = controller.text;
-                Navigator.pop(context);
-              } else {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(
-                        'Please enter a valid ${tracking == 'serial' ? 'serial' : 'lot'} number'),
-                    backgroundColor: errorColor,
-                  ),
-                );
-              }
+            onPressed: () async {
+              Navigator.pop(context);
+              await _addNewProduct(barcode);
             },
-            child: const Text('OK'),
+            child: const Text('Add Product'),
           ),
         ],
       ),
     );
-
-    return result;
   }
 
-  Future<void> _searchProduct(String query) async {
-    if (query.isEmpty) {
-      setState(() => selectedMoveLineId = null);
-      return;
-    }
-
-    final moveLineData = barcodeToMoveLine[query] ??
-        pickingLines.firstWhere(
-              (line) =>
-          line['product_name']
-              .toLowerCase()
-              .contains(query.toLowerCase()) ||
-              (line['product_code']
-                  ?.toLowerCase()
-                  ?.contains(query.toLowerCase()) ??
-                  false),
-          orElse: () => {},
-        );
-
-    if (moveLineData.isNotEmpty) {
-      final moveLineId = moveLineData['id'] is int
-          ? moveLineData['id']
-          : moveLineData['move_line_id'];
-      setState(() {
-        selectedMoveLineId = moveLineId;
-        scanMessage = 'Found: ${moveLineData['name'] ?? moveLineData['product_name']}';
-        if (!moveLineData['is_available'] && moveLineData.containsKey('is_available')) {
-          scanMessage = 'Product not available: ${moveLineData['product_name']}';
-        }
-      });
-    } else {
-      setState(() => scanMessage = 'No product found for: $query');
-    }
-  }
-
-  Future<Map<String, dynamic>?> _createMoveLine(
-      int productId, String productName) async {
-    final client = await SessionManager.getActiveClient();
-    if (client == null) return null;
-
+  Future<void> _addNewProduct(String barcode) async {
     try {
-      final pickingId = widget.picking['id'] as int;
-
-      dynamic locationId;
-      dynamic locationDestId;
-
-      if (widget.picking['location_id'] is List &&
-          (widget.picking['location_id'] as List).length >= 2) {
-        locationId = widget.picking['location_id'][0];
-      } else if (defaultLocationId != null) {
-        locationId = defaultLocationId;
+      final client = await SessionManager.getActiveClient();
+      if (client == null) {
+        throw Exception('No active Odoo session');
       }
 
-      if (widget.picking['location_dest_id'] is List &&
-          (widget.picking['location_dest_id'] as List).length >= 2) {
-        locationDestId = widget.picking['location_dest_id'][0];
-      } else {
-        if (selectedWarehouseId != null) {
-          final warehouseData = await client.callKw({
-            'model': 'stock.warehouse',
-            'method': 'search_read',
-            'args': [
-              [['id', '=', selectedWarehouseId]],
-              ['lot_stock_id'],
-            ],
-            'kwargs': {},
-          });
-          if (warehouseData.isNotEmpty) {
-            locationDestId = warehouseData[0]['lot_stock_id'] is List
-                ? warehouseData[0]['lot_stock_id'][0]
-                : warehouseData[0]['lot_stock_id'];
-          }
-        }
-      }
-
-      if (locationId == null || locationDestId == null) {
-        final pickingTypeId = widget.picking['picking_type_id'] is List
-            ? widget.picking['picking_type_id'][0]
-            : widget.picking['picking_type_id'];
-
-        if (pickingTypeId != null) {
-          final pickingType = await client.callKw({
-            'model': 'stock.picking.type',
-            'method': 'search_read',
-            'args': [
-              [['id', '=', pickingTypeId]],
-              ['default_location_src_id', 'default_location_dest_id'],
-            ],
-            'kwargs': {},
-          });
-
-          if (pickingType.isNotEmpty) {
-            locationId ??= pickingType[0]['default_location_src_id'] is List
-                ? pickingType[0]['default_location_src_id'][0]
-                : pickingType[0]['default_location_src_id'];
-            locationDestId ??=
-            pickingType[0]['default_location_dest_id'] is List
-                ? pickingType[0]['default_location_dest_id'][0]
-                : pickingType[0]['default_location_dest_id'];
-          }
-        }
-      }
-
-      if (locationId == null || locationDestId == null) {
-        throw Exception('Unable to determine source or destination location');
-      }
-
-      final productData = await client.callKw({
+      final productResult = await client.callKw({
         'model': 'product.product',
         'method': 'search_read',
         'args': [
-          [['id', '=', productId]],
-          ['uom_id', 'tracking'],
+          [
+            ['barcode', '=', barcode]
+          ],
+          ['id', 'name', 'tracking'],
         ],
         'kwargs': {},
       });
 
-      if (productData.isEmpty) {
-        throw Exception('Product not found');
+      if (productResult.isEmpty) {
+        _showSnackBar('No product found with barcode $barcode', Colors.red);
+        return;
       }
 
-      final uomId = productData[0]['uom_id'] is List
-          ? productData[0]['uom_id'][0]
-          : productData[0]['uom_id'];
+      final product = productResult[0];
+      final productId = product['id'] as int;
+      final pickingId = widget.picking['id'] as int;
+      final locationId = widget.picking['location_id'][0] as int;
+      final locationDestId = widget.picking['location_dest_id'][0] as int;
 
-      final moveId = await client.callKw({
-        'model': 'stock.move',
-        'method': 'create',
-        'args': [
-          {
-            'picking_id': pickingId,
-            'product_id': productId,
-            'name': productName,
-            'product_uom': uomId,
-            'product_uom_qty': 1.0,
-            'location_id': locationId,
-            'location_dest_id': locationDestId,
-          },
-        ],
-        'kwargs': {},
-      });
+      final moveLineId = await widget.provider.createMoveLine(
+        pickingId,
+        productId,
+        1.0,
+        locationId,
+        locationDestId,
+      );
 
-      final moveLineId = await client.callKw({
-        'model': 'stock.move.line',
-        'method': 'create',
-        'args': [
-          {
-            'picking_id': pickingId,
-            'move_id': moveId,
-            'product_id': productId,
-            'product_uom_id': uomId,
-            'quantity': 0.0,
-            'location_id': locationId,
-            'location_dest_id': locationDestId,
-          },
-        ],
-        'kwargs': {},
-      });
-
-      final newMoveLine = await client.callKw({
-        'model': 'stock.move.line',
-        'method': 'search_read',
-        'args': [
-          [['id', '=', moveLineId]],
-          [
-            'id',
-            'product_id',
-            'move_id',
-            'lot_id',
-            'lot_name',
-            'location_id',
-            'quantity'
-          ],
-        ],
-        'kwargs': {},
-      });
-
-      if (newMoveLine.isNotEmpty) {
-        final moveLine = newMoveLine[0];
-        return {
-          'id': moveLine['id'],
-          'move_id': moveLine['move_id'] is List
-              ? moveLine['move_id'][0]
-              : moveLine['move_id'],
-          'product_id': moveLine['product_id'] is List
-              ? moveLine['product_id']
-              : [productId, productName],
-          'product_name': productName,
-          'product_code': 'No Code',
-          'ordered_qty': 1.0,
-          'picked_qty': moveLine['quantity'] != null
-              ? double.parse(moveLine['quantity'].toString())
-              : 0.0,
-          'uom': 'Units',
-          'location_id': moveLine['location_id'] is List
-              ? moveLine['location_id'][0]
-              : moveLine['location_id'],
-          'location_name': moveLine['location_id'] is List
-              ? moveLine['location_id'][1]
-              : 'Unknown',
-          'lot_id': moveLine['lot_id'],
-          'is_picked': false,
-          'is_available': false,
-          'tracking': _normalizeTrackingValue(productData[0]['tracking']),
-        };
+      if (moveLineId != null) {
+        await _initializePickingData();
+        _showSnackBar('Product added successfully', Colors.green);
+      } else {
+        _showSnackBar('Failed to add product', Colors.red);
       }
     } catch (e) {
-      setState(() => scanMessage = 'Error creating move line: $e');
-      _showSnackBar('Error creating move line: $e', errorColor);
+      _showSnackBar('Error adding product: $e', Colors.red);
     }
-    return null;
+  }
+
+  void _showProductPickDialog(int moveLineId) {
+    final line = pickingLines.firstWhere(
+      (line) => line['id'] == moveLineId,
+      orElse: () => <String, dynamic>{},
+    );
+
+    if (line.isEmpty) {
+      _showSnackBar('Move line not found', Colors.red);
+      return;
+    }
+
+    final productId = (line['product_id'] as List<dynamic>)[0] as int;
+    final availableQty = stockAvailability[productId] ?? 0.0;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            return Padding(
+              padding: EdgeInsets.only(
+                bottom: MediaQuery.of(context).viewInsets.bottom,
+                left: 16,
+                right: 16,
+                top: 16,
+              ),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Expanded(
+                          child: Text(
+                            line['product_name'] as String,
+                            style: const TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                        if (availableQty <= 0)
+                          TextButton(
+                            onPressed: () => _suggestAlternativeLocation(
+                                productId, moveLineId, setModalState),
+                            child: const Text('Change Location'),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text('Code: ${line['product_code']}'),
+                    Text('Location: ${line['location_name']}'),
+                    Text('Ordered: ${line['ordered_qty']}'),
+                    Text('Picked: ${line['picked_qty']}'),
+                    Text('Available: ${availableQty.toStringAsFixed(2)}'),
+                    if (availableQty <= 0)
+                      const Text(
+                        'Out of stock at this location',
+                        style: TextStyle(color: Colors.red),
+                      ),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: quantityControllers[moveLineId] ??
+                          TextEditingController(text: '1.0'),
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: 'Quantity to Pick',
+                        border: OutlineInputBorder(),
+                      ),
+                      onChanged: (value) {
+                        final qty = double.tryParse(value) ?? 0.0;
+                        setModalState(() {
+                          pendingPickedQuantities[moveLineId] = qty;
+                        });
+                      },
+                    ),
+                    const SizedBox(height: 16),
+                    if (line['tracking'] == 'lot' ||
+                        line['tracking'] == 'serial')
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '${line['tracking'] == 'lot' ? 'Lot' : 'Serial'} Numbers:',
+                            style: const TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                          const SizedBox(height: 8),
+                          ..._buildLotSerialInputs(moveLineId, setModalState),
+                        ],
+                      ),
+                    const SizedBox(height: 16),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(context),
+                          child: const Text('Cancel'),
+                        ),
+                        const SizedBox(width: 8),
+                        if (pickedQuantities[moveLineId] != null &&
+                            pickedQuantities[moveLineId]! > 0)
+                          TextButton(
+                            onPressed: () {
+                              _undoPick(moveLineId);
+                              Navigator.pop(context);
+                            },
+                            child: const Text('Undo'),
+                          ),
+                        const SizedBox(width: 8),
+                        ElevatedButton(
+                          onPressed: availableQty <= 0
+                              ? null
+                              : () {
+                                  _confirmPick(moveLineId);
+                                  Navigator.pop(context);
+                                },
+                          child: const Text('Confirm'),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _suggestAlternativeLocation(
+      int productId, int moveLineId, StateSetter setModalState) async {
+    final locations = await widget.provider
+        .fetchAlternativeLocations(productId, widget.warehouseId);
+    if (locations.isEmpty) {
+      _showSnackBar('No alternative locations found', Colors.red);
+      return;
+    }
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Select Alternative Location'),
+        content: SingleChildScrollView(
+          child: Column(
+            children: locations.map((loc) {
+              final locationName =
+                  (loc['location_id'] as List<dynamic>)[1] as String;
+              final locationId =
+                  (loc['location_id'] as List<dynamic>)[0] as int;
+              final quantity = (loc['quantity'] as num).toDouble();
+              return ListTile(
+                title: Text(locationName),
+                subtitle: Text('Available: $quantity'),
+                onTap: () {
+                  setModalState(() {
+                    final line = pickingLines
+                        .firstWhere((line) => line['id'] == moveLineId);
+                    line['location_name'] = locationName;
+                    line['location_id'] = locationId;
+                    line['is_available'] = true;
+                    locationIds[moveLineId] = locationId;
+                    productLocations[productId] = locationName;
+                    stockAvailability[productId] = quantity;
+                  });
+                  _filterPickingLines();
+                  Navigator.pop(context);
+                },
+              );
+            }).toList(),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  List<Widget> _buildLotSerialInputs(
+      int moveLineId, StateSetter setModalState) {
+    final List<Widget> widgets = [];
+    final trackingType = pickingLines
+        .firstWhere((line) => line['id'] == moveLineId)['tracking'] as String;
+    final qtyController = quantityControllers[moveLineId];
+    final qty = qtyController != null
+        ? double.tryParse(qtyController.text) ?? 1.0
+        : 1.0;
+
+    lotSerialControllers[moveLineId] ??= [];
+    pendingLotSerialNumbers[moveLineId] ??= lotSerialNumbers[moveLineId] ?? [];
+
+    if (trackingType == 'serial') {
+      while (lotSerialControllers[moveLineId]!.length < qty.toInt()) {
+        lotSerialControllers[moveLineId]!.add(TextEditingController(text: ''));
+        pendingLotSerialNumbers[moveLineId]!.add('');
+      }
+      while (lotSerialControllers[moveLineId]!.length > qty.toInt()) {
+        lotSerialControllers[moveLineId]!.removeLast().dispose();
+        pendingLotSerialNumbers[moveLineId]!.removeLast();
+      }
+
+      for (int i = 0; i < qty.toInt(); i++) {
+        widgets.add(
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8.0),
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: lotSerialControllers[moveLineId]![i],
+                    decoration: InputDecoration(
+                      labelText: 'Serial #${i + 1}',
+                      border: const OutlineInputBorder(),
+                    ),
+                    onChanged: (value) {
+                      setModalState(() {
+                        pendingLotSerialNumbers[moveLineId]![i] = value.trim();
+                      });
+                    },
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.qr_code_scanner),
+                  onPressed: () =>
+                      _scanSerialNumber(moveLineId, i, setModalState),
+                ),
+              ],
+            ),
+          ),
+        );
+      }
+    } else if (trackingType == 'lot') {
+      if (lotSerialControllers[moveLineId]!.isEmpty) {
+        lotSerialControllers[moveLineId]!.add(TextEditingController(text: ''));
+        pendingLotSerialNumbers[moveLineId]!.add('');
+      }
+
+      widgets.add(
+        Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: lotSerialControllers[moveLineId]![0],
+                decoration: const InputDecoration(
+                  labelText: 'Lot Number',
+                  border: OutlineInputBorder(),
+                ),
+                onChanged: (value) {
+                  setModalState(() {
+                    pendingLotSerialNumbers[moveLineId]![0] = value.trim();
+                  });
+                },
+              ),
+            ),
+            IconButton(
+              icon: const Icon(Icons.qr_code_scanner),
+              onPressed: () => _scanSerialNumber(moveLineId, 0, setModalState),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return widgets;
+  }
+
+  Future<void> _scanSerialNumber(
+      int moveLineId, int index, StateSetter setModalState) async {
+    if (_isScanning) return;
+    setState(() => _isScanning = true);
+
+    try {
+      final result = await FlutterBarcodeScanner.scanBarcode(
+        '#ff0000',
+        'Cancel',
+        true,
+        ScanMode.BARCODE,
+      );
+
+      if (result != '-1' && result.isNotEmpty) {
+        setModalState(() {
+          lotSerialControllers[moveLineId]![index].text = result;
+          pendingLotSerialNumbers[moveLineId]![index] = result;
+        });
+      }
+    } catch (e) {
+      _showSnackBar('Error scanning serial/lot number: $e', Colors.red);
+    } finally {
+      setState(() => _isScanning = false);
+    }
+  }
+
+  Future<void> _confirmPick(int moveLineId) async {
+    try {
+      final line = pickingLines.firstWhere(
+        (line) => line['id'] == moveLineId,
+        orElse: () => <String, dynamic>{},
+      );
+
+      if (line.isEmpty) {
+        _showSnackBar('Move line not found', Colors.red);
+        return;
+      }
+
+      final productId = (line['product_id'] as List<dynamic>)[0] as int;
+      final quantity = pendingPickedQuantities[moveLineId] ??
+          pickedQuantities[moveLineId] ??
+          0.0;
+      final orderedQty = line['ordered_qty'] as double;
+      final availableQty = stockAvailability[productId] ?? 0.0;
+      final serialLots = pendingLotSerialNumbers[moveLineId] ??
+          lotSerialNumbers[moveLineId] ??
+          [];
+      final trackingType = line['tracking'] as String;
+
+      if (quantity <= 0) {
+        _showSnackBar('Quantity must be greater than zero', Colors.red);
+        return;
+      }
+
+      if (quantity > orderedQty) {
+        _showSnackBar(
+          'Cannot pick more than ordered (${orderedQty.toStringAsFixed(2)})',
+          Colors.red,
+        );
+        return;
+      }
+
+      if (quantity > availableQty) {
+        _showSnackBar(
+          'Not enough stock (${availableQty.toStringAsFixed(2)} available)',
+          Colors.red,
+        );
+        return;
+      }
+
+      if (trackingType == 'serial' && serialLots.length != quantity.toInt()) {
+        _showSnackBar('Each unit must have a serial number', Colors.red);
+        return;
+      }
+      if (trackingType == 'lot' && serialLots.isEmpty) {
+        _showSnackBar('Lot number is required', Colors.red);
+        return;
+      }
+
+      final success = await widget.provider.updateMoveLineQuantity(
+        moveLineId,
+        quantity,
+        serialLots,
+      );
+
+      if (!success) {
+        _showSnackBar('Failed to update move line in Odoo', Colors.red);
+        return;
+      }
+
+      setState(() {
+        pickedQuantities[moveLineId] = quantity;
+        lotSerialNumbers[moveLineId] = serialLots;
+        line['picked_qty'] = quantity;
+        line['is_picked'] = quantity >= orderedQty;
+        pendingPickedQuantities.remove(moveLineId);
+        pendingLotSerialNumbers.remove(moveLineId);
+        stockAvailability[productId] =
+            (stockAvailability[productId] ?? 0.0) - quantity;
+        scanMessage =
+            'Picked ${quantity.toStringAsFixed(2)} units of ${line['product_name']}';
+      });
+
+      _filterPickingLines();
+      _showSnackBar(
+        '${quantity.toStringAsFixed(2)} units picked',
+        Colors.green,
+      );
+    } catch (e) {
+      _showSnackBar('Error confirming pick: $e', Colors.red);
+    }
+  }
+
+  Future<void> _undoPick(int moveLineId) async {
+    try {
+      final success = await widget.provider.undoMoveLine(moveLineId);
+      if (!success) {
+        _showSnackBar('Failed to undo pick', Colors.red);
+        return;
+      }
+
+      final line = pickingLines.firstWhere(
+        (line) => line['id'] == moveLineId,
+        orElse: () => <String, dynamic>{},
+      );
+
+      if (line.isEmpty) {
+        _showSnackBar('Move line not found', Colors.red);
+        return;
+      }
+
+      final productId = (line['product_id'] as List<dynamic>)[0] as int;
+      final quantity = pickedQuantities[moveLineId] ?? 0.0;
+
+      setState(() {
+        pickedQuantities[moveLineId] = 0.0;
+        lotSerialNumbers[moveLineId] = [];
+        line['picked_qty'] = 0.0;
+        line['is_picked'] = false;
+        stockAvailability[productId] =
+            (stockAvailability[productId] ?? 0.0) + quantity;
+        pendingPickedQuantities.remove(moveLineId);
+        pendingLotSerialNumbers.remove(moveLineId);
+        scanMessage = 'Undo pick for ${line['product_name']}';
+      });
+
+      _filterPickingLines();
+      _showSnackBar('Pick undone successfully', Colors.green);
+    } catch (e) {
+      _showSnackBar('Error undoing pick: $e', Colors.red);
+    }
+  }
+
+  Future<void> _validateAndCompletePicking() async {
+    setState(() => isProcessing = true);
+
+    try {
+      final client = await SessionManager.getActiveClient();
+      if (client == null) {
+        throw Exception('No active Odoo session found');
+      }
+
+      final pickingId = widget.picking['id'] as int?;
+      if (pickingId == null) {
+        throw Exception('Picking ID is null');
+      }
+
+      final moveLineIds = pickingLines
+          .where((line) => line['id'] != null)
+          .map((line) => line['id'] as int)
+          .toList();
+
+      if (moveLineIds.isEmpty) {
+        throw Exception('No move lines to validate');
+      }
+
+      bool anyPicked = false;
+      for (var moveLineId in moveLineIds) {
+        if (pickedQuantities.containsKey(moveLineId) &&
+            pickedQuantities[moveLineId]! > 0) {
+          anyPicked = true;
+          final quantity = pickedQuantities[moveLineId]!;
+          final serialLots = lotSerialNumbers[moveLineId] ?? [];
+
+          final success = await widget.provider.updateMoveLineQuantity(
+            moveLineId,
+            quantity,
+            serialLots,
+          );
+
+          if (!success) {
+            throw Exception('Failed to update move line $moveLineId');
+          }
+        }
+      }
+
+      if (!anyPicked) {
+        throw Exception('No items picked');
+      }
+
+      bool validated = false;
+      String? validationError;
+      for (int attempt = 1; attempt <= 3; attempt++) {
+        try {
+          await client.callKw({
+            'model': 'stock.picking',
+            'method': 'button_validate',
+            'args': [
+              [pickingId]
+            ],
+            'kwargs': {
+              'context': {'allow_backorder': true}
+            },
+          });
+          validated = true;
+          break;
+        } catch (e) {
+          validationError = e.toString();
+          if (attempt == 3) break;
+          await Future.delayed(const Duration(seconds: 1));
+        }
+      }
+
+      if (!validated) {
+        throw Exception('Failed to validate picking: $validationError');
+      }
+
+      final pickingResult = await client.callKw({
+        'model': 'stock.picking',
+        'method': 'search_read',
+        'args': [
+          [
+            ['id', '=', pickingId]
+          ],
+          ['state'],
+        ],
+        'kwargs': {},
+      });
+
+      final newState = pickingResult.isNotEmpty
+          ? pickingResult[0]['state'] as String?
+          : null;
+
+      if (newState != 'done') {
+        final backorderResult = await client.callKw({
+          'model': 'stock.picking',
+          'method': 'search_read',
+          'args': [
+            [
+              ['backorder_id', '=', pickingId]
+            ],
+            ['id', 'state'],
+          ],
+          'kwargs': {},
+        });
+        if (backorderResult.isNotEmpty) {
+          _showSnackBar(
+              'Picking partially validated with backorder', Colors.orange);
+        } else {
+          throw Exception('Validation incomplete: state is $newState');
+        }
+      }
+
+      setState(() {
+        isProcessing = false;
+        errorMessage = null;
+        pendingPickedQuantities.clear();
+        pendingLotSerialNumbers.clear();
+      });
+
+      _showSnackBar('Picking validated successfully', Colors.green);
+      Navigator.pop(context, true);
+    } catch (e) {
+      setState(() {
+        isProcessing = false;
+        errorMessage = 'Error validating picking: $e';
+      });
+      _showSnackBar(errorMessage!, Colors.red);
+    }
   }
 
   void _showSnackBar(String message, Color backgroundColor) {
@@ -1055,747 +1519,572 @@ class _PickingPageState extends State<PickingPage> {
     );
   }
 
-  Future<void> _updateStockQuantities(int productId, String productName) async {
-    final client = await SessionManager.getActiveClient();
-    if (client == null) {
-      setState(() => scanMessage = 'No active Odoo session.');
-      return;
-    }
+  Widget _buildDetailsTab() {
+    final pickingData = widget.picking;
 
-    final quantityController = TextEditingController();
-    int? tempWarehouseId = selectedWarehouseId;
-    int? tempLocationId = defaultLocationId;
-
-    final result = await showDialog<Map<String, dynamic>>(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: Text('Update Stock for $productName'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              DropdownButtonFormField<int>(
-                isExpanded: true,
-                value: tempWarehouseId,
-                decoration: const InputDecoration(
-                  labelText: 'Warehouse',
-                  border: OutlineInputBorder(),
-                ),
-                items: availableWarehouses.map((warehouse) {
-                  return DropdownMenuItem<int>(
-                    value: warehouse['id'] as int,
-                    child: Text('${warehouse['name']} (${warehouse['code']})'),
-                  );
-                }).toList(),
-                onChanged: (value) async {
-                  setDialogState(() {
-                    tempWarehouseId = value;
-                    tempLocationId = null;
-                  });
-                  await _fetchLocationsForWarehouse(value);
-                  setDialogState(() {
-                    tempLocationId = availableLocations.isNotEmpty
-                        ? availableLocations[0]['id'] as int
-                        : null;
-                  });
-                },
-              ),
-              const SizedBox(height: 12),
-              DropdownButtonFormField<int>(
-                value: tempLocationId,
-                decoration: const InputDecoration(
-                  labelText: 'Location',
-                  border: OutlineInputBorder(),
-                ),
-                items: availableLocations.map((location) {
-                  return DropdownMenuItem<int>(
-                    value: location['id'] as int,
-                    child: Text(location['name'] as String),
-                  );
-                }).toList(),
-                onChanged: (value) =>
-                    setDialogState(() => tempLocationId = value),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: quantityController,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                  labelText: 'New Quantity',
-                  border: OutlineInputBorder(),
-                ),
-                autofocus: true,
-                inputFormatters: [
-                  FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,2}'))
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Card(
+            elevation: 2,
+            child: Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'Delivery Order',
+                        style: Theme.of(context).textTheme.titleLarge,
+                      ),
+                      Text(
+                        pickingData['name'] ?? 'N/A',
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                    ],
+                  ),
+                  const Divider(),
+                  _buildInfoRow(
+                      'Status', _formatPickingState(pickingData['state'])),
+                  _buildInfoRow('Origin', pickingData['origin'] ?? 'N/A'),
+                  _buildInfoRow(
+                    'Source Location',
+                    pickingData['location_id'] is List<dynamic>
+                        ? pickingData['location_id'][1] as String
+                        : 'N/A',
+                  ),
+                  _buildInfoRow(
+                    'Destination',
+                    pickingData['location_dest_id'] is List<dynamic>
+                        ? pickingData['location_dest_id'][1] as String
+                        : 'N/A',
+                  ),
+                  _buildInfoRow(
+                    'Scheduled Date',
+                    _formatDate(pickingData['scheduled_date']),
+                  ),
+                  _buildInfoRow(
+                    'Partner',
+                    pickingData['partner_id'] is List<dynamic>
+                        ? pickingData['partner_id'][1] as String
+                        : 'N/A',
+                  ),
+                  if (pickingData['note'] != null &&
+                      pickingData['note'].toString().isNotEmpty)
+                    _buildInfoRow('Note', pickingData['note'] as String),
                 ],
               ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          if (!isProcessing && isInitialized)
+            Row(
+              children: [
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed:
+                        isProcessing ? null : _validateAndCompletePicking,
+                    icon: const Icon(Icons.check),
+                    label: const Text('Validate Picking'),
+                    style: ElevatedButton.styleFrom(
+                      foregroundColor: Colors.white,
+                      backgroundColor: Colors.green,
+                      minimumSize: const Size(double.infinity, 50),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                IconButton(
+                  icon: const Icon(Icons.refresh),
+                  onPressed: isProcessing ? null : _initializePickingData,
+                  tooltip: 'Refresh',
+                ),
+              ],
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildInfoRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4.0),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            label,
+            style: const TextStyle(color: Colors.grey),
+          ),
+          Flexible(
+            child: Text(
+              value,
+              style: const TextStyle(fontWeight: FontWeight.w500),
+              textAlign: TextAlign.right,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _formatPickingState(String? state) {
+    if (state == null) return 'Unknown';
+    switch (state) {
+      case 'draft':
+        return 'Draft';
+      case 'waiting':
+        return 'Waiting';
+      case 'confirmed':
+        return 'Confirmed';
+      case 'assigned':
+        return 'Ready';
+      case 'done':
+        return 'Done';
+      case 'cancel':
+        return 'Cancelled';
+      default:
+        return state.substring(0, 1).toUpperCase() + state.substring(1);
+    }
+  }
+
+  String _formatDate(dynamic date) {
+    if (date == null) return 'N/A';
+    try {
+      if (date is String) {
+        final dateTime = DateTime.parse(date);
+        return '${dateTime.day}/${dateTime.month}/${dateTime.year} ${dateTime.hour}:${dateTime.minute}';
+      }
+      return 'N/A';
+    } catch (e) {
+      return 'N/A';
+    }
+  }
+
+  Widget _buildToDoTab() {
+    if (isProcessing) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (errorMessage != null) {
+      return Center(
+        child: Text(
+          errorMessage!,
+          style: const TextStyle(color: Colors.red),
+          textAlign: TextAlign.center,
+        ),
+      );
+    }
+
+    final todoItems = filteredPickingLines
+        .where((line) => !(line['is_picked'] as bool))
+        .toList();
+
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _searchController,
+                      decoration: const InputDecoration(
+                        hintText: 'Search by name or code',
+                        prefixIcon: Icon(Icons.search),
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.sort),
+                    onPressed: _showSortOptions,
+                    tooltip: 'Sort',
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _barcodeController,
+                      focusNode: _barcodeFocusNode,
+                      decoration: const InputDecoration(
+                        hintText: 'Scan or enter barcode',
+                        prefixIcon: Icon(Icons.search),
+                        border: OutlineInputBorder(),
+                      ),
+                      onSubmitted: (value) {
+                        if (value.isNotEmpty) {
+                          _processBarcode(value);
+                          _barcodeController.clear();
+                          _barcodeFocusNode.requestFocus();
+                        }
+                      },
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.qr_code_scanner),
+                    onPressed: _scanBarcode,
+                    tooltip: 'Scan Barcode',
+                  ),
+                ],
+              ),
+              if (scanMessage != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8.0),
+                  child: Text(
+                    scanMessage!,
+                    style: TextStyle(
+                      color: scanMessage!.startsWith('Found')
+                          ? Colors.green
+                          : Colors.red,
+                    ),
+                  ),
+                ),
             ],
           ),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Cancel')),
-            TextButton(
-              onPressed: () {
-                final qty = double.tryParse(quantityController.text);
-                if (qty != null && qty >= 0 && tempLocationId != null) {
-                  Navigator.pop(context, {
-                    'quantity': qty,
-                    'location_id': tempLocationId,
-                    'warehouse_id': tempWarehouseId,
-                  });
-                } else {
-                  _showSnackBar(
-                      'Please enter a valid quantity and select a location',
-                      errorColor);
-                }
+        ),
+        Expanded(
+          child: todoItems.isEmpty
+              ? const Center(
+                  child: Text(
+                    'All items have been picked!',
+                    style: TextStyle(fontSize: 16),
+                  ),
+                )
+              : ListView.builder(
+                  itemCount: todoItems.length,
+                  itemBuilder: (context, index) {
+                    final item = todoItems[index];
+                    return _buildProductCard(item);
+                  },
+                ),
+        ),
+      ],
+    );
+  }
+
+  void _showSortOptions() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Sort By'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              title: const Text('Product Name'),
+              onTap: () {
+                setState(() {
+                  _sortCriteria = 'name';
+                  _sortAscending = true;
+                });
+                _filterPickingLines();
+                Navigator.pop(context);
               },
-              child: const Text('OK'),
+            ),
+            ListTile(
+              title: const Text('Quantity'),
+              onTap: () {
+                setState(() {
+                  _sortCriteria = 'quantity';
+                  _sortAscending = true;
+                });
+                _filterPickingLines();
+                Navigator.pop(context);
+              },
+            ),
+            ListTile(
+              title: const Text('Location'),
+              onTap: () {
+                setState(() {
+                  _sortCriteria = 'location';
+                  _sortAscending = true;
+                });
+                _filterPickingLines();
+                Navigator.pop(context);
+              },
+            ),
+            ListTile(
+              title: Text('Reverse Order (${_sortAscending ? 'Asc' : 'Desc'})'),
+              onTap: () {
+                setState(() {
+                  _sortAscending = !_sortAscending;
+                });
+                _filterPickingLines();
+                Navigator.pop(context);
+              },
             ),
           ],
         ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+        ],
       ),
     );
+  }
 
-    if (result == null || !mounted) return;
+  Widget _buildDoneTab() {
+    if (isProcessing) {
+      return const Center(child: CircularProgressIndicator());
+    }
 
-    try {
-      final locationId = result['location_id'] as int;
-      final quantity = result['quantity'] as double;
-
-      final existingQuants = await client.callKw({
-        'model': 'stock.quant',
-        'method': 'search_read',
-        'args': [
-          [
-            ['product_id', '=', productId],
-            ['location_id', '=', locationId],
-          ],
-          ['id', 'quantity'],
-        ],
-        'kwargs': {},
-      });
-
-      if (existingQuants.isNotEmpty) {
-        await client.callKw({
-          'model': 'stock.quant',
-          'method': 'write',
-          'args': [
-            [existingQuants[0]['id']],
-            {'quantity': quantity},
-          ],
-          'kwargs': {},
-        });
-      } else {
-        await client.callKw({
-          'model': 'stock.quant',
-          'method': 'create',
-          'args': [
-            {
-              'product_id': productId,
-              'location_id': locationId,
-              'quantity': quantity,
-            },
-          ],
-          'kwargs': {},
-        });
-      }
-
-      final newAvailability = await widget.provider.fetchStockAvailability(
-        [
-          {
-            'product_id': [productId, productName]
-          }
-        ],
-        selectedWarehouseId ?? widget.warehouseId,
+    if (errorMessage != null) {
+      return Center(
+        child: Text(
+          errorMessage!,
+          style: const TextStyle(color: Colors.red),
+          textAlign: TextAlign.center,
+        ),
       );
-
-      final locationResult = await client.callKw({
-        'model': 'stock.location',
-        'method': 'search_read',
-        'args': [
-          [['id', '=', locationId]],
-          ['name'],
-        ],
-        'kwargs': {},
-      });
-
-      final locationName = locationResult.isNotEmpty
-          ? locationResult[0]['name'] as String
-          : 'Unknown';
-
-      setState(() {
-        stockAvailability[productId] = newAvailability[productId] ?? 0.0;
-        productLocations[productId] = locationName;
-        final lineIndex = pickingLines
-            .indexWhere((line) => (line['product_id'] as List)[0] == productId);
-        if (lineIndex != -1) {
-          pickingLines[lineIndex]['location_name'] = locationName;
-          pickingLines[lineIndex]['is_available'] =
-              (newAvailability[productId] ?? 0.0) > 0;
-        }
-        scanMessage = 'Stock updated for $productName';
-      });
-    } catch (e) {
-      setState(() => scanMessage = 'Error updating stock: $e');
-      _showSnackBar('Error updating stock: $e', errorColor);
     }
+
+    final doneItems = filteredPickingLines
+        .where((line) => line['is_picked'] as bool)
+        .toList();
+
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: TextField(
+            controller: _searchController,
+            decoration: const InputDecoration(
+              hintText: 'Search by name or code',
+              prefixIcon: Icon(Icons.search),
+              border: OutlineInputBorder(),
+            ),
+          ),
+        ),
+        Expanded(
+          child: doneItems.isEmpty
+              ? const Center(
+                  child: Text(
+                    'No items have been picked yet.',
+                    style: TextStyle(fontSize: 16),
+                  ),
+                )
+              : ListView.builder(
+                  itemCount: doneItems.length,
+                  itemBuilder: (context, index) {
+                    final item = doneItems[index];
+                    return _buildProductCard(item, isDone: true);
+                  },
+                ),
+        ),
+      ],
+    );
   }
 
-  Future<List<String>> _ensureMoveLineIds(OdooClient client) async {
-    final invalidLines = <String>[];
-    for (var line in pickingLines) {
-      if (line['id'] == null) {
-        final productId = (line['product_id'] as List)[0] as int;
-        final productName = line['product_name'] as String;
-        try {
-          final newMoveLine = await _createMoveLine(productId, productName);
-          if (newMoveLine != null && newMoveLine['id'] != null) {
-            line['id'] = newMoveLine['id'];
-            debugPrint('Created move line for ${line['product_name']}');
-          } else {
-            invalidLines.add(productName);
-            debugPrint('Failed to create move line - returned null');
-          }
-        } catch (e) {
-          debugPrint('Failed to create move line for $productName: $e');
-          invalidLines.add(productName);
-          if (e.toString().contains('location')) {
-            _showSnackBar(
-                'Missing location configuration for $productName', errorColor);
-          }
-        }
-      }
-    }
-    return invalidLines;
-  }
+  Widget _buildProductCard(Map<String, dynamic> item, {bool isDone = false}) {
+    final productName = item['product_name'] as String? ?? 'Unknown';
+    final productCode = item['product_code'] as String? ?? 'No Code';
+    final orderedQty = item['ordered_qty'] as double? ?? 0.0;
+    final pickedQty = item['picked_qty'] as double? ?? 0.0;
+    final locationName = item['location_name'] as String? ?? 'Not in stock';
+    final moveLineId = item['id'] as int?;
+    final tracking = item['tracking'] as String? ?? 'none';
+    final productId =
+        (item['product_id'] as List<dynamic>?)?.first as int? ?? 0;
+    final availableQty = stockAvailability[productId] ?? 0.0;
 
-  List<Map<String, dynamic>> _validatePickedQuantities() {
-    final pickedProducts = <Map<String, dynamic>>[];
-    for (var line in pickingLines) {
-      final moveLineId = line['id'] as int;
-      final productId = (line['product_id'] as List)[0] as int;
-      final qty = pendingPickedQuantities[moveLineId] ??
-          pickedQuantities[moveLineId] ??
-          0.0;
-      if (qty > 0) {
-        pickedProducts.add({
-          'line': line,
-          'moveLineId': moveLineId,
-          'productId': productId,
-          'qty': qty,
-          'serials': pendingLotSerialNumbers[moveLineId] ??
-              lotSerialNumbers[moveLineId] ??
-              [],
-        });
-      }
-    }
-    return pickedProducts;
-  }
+    final progressPercentage =
+        orderedQty > 0 ? (pickedQty / orderedQty * 100).clamp(0.0, 100.0) : 0.0;
 
-  Future<List<String>> _validateSerialLotNumbers(
-      OdooClient client, List<Map<String, dynamic>> pickedProducts) async {
-    final errors = <String>[];
-    for (var product in pickedProducts) {
-      final line = product['line'] as Map<String, dynamic>;
-      final productId = product['productId'] as int;
-      final qty = product['qty'] as double;
-      final serials = product['serials'] as List<String>;
-      final tracking = productTracking[productId] ?? 'none';
-
-      if (tracking == 'serial' && qty > 0 && serials.length != qty.toInt()) {
-        errors.add('Serial numbers required for ${line['product_name']}');
-        continue;
-      }
-
-      if (serials.isNotEmpty) {
-        for (var serial in serials) {
-          final lotId =
-          await _getOrCreateLot(productId, serial, tracking == 'serial');
-          if (lotId == null) {
-            errors.add(
-                'Failed to get or create ${tracking == 'serial' ? 'serial' : 'lot'} number for ${line['product_name']}');
-          }
-        }
-      }
-    }
-    return errors;
-  }
-
-  Future<List<Map<String, dynamic>>> _batchUpdateMoveLines(
-      OdooClient client, List<Map<String, dynamic>> pickedProducts) async {
-    final updates = <Map<String, dynamic>>[];
-    for (var product in pickedProducts) {
-      final line = product['line'] as Map<String, dynamic>;
-      final moveLineId = product['moveLineId'] as int;
-      final productId = product['productId'] as int;
-      final qty = product['qty'] as double;
-      final serials = product['serials'] as List<String>;
-      final tracking = productTracking[productId] ?? 'none';
-      final orderedQty = line['ordered_qty'] as double;
-
-      if (qty > orderedQty) {
-        throw Exception(
-            'Picked quantity ($qty) exceeds ordered quantity ($orderedQty) for ${line['product_name']}');
-      }
-
-      final updateData = <String, dynamic>{'quantity': qty};
-      if (serials.isNotEmpty) {
-        final lotIds = <int>[];
-        for (var serial in serials) {
-          final lotId = await _getOrCreateLot(productId, serial, tracking == 'serial');
-          if (lotId != null) {
-            lotIds.add(lotId as int); // Explicit cast to int
-          }
-        }
-        if (lotIds.isNotEmpty) {
-          updateData['lot_id'] = lotIds.length == 1 ? lotIds[0] : lotIds; // Single int or List<int>
-        }
-      }
-
-      updates.add({
-        'moveLineId': moveLineId,
-        'updateData': updateData,
-      });
-    }
-
-    final results = <Map<String, dynamic>>[];
-    for (var update in updates) {
-      try {
-        await client.callKw({
-          'model': 'stock.move.line',
-          'method': 'write',
-          'args': [
-            [update['moveLineId']],
-            update['updateData'],
-          ],
-          'kwargs': {},
-        });
-        results.add({'success': true});
-      } catch (e) {
-        results.add({'success': false, 'error': e.toString()});
-      }
-    }
-    return results;
-  }  String _parseErrorMessage(dynamic error) {
-    if (error.toString().contains('OdooException')) {
-      return 'Failed to connect to the server. Please check your connection or try again.';
-    } else if (error.toString().contains('move line')) {
-      return 'Error updating picking lines: ${error.toString()}';
-    } else if (error.toString().contains('validation')) {
-      return 'Validation failed: ${error.toString()}';
-    }
-    return 'Error during validation: ${error.toString()}';
-  }
-
-  Future<void> _confirmAndValidate() async {
-    debugPrint('Starting _confirmAndValidate');
-    final client = await SessionManager.getActiveClient();
-    if (client == null) {
-      debugPrint('No active Odoo session detected');
-      _showSnackBar('No active Odoo session.', errorColor);
-      return;
-    }
-
-    setState(() => isProcessing = true);
-
-    try {
-      debugPrint('Ensuring valid move line IDs');
-      final invalidLines = await _ensureMoveLineIds(client);
-      if (invalidLines.isNotEmpty) {
-        debugPrint('Invalid move line IDs found for products: $invalidLines');
-        _showSnackBar(
-            'Cannot validate: Missing move line IDs for ${invalidLines.join(', ')}',
-            errorColor);
-        return;
-      }
-
-      debugPrint('Checking for picked quantities');
-      final pickedProducts = _validatePickedQuantities();
-      if (pickedProducts.isEmpty) {
-        debugPrint('No quantities picked for any products');
-        _showSnackBar(
-            'No quantities picked. Please pick at least one item.', errorColor);
-        return;
-      }
-
-      debugPrint('Validating serial/lot numbers');
-      final serialErrors =
-      await _validateSerialLotNumbers(client, pickedProducts);
-      if (serialErrors.isNotEmpty) {
-        debugPrint('Serial/lot validation errors: $serialErrors');
-        _showSnackBar(serialErrors.join('; '), errorColor);
-        return;
-      }
-
-      debugPrint(
-          'Preparing batch update for ${pickedProducts.length} move lines');
-      final updateResults = await _batchUpdateMoveLines(client, pickedProducts);
-      if (updateResults.any((result) => !result['success'])) {
-        final errors = updateResults
-            .where((result) => !result['success'])
-            .map((result) => result['error'])
-            .join('; ');
-        debugPrint('Batch update failed: $errors');
-        throw Exception('Failed to update move lines: $errors');
-      }
-
-      final pickingId = widget.picking['id'] as int;
-      debugPrint('Validating picking with pickingId=$pickingId');
-      bool validated = false;
-      String? validationError;
-      for (int attempt = 1; attempt <= 3; attempt++) {
-        try {
-          final validateResult = await client.callKw({
-            'model': 'stock.picking',
-            'method': 'button_validate',
-            'args': [[pickingId]],
-            'kwargs': {'context': {'allow_backorder': true}},
-          });
-          debugPrint(
-              'button_validate attempt $attempt result: $validateResult');
-          validated = true;
-          break;
-        } catch (e) {
-          debugPrint('button_validate attempt $attempt failed: $e');
-          validationError = e.toString();
-          await Future.delayed(Duration(seconds: 1));
-        }
-      }
-
-      if (!validated) {
-        throw Exception(
-            'Failed to validate picking after 3 attempts: $validationError');
-      }
-
-      debugPrint('Fetching updated picking state');
-      final pickingResult = await client.callKw({
-        'model': 'stock.picking',
-        'method': 'search_read',
-        'args': [
-          [['id', '=', pickingId]],
-          ['state'],
-        ],
-        'kwargs': {},
-      });
-      final newState =
-      pickingResult.isNotEmpty ? pickingResult[0]['state'] : null;
-      debugPrint('Updated picking state: $newState');
-
-      if (newState != 'done') {
-        debugPrint('Picking state is $newState, checking for backorder');
-        final backorderResult = await client.callKw({
-          'model': 'stock.picking',
-          'method': 'search_read',
-          'args': [
-            [['backorder_id', '=', pickingId]],
-            ['id', 'state'],
-          ],
-          'kwargs': {},
-        });
-        if (backorderResult.isNotEmpty) {
-          debugPrint('Backorder created: ${backorderResult[0]['id']}');
-          _showSnackBar(
-              'Picking partially validated with backorder.', warningColor);
-        } else {
-          throw Exception(
-              'Validation did not complete successfully: state is $newState');
-        }
-      }
-
-      debugPrint('Clearing client-side state');
-      setState(() {
-        isProcessing = false;
-        errorMessage = null;
-        pendingPickedQuantities.clear();
-        pendingLotSerialNumbers.clear();
-        pickedQuantities.clear();
-        lotSerialNumbers.clear();
-      });
-
-      debugPrint('Showing success snackbar and popping navigator');
-      _showSnackBar('Picking validated successfully!', successColor);
-      Navigator.pop(context, true);
-    } catch (e) {
-      setState(() {
-        isProcessing = false;
-        errorMessage = _parseErrorMessage(e);
-      });
-      _showSnackBar(errorMessage!, errorColor);
-    } finally {
-      setState(() => isProcessing = false);
-    }
+    return Card(
+      margin: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+      color: availableQty <= 0 && !isDone ? Colors.red[50] : null,
+      child: InkWell(
+        onTap: isDone || moveLineId == null
+            ? null
+            : () => _showProductPickDialog(moveLineId),
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Expanded(
+                    child: Text(
+                      productName,
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: availableQty <= 0 && !isDone ? Colors.red : null,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  if (isDone)
+                    const Icon(
+                      Icons.check_circle,
+                      color: Colors.green,
+                    ),
+                  if (!isDone && availableQty <= 0)
+                    const Icon(
+                      Icons.warning,
+                      color: Colors.red,
+                    ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Code: $productCode',
+                style: TextStyle(
+                  fontSize: 14,
+                  color: Colors.grey[600],
+                ),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'Source: $locationName',
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: Colors.grey[600],
+                    ),
+                  ),
+                  if (tracking != 'none')
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.blue.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        tracking == 'serial' ? 'Serial' : 'Lot',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Colors.blue,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Progress: ${pickedQty.toStringAsFixed(1)}/${orderedQty.toStringAsFixed(1)} ${item['uom']}',
+                          style: const TextStyle(fontSize: 14),
+                        ),
+                        const SizedBox(height: 4),
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(8),
+                          child: LinearProgressIndicator(
+                            value: progressPercentage / 100,
+                            minHeight: 8,
+                            backgroundColor: Colors.grey[200],
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                              isDone ? Colors.green : Colors.blue,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (!isDone && moveLineId != null)
+                    Row(
+                      children: [
+                        if (pickedQty > 0)
+                          IconButton(
+                            icon: const Icon(Icons.undo),
+                            color: Colors.orange,
+                            onPressed: () => _undoPick(moveLineId),
+                            tooltip: 'Undo Pick',
+                          ),
+                        IconButton(
+                          icon: const Icon(Icons.add_circle_outline),
+                          color: Colors.blue,
+                          onPressed: () => _showProductPickDialog(moveLineId),
+                          tooltip: 'Pick Item',
+                        ),
+                      ],
+                    ),
+                ],
+              ),
+              if (availableQty <= 0 && !isDone)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8.0),
+                  child: Text(
+                    'Out of stock. Try changing location.',
+                    style: TextStyle(
+                      color: Colors.red,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    if (!isInitialized) {
-      return const Scaffold(
-        body: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              CircularProgressIndicator(),
-              SizedBox(height: 16),
-              Text('Loading picking data...'),
-            ],
-          ),
-        ),
-      );
-    }
-
-    if (errorMessage != null) {
-      return Scaffold(
-        appBar: AppBar(
-          title: const Text('Picking Error'),
-        ),
-        body: Center(
-          child: Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(
-                  errorMessage!,
-                  style: const TextStyle(color: errorColor, fontSize: 16),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 16),
-                ElevatedButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('Back'),
-                ),
-              ],
-            ),
-          ),
-        ),
-      );
-    }
-
-    final filteredLines = showCompletedItems
-        ? pickingLines
-        : pickingLines.where((line) => !line['is_picked']).toList();
-
+    super.build(context);
     return Scaffold(
+      key: _scaffoldKey,
       appBar: AppBar(
         title: Text(widget.picking['name'] ?? 'Picking'),
+        bottom: TabBar(
+          controller: _tabController,
+          tabs: const [
+            Tab(text: 'Details'),
+            Tab(text: 'To Do'),
+            Tab(text: 'Done'),
+          ],
+        ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.qr_code_scanner),
-            onPressed: isProcessing ? null : _scanBarcode,
-            tooltip: 'Scan Barcode',
-          ),
-          IconButton(
-            icon: const Icon(Icons.check),
-            onPressed: isProcessing || pickingLines.isEmpty
-                ? null
-                : _confirmAndValidate,
-            tooltip: 'Confirm & Validate',
+            icon: const Icon(Icons.refresh),
+            onPressed: isProcessing ? null : _initializePickingData,
+            tooltip: 'Refresh',
           ),
         ],
       ),
-      body: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(8.0),
-            child: TextField(
-              controller: _searchController,
-              decoration: InputDecoration(
-                labelText: 'Search Product',
-                border: const OutlineInputBorder(),
-                suffixIcon: IconButton(
-                  icon: const Icon(Icons.search),
-                  onPressed: () => _searchProduct(_searchController.text),
-                ),
-              ),
-              onSubmitted: _searchProduct,
-            ),
-          ),
-          if (scanMessage != null)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8.0),
-              child: Text(
-                scanMessage!,
-                style: TextStyle(
-                  color: scanMessage!.contains('Error')
-                      ? errorColor
-                      : successColor,
-                ),
-              ),
-            ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8.0),
-            child: Row(
+      body: isProcessing && !isInitialized
+          ? const Center(child: CircularProgressIndicator())
+          : TabBarView(
+              controller: _tabController,
               children: [
-                Checkbox(
-                  value: showCompletedItems,
-                  onChanged: (value) {
-                    setState(() => showCompletedItems = value ?? true);
-                  },
-                ),
-                const Text('Show Completed Items'),
+                _buildDetailsTab(),
+                _buildToDoTab(),
+                _buildDoneTab(),
               ],
             ),
-          ),
-          Expanded(
-            child: isProcessing
-                ? const Center(child: CircularProgressIndicator())
-                : filteredLines.isEmpty
-                ? const Center(child: Text('No items to pick.'))
-                : ListView.builder(
-              itemCount: filteredLines.length,
-              itemBuilder: (context, index) {
-                final line = filteredLines[index];
-                final moveLineId = line['id'] as int?; // Allow null
-                if (moveLineId == null) {
-                  return const SizedBox.shrink(); // Skip rendering if moveLineId is null
-                }
-                final productId = (line['product_id'] as List)[0] as int;
-                final isSelected = selectedMoveLineId == moveLineId;
-                final stockQty = stockAvailability[productId] ?? 0.0;
-                final orderedQty = line['ordered_qty'] as double;
-
-                return Slidable(
-                  key: ValueKey(moveLineId),
-                  endActionPane: ActionPane(
-                    motion: const ScrollMotion(),
-                    children: [
-                      SlidableAction(
-                        onPressed: (context) => _updateStockQuantities(productId, line['product_name']),
-                        backgroundColor: Colors.blue,
-                        foregroundColor: Colors.white,
-                        icon: Icons.inventory,
-                        label: 'Update Stock',
-                      ),
-                    ],
-                  ),
-                  child: Card(
-                    color: isSelected
-                        ? Colors.grey[200]
-                        : line['is_picked']
-                        ? Colors.green[50]
-                        : stockQty == 0
-                        ? Colors.red[50]
-                        : null,
-                    margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    child: ListTile(
-                      title: Text(
-                        line['product_name'],
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          color: stockQty == 0 ? unavailableColor : null,
-                        ),
-                      ),
-                      subtitle: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('Code: ${line['product_code']}'),
-                          Text(
-                              'Qty: ${line['picked_qty'].toStringAsFixed(2)} / ${orderedQty.toStringAsFixed(2)} ${line['uom']}'),
-                          Text('Location: ${line['location_name']}'),
-                          if (stockQty > 0) Text('Available: ${stockQty.toStringAsFixed(2)}'),
-                          if (line['tracking'] != 'none' &&
-                              lotSerialNumbers[moveLineId]?.isNotEmpty == true)
-                            Text('Lot/Serial: ${lotSerialNumbers[moveLineId]!.join(', ')}'),
-                        ],
-                      ),
-                      trailing: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          IconButton(
-                            icon: const Icon(Icons.remove),
-                            onPressed: stockQty == 0 || line['is_picked']
-                                ? null
-                                : () {
-                              final currentQty = pendingPickedQuantities[moveLineId] ??
-                                  pickedQuantities[moveLineId] ??
-                                  0.0;
-                              if (currentQty <= 0) return;
-                              final newQty = currentQty - 1;
-                              final serials = pendingLotSerialNumbers[moveLineId] ??
-                                  lotSerialNumbers[moveLineId] ??
-                                  [];
-                              if (newQty < serials.length) {
-                                serials.removeLast();
-                              }
-                              _updatePendingPickedQuantity(line, newQty, serials);
-                            },
-                            tooltip: 'Decrease Quantity',
-                          ),
-                          SizedBox(
-                            width: 60,
-                            child: TextField(
-                              controller: quantityControllers[moveLineId],
-                              keyboardType: TextInputType.number,
-                              textAlign: TextAlign.center,
-                              decoration: const InputDecoration(
-                                border: OutlineInputBorder(),
-                                contentPadding: EdgeInsets.symmetric(horizontal: 4, vertical: 0),
-                              ),
-                              inputFormatters: [
-                                FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,2}')),
-                              ],
-                              onSubmitted: (value) {
-                                final newQty = double.tryParse(value) ?? 0.0;
-                                if (newQty > min(orderedQty, stockQty)) {
-                                  _showSnackBar(
-                                      'Cannot exceed available (${stockQty.toStringAsFixed(2)}) or ordered (${orderedQty.toStringAsFixed(2)})',
-                                      errorColor);
-                                  quantityControllers[moveLineId]?.text =
-                                      (pendingPickedQuantities[moveLineId] ??
-                                          pickedQuantities[moveLineId] ??
-                                          0.0)
-                                          .toStringAsFixed(2);
-                                  return;
-                                }
-                                _updatePendingPickedQuantity(
-                                    line,
-                                    newQty,
-                                    pendingLotSerialNumbers[moveLineId] ??
-                                        lotSerialNumbers[moveLineId] ??
-                                        []);
-                              },
-                            ),
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.add),
-                            onPressed: stockQty == 0 || line['is_picked']
-                                ? null
-                                : () async {
-                              final currentQty = pendingPickedQuantities[moveLineId] ??
-                                  pickedQuantities[moveLineId] ??
-                                  0.0;
-                              final newQty = currentQty + 1;
-                              if (newQty > min(orderedQty, stockQty)) {
-                                _showSnackBar(
-                                    'Cannot exceed available (${stockQty.toStringAsFixed(2)}) or ordered (${orderedQty.toStringAsFixed(2)})',
-                                    errorColor);
-                                return;
-                              }
-                              final tracking = productTracking[productId] ?? 'none';
-                              List<String> serials =
-                                  pendingLotSerialNumbers[moveLineId] ??
-                                      lotSerialNumbers[moveLineId] ??
-                                      [];
-                              if (tracking == 'serial' && newQty > serials.length) {
-                                final serial = await _promptForLotSerial(productId, tracking);
-                                if (serial == null) return;
-                                serials.add(serial);
-                              }
-                              _updatePendingPickedQuantity(line, newQty, serials);
-                            },
-                            tooltip: 'Increase Quantity',
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                );
-              },
-            ),
-          ),
-        ],
-      ),
+      floatingActionButton: _tabController.index == 1
+          ? FloatingActionButton(
+              onPressed: isProcessing ? null : _scanBarcode,
+              child: const Icon(Icons.qr_code_scanner),
+              tooltip: 'Scan Barcode',
+            )
+          : null,
     );
   }
 }

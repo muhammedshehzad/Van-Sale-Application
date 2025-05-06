@@ -17,8 +17,10 @@ import 'invoice_details_page.dart';
 
 class SaleOrderDetailPage extends StatefulWidget {
   final Map<String, dynamic> orderData;
+  final DataProvider? dataProvider; // Add dataProvider as a parameter
 
-  const SaleOrderDetailPage({Key? key, required this.orderData})
+  const SaleOrderDetailPage(
+      {Key? key, required this.orderData, this.dataProvider})
       : super(key: key);
 
   @override
@@ -158,6 +160,8 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
 
   @override
   Widget build(BuildContext context) {
+    final dataProvider =
+        Provider.of<DataProvider>(context); // Access DataProvider
     return ChangeNotifierProvider(
       create: (_) => SaleOrderDetailProvider(orderData: widget.orderData),
       child: Consumer<SaleOrderDetailProvider>(
@@ -232,7 +236,7 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                                 ],
                               ),
                             )
-                          : _buildOrderDetails(context, provider),
+                          : _buildOrderDetails(context, provider, dataProvider),
             ),
           );
         },
@@ -240,8 +244,8 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
     );
   }
 
-  Widget _buildOrderDetails(
-      BuildContext context, SaleOrderDetailProvider provider) {
+  Widget _buildOrderDetails(BuildContext context,
+      SaleOrderDetailProvider provider, DataProvider dataProvider) {
     final orderData = provider.orderDetails!;
     final customer = orderData['partner_id'] is List
         ? (orderData['partner_id'] as List)[1] as String
@@ -726,7 +730,7 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                                         page: PickingPage(
                                           picking: incompletePicking,
                                           warehouseId: warehouseId,
-                                          provider: provider,
+                                          provider: dataProvider,
                                         ),
                                       ),
                                     );
@@ -1679,7 +1683,7 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                                                                   warehouseId:
                                                                       warehouseId,
                                                                   provider:
-                                                                      provider,
+                                                                      dataProvider,
                                                                 ),
                                                               ),
                                                             );
