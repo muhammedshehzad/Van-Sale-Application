@@ -1704,18 +1704,6 @@ class _PickingPageState extends State<PickingPage>
     }
   }
 
-  String _formatDate(dynamic date) {
-    if (date == null) return 'N/A';
-    try {
-      if (date is String) {
-        final dateTime = DateTime.parse(date);
-        return '${dateTime.day}/${dateTime.month}/${dateTime.year} ${dateTime.hour}:${dateTime.minute}';
-      }
-      return 'N/A';
-    } catch (e) {
-      return 'N/A';
-    }
-  }
 
   Widget buildToDoTab() {
     if (isProcessing) {

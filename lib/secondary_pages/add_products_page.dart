@@ -599,23 +599,29 @@ class _AddProductPageState extends State<AddProductPage> {
 
     // Ensure initial values exist in their respective lists
     final availableUnits = ProductItem().units;
-    if (!availableUnits.contains(_selectedUnit)) {
+    if (availableUnits.isNotEmpty && !availableUnits.contains(_selectedUnit)) {
       _selectedUnit = availableUnits.first;
+    } else if (availableUnits.isEmpty) {
+      _selectedUnit = 'Units'; // Fallback default
     }
-    if (!availableUnits.contains(_selectedPurchaseUnit)) {
+
+    if (availableUnits.isNotEmpty && !availableUnits.contains(_selectedPurchaseUnit)) {
       _selectedPurchaseUnit = availableUnits.first;
+    } else if (availableUnits.isEmpty) {
+      _selectedPurchaseUnit = 'Units'; // Fallback default
     }
+
+    final availableCategories = ProductItem().categories;
+    if (availableCategories.isNotEmpty && !availableCategories.contains(_selectedCategory)) {
+      _selectedCategory = availableCategories.first;
+    } else if (availableCategories.isEmpty) {
+      _selectedCategory = 'General'; // Fallback default
+    }
+
     if (widget.productToEdit != null) {
       _initializeFormWithProductData();
     }
-
-    // Do the same for other dropdowns
-    final availableCategories = ProductItem().categories;
-    if (!availableCategories.contains(_selectedCategory)) {
-      _selectedCategory = availableCategories.first;
-    }
   }
-
   void _initializeFormWithProductData() {
     final product = widget.productToEdit!;
 

@@ -9,7 +9,7 @@ import '../../authentication/cyllo_session_model.dart';
 import '../../providers/order_picking_provider.dart';
 import '../../providers/sale_order_provider.dart';
 
-// Customer Model
+// Customer Model (assumed to be defined elsewhere)
 
 class CreateCustomerPage extends StatefulWidget {
   final Function(Customer)? onCustomerCreated;
@@ -30,44 +30,16 @@ class _CreateCustomerPageState extends State<CreateCustomerPage> {
   bool isCreating = false;
   bool isCompany = false;
   bool isEditMode = false;
-  bool isLoadingTags = true; // New flag
-  // Data lists
+  bool isLoadingTags = true;
+  bool showValidationMessages = false;
   List<Map<String, dynamic>> countries = [];
   List<Map<String, dynamic>> states = [];
   List<Map<String, dynamic>> tags = [];
-
-  final List<Map<String, dynamic>> languages = [
-    {'code': 'en_US', 'name': 'English (US)'},
-    {'code': 'fr_FR', 'name': 'French'},
-    {'code': 'es_ES', 'name': 'Spanish'},
-    {'code': 'de_DE', 'name': 'German'},
-    {'code': 'it_IT', 'name': 'Italian'},
-    {'code': 'pt_PT', 'name': 'Portuguese'},
-    {'code': 'zh_CN', 'name': 'Chinese (Simplified)'},
-    {'code': 'ja_JP', 'name': 'Japanese'},
-  ];
-  final List<Map<String, dynamic>> salutations = [
-    {'code': 'mr', 'name': 'Mr.'},
-    {'code': 'mrs', 'name': 'Mrs.'},
-    {'code': 'ms', 'name': 'Ms.'},
-    {'code': 'dr', 'name': 'Dr.'},
-    {'code': 'prof', 'name': 'Prof.'},
-  ];
-  final List<Map<String, dynamic>> industries = [
-    {'id': 1, 'name': 'Technology'},
-    {'id': 2, 'name': 'Manufacturing'},
-    {'id': 3, 'name': 'Retail'},
-    {'id': 4, 'name': 'Healthcare'},
-    {'id': 5, 'name': 'Finance'},
-    {'id': 6, 'name': 'Education'},
-    {'id': 7, 'name': 'Construction'},
-    {'id': 8, 'name': 'Hospitality'},
-    {'id': 9, 'name': 'Consulting'},
-    {'id': 10, 'name': 'Other'},
-  ];
+  final List<Map<String, dynamic>> languages = [];
+  final List<Map<String, dynamic>> salutations = [];
+  final List<Map<String, dynamic>> industries = [];
   List<String> selectedTags = [];
 
-  // Selection values
   String? selectedCountryId;
   String? selectedStateId;
   String? selectedSalutation;
@@ -75,7 +47,6 @@ class _CreateCustomerPageState extends State<CreateCustomerPage> {
   File? _selectedImage;
   String? _imageBase64;
 
-  // Form controllers
   final nameController = TextEditingController();
   final companyNameController = TextEditingController();
   final phoneController = TextEditingController();
@@ -103,15 +74,14 @@ class _CreateCustomerPageState extends State<CreateCustomerPage> {
       print(widget.customer?.website);
     }
     selectedIndustry = widget.customer?.industryId != null &&
-            industries
-                .any((i) => i['id'].toString() == widget.customer?.industryId)
+        industries.any((i) => i['id'].toString() == widget.customer?.industryId)
         ? widget.customer?.industryId
         : null;
   }
 
   void _initializeFields(Customer customer) {
     isCompany = customer.isCompany ?? false;
-    nameController.text = customer.name ?? ''; // Always set a default empty string
+    nameController.text = customer.name ?? '';
     phoneController.text = customer.phone ?? '';
     mobileController.text = customer.mobile ?? '';
     emailController.text = customer.email ?? '';
@@ -129,15 +99,14 @@ class _CreateCustomerPageState extends State<CreateCustomerPage> {
     _imageBase64 = _isValidBase64(customer.imageUrl) ? customer.imageUrl : null;
     selectedTags = customer.tags ?? [];
     selectedSalutation = customer.title;
-    // Sanitize selectedIndustry
     selectedIndustry = customer.industryId != null &&
-        industries.any((i) => i['id'].toString() == customer.industryId)
+        industries.any((i) => i['id'].toString() == widget.customer?.industryId)
         ? customer.industryId
         : null;
     companyNameController.text = customer.parentName ?? '';
 
     if (customer.parentId != null) {
-      companyNameController.text = ''; // Clear company name if parentId exists
+      companyNameController.text = '';
     }
 
     if (selectedCountryId != null) {
@@ -149,14 +118,14 @@ class _CreateCustomerPageState extends State<CreateCustomerPage> {
     }
     print('Initializing website: ${customer.website}');
   }
-// New method to fetch industry name
+
   Future<void> _loadIndustryName(String industryId) async {
     try {
       final client = await SessionManager.getActiveClient();
       if (client == null) return;
 
       final result = await client.callKw({
-        'model': 'res.partner.industry',
+        'model': 'ладиres.partner.industry',
         'method': 'search_read',
         'args': [
           [
@@ -179,23 +148,17 @@ class _CreateCustomerPageState extends State<CreateCustomerPage> {
               'name': industry['name'],
             });
           }
-          if (!industries.any((i) => i['id'].toString() == industryIdStr)) {
-            industries.add({
-              'id': industry['id'],
-              'name': industry['name'],
-            });
-          }
-          selectedIndustry = industryIdStr; // Update selectedIndustry
+          selectedIndustry = industryIdStr;
         });
       } else {
         setState(() {
-          selectedIndustry = null; // Reset if industry not found
+          selectedIndustry = null;
         });
       }
     } catch (e) {
       log('Error loading industry name: $e');
       setState(() {
-        selectedIndustry = null; // Reset on error
+        selectedIndustry = null;
       });
       _showErrorSnackBar('Failed to load industry name');
     }
@@ -217,7 +180,6 @@ class _CreateCustomerPageState extends State<CreateCustomerPage> {
     websiteController.dispose();
     functionController.dispose();
     notesController.dispose();
-
     super.dispose();
   }
 
@@ -264,7 +226,6 @@ class _CreateCustomerPageState extends State<CreateCustomerPage> {
       });
       setState(() {
         states = List<Map<String, dynamic>>.from(result);
-        // Ensure selectedStateId is valid
         if (selectedStateId != null &&
             !states.any((state) => state['id'].toString() == selectedStateId)) {
           selectedStateId = null;
@@ -281,7 +242,6 @@ class _CreateCustomerPageState extends State<CreateCustomerPage> {
       return false;
     }
     try {
-      // Attempt to decode to verify it's valid Base64
       base64Decode(value);
       return true;
     } catch (e) {
@@ -305,12 +265,12 @@ class _CreateCustomerPageState extends State<CreateCustomerPage> {
       });
       setState(() {
         tags = List<Map<String, dynamic>>.from(result);
-        isLoadingTags = false; // Set to false when tags are loaded
+        isLoadingTags = false;
       });
     } catch (e) {
       log('Error loading tags: $e');
       setState(() {
-        isLoadingTags = false; // Set to false even on error
+        isLoadingTags = false;
       });
       _showErrorSnackBar('Failed to load tags');
     }
@@ -336,9 +296,30 @@ class _CreateCustomerPageState extends State<CreateCustomerPage> {
   }
 
   Future<void> _submitCustomer() async {
-    if (!_formKey.currentState!.validate()) return;
+    setState(() {
+      isCreating = true;
+      showValidationMessages = true;
+    });
 
-    setState(() => isCreating = true);
+    // Check if at least one contact method is provided
+    final hasContactMethod = phoneController.text.trim().isNotEmpty ||
+        mobileController.text.trim().isNotEmpty ||
+        emailController.text.trim().isNotEmpty;
+
+    if (!_formKey.currentState!.validate()) {
+      setState(() {
+        isCreating = false;
+      });
+      return;
+    }
+
+    if (!hasContactMethod && !isEditMode) {
+      _showErrorSnackBar('Please provide at least one contact method (Phone, Mobile, or Email).');
+      setState(() {
+        isCreating = false;
+      });
+      return;
+    }
 
     try {
       final client = await SessionManager.getActiveClient();
@@ -362,15 +343,11 @@ class _CreateCustomerPageState extends State<CreateCustomerPage> {
         'comment': notesController.text.trim(),
         'image_1920': _imageBase64,
         'title': selectedSalutation,
-        'industry_id':
-            selectedIndustry != null ? int.tryParse(selectedIndustry!) : null,
+        'industry_id': selectedIndustry != null ? int.tryParse(selectedIndustry!) : null,
         'category_id': selectedTags.map((id) => int.parse(id)).toList(),
-        // Add tags
-        if (selectedCountryId != null)
-          'country_id': int.parse(selectedCountryId!),
+        if (selectedCountryId != null) 'country_id': int.parse(selectedCountryId!),
         if (selectedStateId != null) 'state_id': int.parse(selectedStateId!),
       };
-      ;
 
       if (!isCompany && companyNameController.text.isNotEmpty) {
         final companySearch = await client.callKw({
@@ -408,7 +385,6 @@ class _CreateCustomerPageState extends State<CreateCustomerPage> {
           }
         }
       } else {
-        // Clear parent_id if company name is empty or customer is a company
         customerData['parent_id'] = false;
       }
 
@@ -473,7 +449,6 @@ class _CreateCustomerPageState extends State<CreateCustomerPage> {
         if (customerDetails.isNotEmpty) {
           final customerData = customerDetails[0];
 
-          // Fetch parent company name if parent_id exists
           String? parentName;
           if (customerData['parent_id'] != false) {
             final parentResult = await client.callKw({
@@ -493,7 +468,7 @@ class _CreateCustomerPageState extends State<CreateCustomerPage> {
               parentName = parentResult[0]['name']?.toString();
             }
           }
-          // Helper function to safely convert Odoo field values to String?
+
           String? _safeString(dynamic value) {
             if (value == false || value == null) return null;
             if (value is String && value.isEmpty) return null;
@@ -527,25 +502,20 @@ class _CreateCustomerPageState extends State<CreateCustomerPage> {
                 ? customerData['parent_id'][0].toString()
                 : null,
             parentName: parentName,
-            // Include parentName
             addressType: _safeString(customerData['type']) ?? 'contact',
             lang: _safeString(customerData['lang']),
             tags: customerData['category_id'] != false
-                ? List<String>.from(
-                    customerData['category_id'].map((id) => id.toString()))
+                ? List<String>.from(customerData['category_id'].map((id) => id.toString()))
                 : [],
             imageUrl: _safeString(customerData['image_1920']),
-            title: customerData['title'] != false
-                ? customerData['title'][0].toString()
-                : null,
+            title: customerData['title'] != false ? customerData['title'][0].toString() : null,
             industryId: customerData['industry_id'] != false
                 ? customerData['industry_id'][0].toString()
                 : null,
           );
 
           widget.onCustomerCreated?.call(updatedCustomer);
-          _showSuccessSnackBar(
-              isEditMode ? 'Customer updated' : 'Customer created');
+          _showSuccessSnackBar(isEditMode ? 'Customer updated' : 'Customer created');
           Navigator.of(context).pop(updatedCustomer);
           return;
         }
@@ -556,7 +526,10 @@ class _CreateCustomerPageState extends State<CreateCustomerPage> {
       log('Error ${isEditMode ? 'updating' : 'creating'} customer: $e');
       _showErrorSnackBar('An error occurred. Please try again.');
     } finally {
-      setState(() => isCreating = false);
+      setState(() {
+        isCreating = false;
+        showValidationMessages = false;
+      });
     }
   }
 
@@ -610,7 +583,6 @@ class _CreateCustomerPageState extends State<CreateCustomerPage> {
         child: ListView(
           padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 16.0),
           children: [
-            // Customer Type
             Row(
               children: [
                 Switch(
@@ -623,24 +595,9 @@ class _CreateCustomerPageState extends State<CreateCustomerPage> {
                 ),
                 Text(isCompany ? 'Company' : 'Individual'),
                 const Spacer(),
-                // if (!isCompany)
-                //   DropdownButton<String>(
-                //     value: selectedSalutation,
-                //     hint: const Text('Title'),
-                //     items: salutations
-                //         .map((s) => DropdownMenuItem(
-                //               value: s['code'].toString(),
-                //               child: Text(s['name']),
-                //             ))
-                //         .toList(),
-                //     onChanged: (value) =>
-                //         setState(() => selectedSalutation = value),
-                //   ),
               ],
             ),
             const Divider(),
-
-            // Photo
             GestureDetector(
               onTap: _pickImage,
               child: Row(
@@ -654,29 +611,27 @@ class _CreateCustomerPageState extends State<CreateCustomerPage> {
                     ),
                     child: _selectedImage != null
                         ? ClipRRect(
-                            borderRadius: BorderRadius.circular(8),
-                            child:
-                                Image.file(_selectedImage!, fit: BoxFit.cover),
-                          )
+                      borderRadius: BorderRadius.circular(8),
+                      child: Image.file(_selectedImage!, fit: BoxFit.cover),
+                    )
                         : _imageBase64 != null && _isValidBase64(_imageBase64)
-                            ? ClipRRect(
-                                borderRadius: BorderRadius.circular(8),
-                                child: Image.memory(
-                                  base64Decode(_imageBase64!),
-                                  fit: BoxFit.cover,
-                                ),
-                              )
-                            : Icon(
-                                Icons.add_a_photo,
-                                color: Colors.grey.shade400,
-                                size: 40,
-                              ),
+                        ? ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: Image.memory(
+                        base64Decode(_imageBase64!),
+                        fit: BoxFit.cover,
+                      ),
+                    )
+                        : Icon(
+                      Icons.add_a_photo,
+                      color: Colors.grey.shade400,
+                      size: 40,
+                    ),
                   ),
                   const SizedBox(width: 16),
                   Text(
                     _selectedImage != null ||
-                            (_imageBase64 != null &&
-                                _isValidBase64(_imageBase64))
+                        (_imageBase64 != null && _isValidBase64(_imageBase64))
                         ? 'Change Photo'
                         : 'Add Photo',
                     style: theme.textTheme.bodyLarge,
@@ -685,28 +640,12 @@ class _CreateCustomerPageState extends State<CreateCustomerPage> {
               ),
             ),
             const SizedBox(height: 24),
-
-            // Basic Info
             _buildTextField(
               controller: nameController,
               label: isCompany ? 'Company Name' : 'Name',
               icon: Icons.person,
               isRequired: true,
             ),
-            // if (!isCompany) ...[
-            //   const SizedBox(height: 16),
-            //   _buildTextField(
-            //     controller: companyNameController,
-            //     label: 'Company',
-            //     icon: Icons.business,
-            //   ),
-            //   const SizedBox(height: 16),
-            //   _buildTextField(
-            //     controller: functionController,
-            //     label: 'Job Position',
-            //     icon: Icons.work,
-            //   ),
-            // ],
             if (isCompany) ...[
               const SizedBox(height: 16),
               _buildTextField(
@@ -715,32 +654,6 @@ class _CreateCustomerPageState extends State<CreateCustomerPage> {
                 icon: Icons.receipt,
               ),
               const SizedBox(height: 16),
-              // DropdownButtonFormField<String?>(
-              //   value: selectedIndustry,
-              //   decoration: InputDecoration(
-              //     labelText: 'Industry',
-              //     prefixIcon: const Icon(Icons.category, color: Colors.grey),
-              //     border: OutlineInputBorder(
-              //       borderRadius: BorderRadius.circular(8),
-              //     ),
-              //   ),
-              //   hint: const Text('Select Industry'),
-              //   items: [
-              //     // Use null value consistently
-              //     const DropdownMenuItem<String?>(
-              //       value: null,
-              //       child: Text('Not specified'),
-              //     ),
-              //     // Then add all industries
-              //     ...industries.map((industry) {
-              //       return DropdownMenuItem<String?>(
-              //         value: industry['id'].toString(),
-              //         child: Text(industry['name']),
-              //       );
-              //     }).toList(),
-              //   ],
-              //   onChanged: (value) => setState(() => selectedIndustry = value),
-              // ),
             ],
             const SizedBox(height: 16),
             _buildTextField(
@@ -748,8 +661,15 @@ class _CreateCustomerPageState extends State<CreateCustomerPage> {
               label: 'Website',
               icon: Icons.language,
               keyboardType: TextInputType.url,
+              validator: (value) {
+                if (value != null && value.isNotEmpty) {
+                  if (!RegExp(r'^(https?:\/\/)?([\w-]+\.)+[\w-]{2,4}(\/.*)?$').hasMatch(value)) {
+                    return 'Please enter a valid URL';
+                  }
+                }
+                return null;
+              },
             ),
-
             const SizedBox(height: 24),
             Text(
               'CONTACT INFORMATION',
@@ -760,12 +680,19 @@ class _CreateCustomerPageState extends State<CreateCustomerPage> {
               ),
             ),
             const SizedBox(height: 16),
-
             _buildTextField(
               controller: phoneController,
               label: 'Phone',
               icon: Icons.phone,
               keyboardType: TextInputType.phone,
+              validator: (value) {
+                if (value != null && value.isNotEmpty) {
+                  if (!RegExp(r'^\+?[\d\s-]{7,}$').hasMatch(value)) {
+                    return 'Please enter a valid phone number';
+                  }
+                }
+                return null;
+              },
             ),
             const SizedBox(height: 16),
             _buildTextField(
@@ -773,6 +700,14 @@ class _CreateCustomerPageState extends State<CreateCustomerPage> {
               label: 'Mobile',
               icon: Icons.smartphone,
               keyboardType: TextInputType.phone,
+              validator: (value) {
+                if (value != null && value.isNotEmpty) {
+                  if (!RegExp(r'^\+?[\d\s-]{7,}$').hasMatch(value)) {
+                    return 'Please enter a valid mobile number';
+                  }
+                }
+                return null;
+              },
             ),
             const SizedBox(height: 16),
             _buildTextField(
@@ -789,7 +724,6 @@ class _CreateCustomerPageState extends State<CreateCustomerPage> {
                 return null;
               },
             ),
-
             const SizedBox(height: 24),
             Text(
               'ADDRESS',
@@ -799,25 +733,6 @@ class _CreateCustomerPageState extends State<CreateCustomerPage> {
                 letterSpacing: 1.2,
               ),
             ),
-            const SizedBox(height: 16),
-
-            // DropdownButtonFormField<String>(
-            //   value: selectedAddressType,
-            //   decoration: InputDecoration(
-            //     labelText: 'Address Type',
-            //     prefixIcon: const Icon(Icons.home, color: Colors.grey),
-            //     border: OutlineInputBorder(
-            //       borderRadius: BorderRadius.circular(8),
-            //     ),
-            //   ),
-            //   items: const [
-            //     DropdownMenuItem(value: 'contact', child: Text('Contact')),
-            //     DropdownMenuItem(value: 'delivery', child: Text('Delivery')),
-            //     DropdownMenuItem(value: 'invoice', child: Text('Invoice')),
-            //     DropdownMenuItem(value: 'other', child: Text('Other')),
-            //   ],
-            //   onChanged: (value) => setState(() => selectedAddressType = value),
-            // ),
             const SizedBox(height: 16),
             _buildTextField(
               controller: streetController,
@@ -841,12 +756,19 @@ class _CreateCustomerPageState extends State<CreateCustomerPage> {
               controller: zipController,
               label: 'ZIP Code',
               icon: Icons.local_post_office,
+              validator: (value) {
+                if (value != null && value.isNotEmpty) {
+                  if (!RegExp(r'^\d{5}(-\d{4})?$').hasMatch(value)) {
+                    return 'Please enter a valid ZIP code';
+                  }
+                }
+                return null;
+              },
             ),
             const SizedBox(height: 16),
             DropdownButtonFormField<String>(
               value: selectedCountryId,
               isExpanded: true,
-              // Important for preventing overflow
               decoration: InputDecoration(
                 labelText: 'Country',
                 prefixIcon: const Icon(Icons.public, color: Colors.grey),
@@ -856,13 +778,13 @@ class _CreateCustomerPageState extends State<CreateCustomerPage> {
               ),
               items: countries
                   .map((country) => DropdownMenuItem<String>(
-                        value: country['id'].toString(),
-                        child: Text(
-                          country['name'],
-                          overflow: TextOverflow.ellipsis,
-                          maxLines: 1,
-                        ),
-                      ))
+                value: country['id'].toString(),
+                child: Text(
+                  country['name'],
+                  overflow: TextOverflow.ellipsis,
+                  maxLines: 1,
+                ),
+              ))
                   .toList(),
               onChanged: (value) {
                 setState(() {
@@ -889,14 +811,13 @@ class _CreateCustomerPageState extends State<CreateCustomerPage> {
                 ),
                 items: states
                     .map((state) => DropdownMenuItem(
-                          value: state['id'].toString(),
-                          child: Text(state['name']),
-                        ))
+                  value: state['id'].toString(),
+                  child: Text(state['name']),
+                ))
                     .toList(),
                 onChanged: (value) => setState(() => selectedStateId = value),
               ),
             ],
-
             const SizedBox(height: 24),
             Text(
               'OTHER INFORMATION',
@@ -918,40 +839,39 @@ class _CreateCustomerPageState extends State<CreateCustomerPage> {
               child: isLoadingTags
                   ? const Center(child: CircularProgressIndicator())
                   : InkWell(
-                      onTap: () async {
-                        final result = await showDialog<List<String>>(
-                          context: context,
-                          barrierDismissible: false,
-                          builder: (context) => MultiSelectDialog(
-                            items: tags
-                                .map((tag) => DropdownMenuItem(
-                                      value: tag['id'].toString(),
-                                      child: Text(tag['name']),
-                                    ))
-                                .toList(),
-                            initialSelectedValues: selectedTags,
-                          ),
-                        );
-                        if (result != null) {
-                          setState(() => selectedTags = result);
-                        }
-                      },
-                      child: Text(
-                        selectedTags.isEmpty
-                            ? 'No tags selected'
-                            : selectedTags.map((id) {
-                                final tag = tags.firstWhere(
-                                  (tag) => tag['id'].toString() == id,
-                                  orElse: () => {'name': 'Unknown ($id)'},
-                                );
-                                return tag['name'];
-                              }).join(', '),
-                        style: TextStyle(
-                          color:
-                              selectedTags.isEmpty ? Colors.grey : Colors.black,
-                        ),
-                      ),
+                onTap: () async {
+                  final result = await showDialog<List<String>>(
+                    context: context,
+                    barrierDismissible: false,
+                    builder: (context) => MultiSelectDialog(
+                      items: tags
+                          .map((tag) => DropdownMenuItem(
+                        value: tag['id'].toString(),
+                        child: Text(tag['name']),
+                      ))
+                          .toList(),
+                      initialSelectedValues: selectedTags,
                     ),
+                  );
+                  if (result != null) {
+                    setState(() => selectedTags = result);
+                  }
+                },
+                child: Text(
+                  selectedTags.isEmpty
+                      ? 'No tags selected'
+                      : selectedTags.map((id) {
+                    final tag = tags.firstWhere(
+                          (tag) => tag['id'].toString() == id,
+                      orElse: () => {'name': 'Unknown ($id)'},
+                    );
+                    return tag['name'];
+                  }).join(', '),
+                  style: TextStyle(
+                    color: selectedTags.isEmpty ? Colors.grey : Colors.black,
+                  ),
+                ),
+              ),
             ),
             const SizedBox(height: 16),
             _buildTextField(
@@ -972,8 +892,6 @@ class _CreateCustomerPageState extends State<CreateCustomerPage> {
               ),
             ),
             const SizedBox(height: 32),
-
-            // Submit Button
             SizedBox(
               height: 50,
               child: ElevatedButton(
@@ -987,13 +905,13 @@ class _CreateCustomerPageState extends State<CreateCustomerPage> {
                 child: isCreating
                     ? const CircularProgressIndicator(color: Colors.white)
                     : Text(
-                        isEditMode ? 'Update Customer' : 'Create Customer',
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
-                        ),
-                      ),
+                  isEditMode ? 'Update Customer' : 'Create Customer',
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
+                ),
               ),
             ),
             const SizedBox(height: 32),
@@ -1015,6 +933,11 @@ class _CreateCustomerPageState extends State<CreateCustomerPage> {
       valueListenable: controller,
       builder: (context, value, child) {
         final isEmpty = value.text.isEmpty;
+        String? validationError;
+        if (showValidationMessages) {
+          validationError = validator?.call(value.text) ??
+              (isRequired && isEmpty ? 'Please enter $label' : null);
+        }
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -1024,12 +947,11 @@ class _CreateCustomerPageState extends State<CreateCustomerPage> {
               keyboardType: keyboardType,
               decoration: InputDecoration(
                 labelText: label,
-                hintText: isEditMode && isEmpty ? 'Empty' : null, // Show "Empty" in edit mode
+                hintText: isEditMode && isEmpty ? 'Empty' : null,
                 prefixIcon: Icon(icon, color: Colors.grey),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(8),
                 ),
-                // Adjust hint style for better visibility
                 hintStyle: TextStyle(
                   color: Colors.grey.shade500,
                   fontStyle: FontStyle.italic,
@@ -1037,12 +959,10 @@ class _CreateCustomerPageState extends State<CreateCustomerPage> {
               ),
               validator: validator ??
                   (isRequired
-                      ? (value) =>
-                  value == null || value.isEmpty ? 'Please enter $label' : null
+                      ? (value) => value == null || value.isEmpty ? 'Please enter $label' : null
                       : null),
             ),
-            // Show status indicator below the field when empty
-            if (isEmpty)
+            if (showValidationMessages && validationError != null)
               Padding(
                 padding: const EdgeInsets.only(top: 4.0, left: 8.0),
                 child: Row(
@@ -1054,7 +974,7 @@ class _CreateCustomerPageState extends State<CreateCustomerPage> {
                     ),
                     const SizedBox(width: 4),
                     Text(
-                      isRequired ? '$label is required' : '$label is not filled',
+                      validationError,
                       style: TextStyle(
                         fontSize: 12,
                         color: isRequired ? Colors.red : Colors.orange,
@@ -1063,13 +983,15 @@ class _CreateCustomerPageState extends State<CreateCustomerPage> {
                   ],
                 ),
               ),
-            if (!isEmpty)
-              const SizedBox(height: 18), // Maintain consistent spacing
+            if (!(showValidationMessages && validationError != null))
+              const SizedBox(height: 18),
           ],
         );
       },
     );
-  }  bool _isValidEmail(String email) {
+  }
+
+  bool _isValidEmail(String email) {
     return RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$').hasMatch(email);
   }
 }

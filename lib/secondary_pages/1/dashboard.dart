@@ -143,6 +143,23 @@ class DashboardStats {
   }
 }
 
+// New model for revenue details
+class RevenueDetails {
+  final double todayRevenue;
+  final double weeklyRevenue;
+  final int todaySalesCount;
+  final String topSellingProduct;
+  final List<SaleOrder> salesBreakdown;
+
+  RevenueDetails({
+    required this.todayRevenue,
+    required this.weeklyRevenue,
+    required this.todaySalesCount,
+    required this.topSellingProduct,
+    required this.salesBreakdown,
+  });
+}
+
 // Service for Odoo API communication using odoo_rpc
 class OdooService {
   OdooClient? _client;
@@ -195,10 +212,12 @@ class OdooService {
     try {
       final today = DateTime.now();
       final startOfDay =
-          DateTime(today.year, today.month, today.day).toIso8601String();
+      DateTime(today.year, today.month, today.day).toIso8601String();
       final endOfDay =
-          DateTime(today.year, today.month, today.day + 1).toIso8601String();
+      DateTime(today.year, today.month, today.day + 1).toIso8601String();
+      final now = DateTime.now().toIso8601String();
 
+      // Scheduled Deliveries: Confirmed or assigned deliveries scheduled for today
       final scheduled = await callKW(
         model: 'stock.picking',
         method: 'search_count',
@@ -215,6 +234,7 @@ class OdooService {
         ],
       );
 
+      // In Transit Deliveries: Deliveries marked as in progress
       final inTransit = await callKW(
         model: 'stock.picking',
         method: 'search_count',
@@ -222,44 +242,51 @@ class OdooService {
           [
             ['scheduled_date', '>=', startOfDay],
             ['scheduled_date', '<', endOfDay],
-            ['state', '=', 'assigned'],
+            ['state', '=', 'in_progress'], // Adjust based on Odoo configuration
           ]
         ],
       );
 
+      // Delivered: Deliveries completed today
       final delivered = await callKW(
         model: 'stock.picking',
         method: 'search_count',
         args: [
           [
-            ['scheduled_date', '>=', startOfDay],
-            ['scheduled_date', '<', endOfDay],
+            ['date_done', '>=', startOfDay],
+            ['date_done', '<', endOfDay],
             ['state', '=', 'done'],
           ]
         ],
       );
 
+      // Delayed Deliveries: Scheduled deliveries not completed and past due
       final delayed = await callKW(
         model: 'stock.picking',
         method: 'search_count',
         args: [
           [
             ['scheduled_date', '>=', startOfDay],
-            ['scheduled_date', '<', endOfDay],
+            ['scheduled_date', '<', now],
             [
               'state',
               'in',
               ['confirmed', 'assigned']
             ],
-            ['scheduled_date', '<', DateTime.now().toIso8601String()],
           ]
         ],
       );
 
+      // Assign values to stats, with fallback to 0 if response is invalid
       stats.scheduledDeliveries = scheduled is int ? scheduled : 0;
       stats.inTransitDeliveries = inTransit is int ? inTransit : 0;
       stats.delivered = delivered is int ? delivered : 0;
       stats.delayedDeliveries = delayed is int ? delayed : 0;
+
+      debugPrint('Delivery Status: Scheduled: ${stats.scheduledDeliveries}, '
+          'In Transit: ${stats.inTransitDeliveries}, '
+          'Delivered: ${stats.delivered}, '
+          'Delayed: ${stats.delayedDeliveries}');
     } catch (e) {
       debugPrint('Error fetching delivery status: $e');
       stats.scheduledDeliveries = 0;
@@ -543,32 +570,32 @@ class OdooService {
       if (salesResult is List) {
         todaySales = salesResult.length;
         totalRevenue = salesResult.fold(0.0,
-            (sum, item) => sum + (item['amount_total']?.toDouble() ?? 0.0));
+                (sum, item) => sum + (item['amount_total']?.toDouble() ?? 0.0));
       }
 
       if (visitedCustomersResult is List) {
         visitedCustomerIds = visitedCustomersResult
             .where((order) =>
-                order['partner_id'] is List && order['partner_id'].isNotEmpty)
+        order['partner_id'] is List && order['partner_id'].isNotEmpty)
             .map((order) => order['partner_id'][0] as int)
             .toSet();
       }
 
       int visitedCustomers = visitedCustomerIds.length;
       int totalCustomers =
-          totalCustomersResult is int ? totalCustomersResult : 0;
+      totalCustomersResult is int ? totalCustomersResult : 0;
       int remainingCustomers = totalCustomers - visitedCustomers;
 
       double weeklyRevenue = 0.0;
       if (weeklySalesResult is List) {
         weeklyRevenue = weeklySalesResult.fold(
           0.0,
-          (sum, item) => sum + (item['amount_total']?.toDouble() ?? 0.0),
+              (sum, item) => sum + (item['amount_total']?.toDouble() ?? 0.0),
         );
       }
 
       double weeklyTrend =
-          weeklyRevenue > 0 ? (totalRevenue / weeklyRevenue) * 100 : 0.0;
+      weeklyRevenue > 0 ? (totalRevenue / weeklyRevenue) * 100 : 0.0;
 
       return DashboardStats(
         todaySales: todaySales,
@@ -587,6 +614,136 @@ class OdooService {
     } catch (e) {
       debugPrint('Error fetching dashboard stats: $e');
       return DashboardStats.empty();
+    }
+  }
+
+  Future<RevenueDetails> getRevenueDetails() async {
+    try {
+      final today = DateTime.now();
+      final startOfDay = DateTime(today.year, today.month, today.day);
+      final endOfDay = startOfDay.add(Duration(days: 1));
+      final startOfWeek = today.subtract(Duration(days: today.weekday - 1));
+      final endOfWeek = startOfWeek.add(Duration(days: 7));
+
+      // Today's sales with customer details
+      final todaySalesResult = await callKW(
+        model: 'sale.order',
+        method: 'search_read',
+        args: [
+          [
+            ['date_order', '>=', startOfDay.toIso8601String()],
+            ['date_order', '<', endOfDay.toIso8601String()],
+            [
+              'state',
+              'in',
+              ['sale', 'done']
+            ],
+          ]
+        ],
+        kwargs: {
+          'fields': [
+            'id',
+            'name',
+            'date_order',
+            'amount_total',
+            'state',
+            'invoice_status',
+            'partner_id'
+          ],
+        },
+      );
+
+      // Weekly sales
+      final weeklySalesResult = await callKW(
+        model: 'sale.order',
+        method: 'search_read',
+        args: [
+          [
+            ['date_order', '>=', startOfWeek.toIso8601String()],
+            ['date_order', '<', endOfWeek.toIso8601String()],
+            [
+              'state',
+              'in',
+              ['sale', 'done']
+            ],
+          ]
+        ],
+        kwargs: {
+          'fields': ['amount_total'],
+        },
+      );
+
+      // Top selling product
+      final topProductResult = await callKW(
+        model: 'sale.order.line',
+        method: 'search_read',
+        args: [
+          [
+            ['order_id.date_order', '>=', startOfDay.toIso8601String()],
+            ['order_id.date_order', '<', endOfDay.toIso8601String()],
+            [
+              'order_id.state',
+              'in',
+              ['sale', 'done']
+            ],
+          ]
+        ],
+        kwargs: {
+          'fields': ['product_id', 'product_uom_qty'],
+          'order': 'product_uom_qty desc',
+          'limit': 1,
+        },
+      );
+
+      // Parse results
+      int todaySalesCount = 0;
+      double todayRevenue = 0.0;
+      List<SaleOrder> salesBreakdown = [];
+      if (todaySalesResult is List) {
+        todaySalesCount = todaySalesResult.length;
+        todayRevenue = todaySalesResult.fold(0.0,
+                (sum, item) => sum + (item['amount_total']?.toDouble() ?? 0.0));
+        salesBreakdown = todaySalesResult
+            .where((item) => item is Map<String, dynamic>)
+            .map((json) {
+          final map = json as Map<String, dynamic>;
+          map['date'] = map['date_order'];
+          return SaleOrder.fromJson(map);
+        }).toList();
+      }
+
+      double weeklyRevenue = 0.0;
+      if (weeklySalesResult is List) {
+        weeklyRevenue = weeklySalesResult.fold(
+          0.0,
+              (sum, item) => sum + (item['amount_total']?.toDouble() ?? 0.0),
+        );
+      }
+
+      String topSellingProduct = 'N/A';
+      if (topProductResult is List && topProductResult.isNotEmpty) {
+        topSellingProduct = topProductResult[0]['product_id'] is List &&
+            topProductResult[0]['product_id'].length > 1
+            ? topProductResult[0]['product_id'][1]
+            : 'N/A';
+      }
+
+      return RevenueDetails(
+        todayRevenue: todayRevenue,
+        weeklyRevenue: weeklyRevenue,
+        todaySalesCount: todaySalesCount,
+        topSellingProduct: topSellingProduct,
+        salesBreakdown: salesBreakdown,
+      );
+    } catch (e) {
+      debugPrint('Error fetching revenue details: $e');
+      return RevenueDetails(
+        todayRevenue: 0.0,
+        weeklyRevenue: 0.0,
+        todaySalesCount: 0,
+        topSellingProduct: 'N/A',
+        salesBreakdown: [],
+      );
     }
   }
 
@@ -630,9 +787,9 @@ class OdooService {
     try {
       final today = DateTime.now();
       final startOfDay =
-          DateTime(today.year, today.month, today.day).toIso8601String();
+      DateTime(today.year, today.month, today.day).toIso8601String();
       final endOfDay =
-          DateTime(today.year, today.month, today.day + 1).toIso8601String();
+      DateTime(today.year, today.month, today.day + 1).toIso8601String();
 
       final saleOrders = await callKW(
         model: 'sale.order',
@@ -656,7 +813,7 @@ class OdooService {
       if (saleOrders is List && saleOrders.isNotEmpty) {
         final partnerIds = saleOrders
             .where((order) =>
-                order['partner_id'] is List && order['partner_id'].length > 0)
+        order['partner_id'] is List && order['partner_id'].length > 0)
             .map((order) => order['partner_id'][0])
             .toSet()
             .toList();
@@ -724,7 +881,8 @@ class _DashboardPageState extends State<DashboardPage>
 
   Future<void> _loadUsername() async {
     final prefs = await SharedPreferences.getInstance();
-    if (_isMounted) { // Check if mounted before calling setState
+    if (_isMounted) {
+      // Check if mounted before calling setState
       setState(() {
         _username = prefs.getString('userName') ?? "User";
       });
@@ -752,7 +910,8 @@ class _DashboardPageState extends State<DashboardPage>
             .map((json) => SaleOrder.fromJson(json as Map<String, dynamic>))
             .toList();
       }
-      if (_isMounted) { // Check if mounted before calling setState
+      if (_isMounted) {
+        // Check if mounted before calling setState
         setState(() {});
       }
     } catch (e) {
@@ -787,7 +946,8 @@ class _DashboardPageState extends State<DashboardPage>
         debugPrint('Base64 decoding failed: $e');
       }
     }
-    if (_isMounted) { // Check if mounted before calling setState
+    if (_isMounted) {
+      // Check if mounted before calling setState
       setState(() {});
     }
   }
@@ -799,7 +959,8 @@ class _DashboardPageState extends State<DashboardPage>
         await _loadUserImage();
         _refreshData();
       }
-      if (_isMounted) { // Check if mounted before calling setState
+      if (_isMounted) {
+        // Check if mounted before calling setState
         setState(() {
           _isInitialLoad = false;
         });
@@ -807,7 +968,8 @@ class _DashboardPageState extends State<DashboardPage>
       return initialized;
     } catch (e) {
       debugPrint('Initialization error: $e');
-      if (_isMounted) { // Check if mounted before calling setState
+      if (_isMounted) {
+        // Check if mounted before calling setState
         setState(() {
           _isInitialLoad = false;
         });
@@ -822,11 +984,18 @@ class _DashboardPageState extends State<DashboardPage>
       final customers = await _odooService.getTodayCustomers();
       final orders = await _odooService.getRecentSaleOrders();
       await _saveCachedData(stats: stats, customers: customers, orders: orders);
-      if (_isMounted) { // Check if mounted before calling setState
+      if (_isMounted) {
+        // Check if mounted before calling setState
         setState(() {
           _cachedStats = stats;
           _cachedCustomers = customers;
           _cachedOrders = orders;
+        });
+        // Force rebuild to ensure UI reflects latest data
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (_isMounted) {
+            setState(() {});
+          }
         });
       }
     } catch (e) {
@@ -836,12 +1005,20 @@ class _DashboardPageState extends State<DashboardPage>
 
   Future<void> _handleRefresh() async {
     await _refreshData();
-    if (mounted) { // Use the built-in mounted check here as it's within a UI interaction
+    if (mounted) {
+      // Use the built-in mounted check here as it's within a UI interaction
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Dashboard refreshed')),
       );
     }
     return Future.delayed(const Duration(seconds: 1));
+  }
+
+  void _showRevenueDetailsDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => RevenueDetailsDialog(odooService: _odooService),
+    );
   }
 
   @override
@@ -871,7 +1048,8 @@ class _DashboardPageState extends State<DashboardPage>
                     ),
                   ),
                   onPressed: () {
-                    if (_isMounted) { // Check if mounted before calling setState
+                    if (_isMounted) {
+                      // Check if mounted before calling setState
                       setState(() {
                         _initFuture = _initializeService();
                       });
@@ -885,7 +1063,7 @@ class _DashboardPageState extends State<DashboardPage>
                   onPressed: () {
                     Navigator.pushReplacement(
                       context,
-                      MaterialPageRoute(builder: (context) =>  Login()),
+                      MaterialPageRoute(builder: (context) => Login()),
                     );
                   },
                   child: const Text('Log In',
@@ -993,7 +1171,7 @@ class _DashboardPageState extends State<DashboardPage>
               scrollDirection: Axis.horizontal,
               children: List.generate(
                 6,
-                (index) => Container(
+                    (index) => Container(
                   width: 80,
                   margin: const EdgeInsets.only(right: 12),
                   child: Column(
@@ -1068,8 +1246,8 @@ class _DashboardPageState extends State<DashboardPage>
     String greeting = now.hour < 12
         ? 'Good Morning'
         : now.hour < 17
-            ? 'Good Afternoon'
-            : 'Good Evening';
+        ? 'Good Afternoon'
+        : 'Good Evening';
 
     return RefreshIndicator(
       onRefresh: _handleRefresh,
@@ -1156,25 +1334,25 @@ class _DashboardPageState extends State<DashboardPage>
                     const SizedBox(height: 8),
                     _cachedStats != null
                         ? Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              _buildOverviewItem(
-                                Icons.store,
-                                'Customers',
-                                '${_cachedStats!.visitedCustomers}/${_cachedStats!.visitedCustomers + _cachedStats!.remainingCustomers}',
-                              ),
-                              _buildOverviewItem(
-                                Icons.assignment_turned_in,
-                                'Sales',
-                                '${_cachedStats!.todaySales}',
-                              ),
-                              _buildOverviewItem(
-                                Icons.attach_money,
-                                'Revenue',
-                                '\$${_cachedStats!.totalRevenue.toStringAsFixed(2)}',
-                              ),
-                            ],
-                          )
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        _buildOverviewItem(
+                          Icons.store,
+                          'Customers',
+                          '${_cachedStats!.visitedCustomers}/${_cachedStats!.visitedCustomers + _cachedStats!.remainingCustomers}',
+                        ),
+                        _buildOverviewItem(
+                          Icons.assignment_turned_in,
+                          'Sales',
+                          '${_cachedStats!.todaySales}',
+                        ),
+                        _buildOverviewItem(
+                          Icons.attach_money,
+                          'Revenue',
+                          '\$${_cachedStats!.totalRevenue.toStringAsFixed(2)}',
+                        ),
+                      ],
+                    )
                         : _buildOverviewShimmer(),
                   ],
                 ),
@@ -1183,107 +1361,99 @@ class _DashboardPageState extends State<DashboardPage>
             const SizedBox(height: 20),
             _cachedStats != null
                 ? Column(
-                    children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: GestureDetector(
-                              onTap: () {
-                                Navigator.push(
-                                  context,
-                                  // =http://10.0.21.11:8018/web/session/authenticate
-                                  SlidingPageTransitionRL(
-                                    page: TodaysSalesPage(
-                                      provider: Provider.of<SalesOrderProvider>(
-                                          context,
-                                          listen: false),
-                                    ),
-                                  ),
-                                );
-                              },
-                              child: _buildStatCard(
-                                'Today\'s Sales',
-                                '${_cachedStats!.todaySales}',
-                                Icons.trending_up,
-                                Colors.green[700]!,
-                                subtitle:
-                                    '${_cachedStats!.weeklyTrend.toStringAsFixed(1)}% ${_cachedStats!.weeklyTrend >= 0 ? '▲' : '▼'} this week',
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 16),
-                          Expanded(
-                            child: GestureDetector(
-                              onTap: () {
-                                Navigator.push(
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: GestureDetector(
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            SlidingPageTransitionRL(
+                              page: TodaysSalesPage(
+                                provider: Provider.of<SalesOrderProvider>(
                                     context,
-                                    SlidingPageTransitionRL(
-                                        page: PendingDeliveriesPage(
-                                      showPendingOnly: true,
-                                    )));
-                              },
-                              child: _buildStatCard(
-                                'Pending Deliveries',
-                                '${_cachedStats!.pendingDeliveries}',
-                                Icons.local_shipping,
-                                Colors.orange[700]!,
-                                subtitle: 'Today',
+                                    listen: false),
                               ),
                             ),
-                          ),
-                        ],
+                          );
+                        },
+                        child: _buildStatCard(
+                          'Today\'s Sales',
+                          '${_cachedStats!.todaySales}',
+                          Icons.trending_up,
+                          Colors.green[700]!,
+                          subtitle:
+                          '${_cachedStats!.weeklyTrend.toStringAsFixed(1)}% ${_cachedStats!.weeklyTrend >= 0 ? '▲' : '▼'} this week',
+                        ),
                       ),
-                      const SizedBox(height: 16),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: GestureDetector(
-                              onTap: () {
-                                Navigator.push(
-                                  context,
-                                  SlidingPageTransitionRL(
-                                      page: InvoiceListPage(
-                                    orderData: {},
-                                    provider: Provider.of<InvoiceProvider>(
-                                        context,
-                                        listen: false),
-                                    showUnpaidOnly: true,
-                                  )),
-                                );
-                              },
-                              child: _buildStatCard(
-                                'Unpaid Invoices',
-                                '${_cachedStats!.unpaidInvoices}',
-                                Icons.receipt_long,
-                                Colors.red[700]!,
-                                subtitle: 'Action needed',
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 16),
-                          Expanded(
-                            child: InkWell(
-                              onTap: () {
-                                Navigator.push(
-                                    context,
-                                    SlidingPageTransitionRL(
-                                        page: PendingDeliveriesPage(
-                                      showPendingOnly: false,
-                                    )));
-                              },
-                              child: _buildStatCard(
-                                'Total Revenue',
-                                '\$${_cachedStats!.totalRevenue.toStringAsFixed(2)}',
-                                Icons.attach_money,
-                                const Color(0xFFC13030),
-                                subtitle: 'Today',
-                              ),
-                            ),
-                          ),
-                        ],
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: GestureDetector(
+                        onTap: () {
+                          Navigator.push(
+                              context,
+                              SlidingPageTransitionRL(
+                                  page: PendingDeliveriesPage(
+                                    showPendingOnly: true,
+                                  )));
+                        },
+                        child: _buildStatCard(
+                          'Pending Deliveries',
+                          '${_cachedStats!.pendingDeliveries}',
+                          Icons.local_shipping,
+                          Colors.orange[700]!,
+                          subtitle: 'Today',
+                        ),
                       ),
-                    ],
-                  )
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Expanded(
+                      child: GestureDetector(
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            SlidingPageTransitionRL(
+                                page: InvoiceListPage(
+                                  orderData: {},
+                                  provider: Provider.of<InvoiceProvider>(
+                                      context,
+                                      listen: false),
+                                  showUnpaidOnly: true,
+                                )),
+                          );
+                        },
+                        child: _buildStatCard(
+                          'Unpaid Invoices',
+                          '${_cachedStats!.unpaidInvoices}',
+                          Icons.receipt_long,
+                          Colors.red[700]!,
+                          subtitle: 'Action needed',
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: GestureDetector(
+                        onTap: _showRevenueDetailsDialog,
+                        child: _buildStatCard(
+                          'Total Revenue',
+                          '\$${_cachedStats!.totalRevenue.toStringAsFixed(2)}',
+                          Icons.attach_money,
+                          const Color(0xFFC13030),
+                          subtitle: 'Today',
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            )
                 : _buildStatsShimmer(),
             const SizedBox(height: 16),
             _buildDeliveryStatusCard(),
@@ -1305,41 +1475,41 @@ class _DashboardPageState extends State<DashboardPage>
                     Icons.post_add,
                     'Create Order',
                     Colors.blue[600]!,
-                    () {
+                        () {
                       showCreateOrderSheetGeneral(context);
+                    },
+                  ),
+                  _buildQuickActionButton(
+                    Icons.sync,
+                    'Sync Data',
+                    Colors.teal[600]!,
+                        () async {
+                      await _handleRefresh();
                     },
                   ),
                   _buildQuickActionButton(
                     Icons.qr_code_scanner,
                     'Scan Product',
                     Colors.purple[600]!,
-                    () {},
+                        () {},
                   ),
                   _buildQuickActionButton(
                     Icons.map,
                     'Route Plan',
                     Colors.green[600]!,
-                    () => loadRouteData(context),
+                        () => loadRouteData(context),
                   ),
                   _buildQuickActionButton(
                     Icons.inventory_2,
                     'Stock Check',
                     Colors.amber[600]!,
-                    () {},
+                        () {},
                   ),
                   _buildQuickActionButton(
                     Icons.receipt,
                     'Create Invoice',
                     Colors.red[600]!,
-                    () {},
-                  ),
-                  _buildQuickActionButton(
-                    Icons.sync,
-                    'Sync Data',
-                    Colors.teal[600]!,
-                    () async {
-                      await _handleRefresh();
-                    },
+                        () {},
                   ),
                 ],
               ),
@@ -1377,60 +1547,60 @@ class _DashboardPageState extends State<DashboardPage>
             const SizedBox(height: 8),
             _cachedOrders != null && _cachedOrders!.isNotEmpty
                 ? Card(
-                    elevation: 2,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
+              elevation: 2,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: ListView.separated(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                itemCount:
+                _cachedOrders!.length > 3 ? 3 : _cachedOrders!.length,
+                separatorBuilder: (context, index) =>
+                const Divider(height: 1),
+                itemBuilder: (context, index) {
+                  final order = _cachedOrders![index];
+                  return ListTile(
+                    title: Text(order.name),
+                    subtitle: Text(
+                      '${order.customerName} • \$${order.total.toStringAsFixed(2)}',
                     ),
-                    child: ListView.separated(
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      itemCount:
-                          _cachedOrders!.length > 3 ? 3 : _cachedOrders!.length,
-                      separatorBuilder: (context, index) =>
-                          const Divider(height: 1),
-                      itemBuilder: (context, index) {
-                        final order = _cachedOrders![index];
-                        return ListTile(
-                          title: Text(order.name),
-                          subtitle: Text(
-                            '${order.customerName} • \$${order.total.toStringAsFixed(2)}',
-                          ),
-                          trailing: Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 4),
-                            decoration: BoxDecoration(
-                              color: order.state == "done"
-                                  ? Colors.green[50]
-                                  : order.state == "sale"
-                                      ? Colors.blue[50]
-                                      : Colors.orange[50],
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: Text(
-                              order.stateFormatted,
-                              style: TextStyle(
-                                color: order.state == "done"
-                                    ? Colors.green
-                                    : order.state == "sale"
-                                        ? Colors.blue
-                                        : Colors.orange,
-                                fontSize: 12,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
-                          onTap: () {
-                            Navigator.push(
-                                context,
-                                SlidingPageTransitionRL(
-                                    page: SaleOrderDetailPage(
-                                  orderData: order.toJson(),
-                                )));
-                          },
-                        );
-                      },
+                    trailing: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: order.state == "done"
+                            ? Colors.green[50]
+                            : order.state == "sale"
+                            ? Colors.blue[50]
+                            : Colors.orange[50],
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        order.stateFormatted,
+                        style: TextStyle(
+                          color: order.state == "done"
+                              ? Colors.green
+                              : order.state == "sale"
+                              ? Colors.blue
+                              : Colors.orange,
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
                     ),
-                  )
+                    onTap: () {
+                      Navigator.push(
+                          context,
+                          SlidingPageTransitionRL(
+                              page: SaleOrderDetailPage(
+                                orderData: order.toJson(),
+                              )));
+                    },
+                  );
+                },
+              ),
+            )
                 : _buildRecentSalesShimmer(),
           ],
         ),
@@ -1446,7 +1616,7 @@ class _DashboardPageState extends State<DashboardPage>
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: List.generate(
           3,
-          (index) => Column(
+              (index) => Column(
             children: [
               Container(
                 width: 40,
@@ -1484,7 +1654,7 @@ class _DashboardPageState extends State<DashboardPage>
           Row(
             children: List.generate(
               2,
-              (index) => Expanded(
+                  (index) => Expanded(
                 child: Container(
                   margin: const EdgeInsets.only(right: 8),
                   height: 100,
@@ -1500,7 +1670,7 @@ class _DashboardPageState extends State<DashboardPage>
           Row(
             children: List.generate(
               2,
-              (index) => Expanded(
+                  (index) => Expanded(
                 child: Container(
                   margin: const EdgeInsets.only(right: 8),
                   height: 100,
@@ -1529,7 +1699,7 @@ class _DashboardPageState extends State<DashboardPage>
         child: Column(
           children: List.generate(
             3,
-            (index) => ListTile(
+                (index) => ListTile(
               leading: Container(
                 width: 40,
                 height: 40,
@@ -1668,8 +1838,8 @@ class _DashboardPageState extends State<DashboardPage>
                     '${_cachedStats!.scheduledDeliveries}', primaryLightColor),
                 _buildStatusItem('In Transit',
                     '${_cachedStats!.inTransitDeliveries}', primaryLightColor),
-                _buildStatusItem('Delivered',
-                    '${_cachedStats!.delivered}', primaryLightColor),
+                _buildStatusItem('Delivered', '${_cachedStats!.delivered}',
+                    primaryLightColor),
                 _buildStatusItem('Delayed',
                     '${_cachedStats!.delayedDeliveries}', primaryLightColor),
               ],
@@ -1727,6 +1897,264 @@ class _DashboardPageState extends State<DashboardPage>
   }
 }
 
+// New Revenue Details Dialog
+class RevenueDetailsDialog extends StatefulWidget {
+  final OdooService odooService;
+
+  const RevenueDetailsDialog({Key? key, required this.odooService})
+      : super(key: key);
+
+  @override
+  _RevenueDetailsDialogState createState() => _RevenueDetailsDialogState();
+}
+
+class _RevenueDetailsDialogState extends State<RevenueDetailsDialog> {
+  late Future<RevenueDetails> _revenueDetailsFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _revenueDetailsFuture = widget.odooService.getRevenueDetails();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      elevation: 4,
+      child: Container(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.of(context).size.height * 0.7,
+          minWidth: 300,
+          maxWidth: 400,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Header with gradient
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [
+                    Color(0xFFC13030),
+                    Color(0xFFA12424),
+                  ],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.start,
+                children: [
+                  Text(
+                    'Revenue Details',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                  ),
+
+                ],
+              ),
+            ),
+            // Content
+            Expanded(
+              child: FutureBuilder<RevenueDetails>(
+                future: _revenueDetailsFuture,
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState == ConnectionState.waiting) {
+                    return Center(
+                      child: CircularProgressIndicator(
+                        valueColor: AlwaysStoppedAnimation(Color(0xFFC13030)),
+                      ),
+                    );
+                  }
+                  if (snapshot.hasError) {
+                    return Padding(
+                      padding: const EdgeInsets.all(16.0),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            'Error loading revenue details',
+                            style: TextStyle(color: Colors.red, fontSize: 16),
+                          ),
+                          SizedBox(height: 16),
+                          ElevatedButton(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Color(0xFFC13030),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                            ),
+                            onPressed: () {
+                              setState(() {
+                                _revenueDetailsFuture =
+                                    widget.odooService.getRevenueDetails();
+                              });
+                            },
+                            child: Text('Retry',
+                                style: TextStyle(color: Colors.white)),
+                          ),
+                        ],
+                      ),
+                    );
+                  }
+
+                  final details = snapshot.data!;
+                  return SingleChildScrollView(
+                    child: Padding(
+                      padding: const EdgeInsets.all(16.0),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _buildRevenueMetric(
+                            'Today\'s Revenue',
+                            '\$${details.todayRevenue.toStringAsFixed(2)}',
+                            Icons.today,
+                          ),
+                          _buildRevenueMetric(
+                            'Weekly Revenue',
+                            '\$${details.weeklyRevenue.toStringAsFixed(2)}',
+                            Icons.calendar_today,
+                          ),
+                          _buildRevenueMetric(
+                            'Sales Today',
+                            '${details.todaySalesCount}',
+                            Icons.shopping_cart,
+                          ),
+                          _buildRevenueMetric(
+                            'Top Product',
+                            details.topSellingProduct,
+                            Icons.star,
+                          ),
+                          SizedBox(height: 16),
+                          Text(
+                            'Revenue Breakdown by Customer',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          SizedBox(height: 8),
+                          details.salesBreakdown.isEmpty
+                              ? Text(
+                            'No sales recorded today',
+                            style: TextStyle(
+                                color: Colors.grey[600], fontSize: 14),
+                          )
+                              : ListView.separated(
+                            shrinkWrap: true,
+                            physics: NeverScrollableScrollPhysics(),
+                            itemCount: details.salesBreakdown.length,
+                            separatorBuilder: (context, index) =>
+                                Divider(height: 1),
+                            itemBuilder: (context, index) {
+                              final sale = details.salesBreakdown[index];
+                              return ListTile(
+                                contentPadding: EdgeInsets.zero,
+                                title: Text(
+                                  sale.customerName,
+                                  style: TextStyle(
+                                      fontWeight: FontWeight.w500),
+                                ),
+                                subtitle: Text(
+                                  'Order: ${sale.name}',
+                                  style: TextStyle(
+                                      color: Colors.grey[600],
+                                      fontSize: 12),
+                                ),
+                                trailing: Text(
+                                  '\$${sale.total.toStringAsFixed(2)}',
+                                  style: TextStyle(
+                                    color: Color(0xFFC13030),
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                onTap: () {
+                                  Navigator.pop(context);
+                                  Navigator.push(
+                                    context,
+                                    SlidingPageTransitionRL(
+                                      page: SaleOrderDetailPage(
+                                        orderData: sale.toJson(),
+                                      ),
+                                    ),
+                                  );
+                                },
+                              );
+                            },
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+            // Footer
+            Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Color(0xFFC13030),
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  minimumSize: Size(double.infinity, 48),
+                ),
+                onPressed: () => Navigator.of(context).pop(),
+                child: Text(
+                  'Close',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildRevenueMetric(String label, String value, IconData icon) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8.0),
+      child: Row(
+        children: [
+          Icon(icon, color: Color(0xFFC13030), size: 24),
+          SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: Colors.grey[600],
+                  ),
+                ),
+                Text(
+                  value,
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black87,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 void loadRouteData(BuildContext context) {
   final OdooService odooService = OdooService();
 
@@ -1773,7 +2201,7 @@ void loadRouteData(BuildContext context) {
                   const SizedBox(width: 8),
                   ElevatedButton(
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: primaryColor,
+                      backgroundColor: Color(0xFFC13030),
                       foregroundColor: Colors.white,
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(8),
@@ -1803,7 +2231,7 @@ void loadRouteData(BuildContext context) {
                                 children: const [
                                   CircularProgressIndicator(
                                     valueColor:
-                                        AlwaysStoppedAnimation(primaryColor),
+                                    AlwaysStoppedAnimation(Color(0xFFC13030)),
                                   ),
                                   SizedBox(width: 16),
                                   Text(
@@ -1858,7 +2286,7 @@ void loadRouteData(BuildContext context) {
                               .toString()
                               .contains('KeyError: \'sale.route.plan\'')) {
                             errorMessage =
-                                'Route planning unavailable. Contact your administrator.';
+                            'Route planning unavailable. Contact your administrator.';
                           } else if (e is TimeoutException) {
                             errorMessage = 'Timed out. Please try again.';
                           } else if (e is Exception) {
@@ -1891,7 +2319,7 @@ void loadRouteData(BuildContext context) {
                     child: const Text(
                       'Load Route',
                       style:
-                          TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                      TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
                     ),
                   ),
                 ],
@@ -1902,8 +2330,9 @@ void loadRouteData(BuildContext context) {
       );
     },
   );
-} // Add toJson methods to models for caching
+}
 
+// Add toJson methods to models for caching
 extension DashboardStatsExtension on DashboardStats {
   Map<String, dynamic> toJson() {
     return {
@@ -1915,6 +2344,10 @@ extension DashboardStatsExtension on DashboardStats {
       'top_selling_product': topSellingProduct,
       'visited_customers': visitedCustomers,
       'remaining_customers': remainingCustomers,
+      'scheduled_deliveries': scheduledDeliveries,
+      'in_transit_deliveries': inTransitDeliveries,
+      'delivered': delivered,
+      'delayed_deliveries': delayedDeliveries,
     };
   }
 }

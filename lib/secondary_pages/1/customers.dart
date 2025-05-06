@@ -175,9 +175,11 @@ class _CustomersListState extends State<CustomersList> {
         }
       }
 
-      final List<Product> fetchedProducts = mainVariants.values.map((productData) {
+      final List<Product> fetchedProducts =
+          mainVariants.values.map((productData) {
         List<ProductAttribute> attributes = [];
-        if (productData['attribute_line_ids'] != false && productData['attribute_line_ids'] != null) {
+        if (productData['attribute_line_ids'] != false &&
+            productData['attribute_line_ids'] != null) {
           attributes = _parseAttributes(productData['attribute_line_ids']);
         }
 
@@ -190,18 +192,22 @@ class _CustomersListState extends State<CustomersList> {
           price: (productData['list_price'] as num?)?.toDouble() ?? 0.0,
           defaultCode: productData['default_code'] is String
               ? productData['default_code'] as String
-              : '', // Default to empty string
+              : '',
+          // Default to empty string
           imageUrl: productData['image_1920'] is String
               ? productData['image_1920'] as String
               : null,
-          vanInventory: 1, // Hardcoded as in original
+          vanInventory: 1,
+          // Hardcoded as in original
           attributes: attributes,
           variantCount: productData['product_variant_count'] as int? ?? 0,
         );
       }).toList();
 
       setState(() {
-        _products = fetchedProducts..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+        _products = fetchedProducts
+          ..sort(
+              (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
         _isLoading = false;
       });
 
@@ -221,6 +227,7 @@ class _CustomersListState extends State<CustomersList> {
       });
     }
   }
+
   List<ProductAttribute> _parseAttributes(dynamic attributeLineIds) {
     return [
       ProductAttribute(
@@ -310,8 +317,6 @@ class _CustomersListState extends State<CustomersList> {
       return null;
     }
   }
-
-
 
   @override
   Widget build(BuildContext context) {
