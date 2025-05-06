@@ -144,7 +144,7 @@ class OdooProvider extends ChangeNotifier {
             'args': [
               [['picking_id', '=', int.parse(pickingId)]],
               [
-                'id', 'product_id', 'product_uom_qty', 'qty_done',
+                'id', 'product_id', 'product_uom_qty',
                 'location_id', 'location_dest_id', 'product_uom',
                 'lot_id', 'picking_id', 'state'
               ]
@@ -380,7 +380,7 @@ class OdooProvider extends ChangeNotifier {
             'method': 'write',
             'args': [
               [moveLineId],
-              {'qty_done': quantity}
+              {'quantity': quantity}
             ],
             'kwargs': {},
           }

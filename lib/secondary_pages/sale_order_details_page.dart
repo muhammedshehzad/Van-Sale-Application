@@ -9,6 +9,7 @@ import '../assets/widgets and consts/order_tracking.dart';
 import '../assets/widgets and consts/page_transition.dart';
 import '../authentication/cyllo_session_model.dart';
 import '../main_page/main_page.dart';
+import '../providers/data_provider.dart';
 import '../providers/order_picking_provider.dart';
 import '../providers/sale_order_detail_provider.dart';
 import '../providers/sale_order_provider.dart';
@@ -242,6 +243,48 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
         },
       ),
     );
+  }
+
+  Future<Map<String, dynamic>> getPickingProgress(int pickingId) async {
+    try {
+      final client = await SessionManager.getActiveClient();
+      if (client == null) {
+        throw Exception('No active client found');
+      }
+
+      // Fetch stock moves for the given picking ID
+      final moves = await client.callKw({
+        'model': 'stock.move',
+        'method': 'search_read',
+        'args': [
+          [
+            ['picking_id', '=', pickingId]
+          ],
+          ['product_uom_qty', 'quantity'],
+        ],
+        'kwargs': {},
+      });
+
+      // Calculate total ordered and picked quantities
+      double ordered = 0.0;
+      double picked = 0.0;
+
+      for (var move in moves) {
+        ordered += (move['product_uom_qty'] as double?) ?? 0.0;
+        picked += (move['quantity'] as double?) ?? 0.0;
+      }
+
+      // Determine if the picking is fully picked
+      bool isFullyPicked = ordered > 0 && picked >= ordered;
+
+      return {
+        'picked': picked,
+        'ordered': ordered,
+        'is_fully_picked': isFullyPicked,
+      };
+    } catch (e) {
+      throw Exception('Error fetching picking progress: $e');
+    }
   }
 
   Widget _buildOrderDetails(BuildContext context,
@@ -953,312 +996,69 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                                 final backorderId =
                                     picking['backorder_id'] != false;
 
-                                Future<Map<String, dynamic>>
-                                    getPickingProgress() async {
-                                  final client =
-                                      await SessionManager.getActiveClient();
-                                  if (client == null) {
-                                    debugPrint('No active Odoo client found.');
-                                    return {
-                                      'picked': 0.0,
-                                      'ordered': 1.0,
-                                      'is_fully_picked': false
-                                    };
-                                  }
-
-                                  try {
-                                    // Check available fields for stock.move.line
-                                    final fieldCheck = await client.callKw({
-                                      'model': 'ir.model.fields',
-                                      'method': 'search_read',
-                                      'args': [
-                                        [
-                                          ['model', '=', 'stock.move.line'],
-                                          [
-                                            'name',
-                                            'in',
-                                            [
-                                              'quantity',
-                                              'product_qty',
-                                              'qty_done',
-                                            ]
-                                          ],
-                                        ],
-                                        ['name'],
-                                      ],
-                                      'kwargs': {},
-                                    });
-
-                                    final availableFields = fieldCheck
-                                        .map((f) => f['name'] as String)
-                                        .toSet();
-                                    final pickedField =
-                                        availableFields.contains('quantity')
-                                            ? 'quantity'
-                                            : 'qty_done';
-                                    final orderedField =
-                                        availableFields.contains('product_qty')
-                                            ? 'product_qty'
-                                            : 'reserved_qty';
-
-                                    // Fetch stock.move.line records
-                                    final moveLines = await client.callKw({
-                                      'model': 'stock.move.line',
-                                      'method': 'search_read',
-                                      'args': [
-                                        [
-                                          ['picking_id', '=', picking['id']],
-                                          [
-                                            'state',
-                                            'in',
-                                            [
-                                              'confirmed',
-                                              'partially_available',
-                                              'assigned'
-                                            ]
-                                          ],
-                                        ],
-                                        [
-                                          'product_id',
-                                          pickedField,
-                                          orderedField,
-                                          'lot_name',
-                                          'lot_id'
-                                        ],
-                                      ],
-                                      'kwargs': {},
-                                    }).catchError((e) {
-                                      debugPrint(
-                                          'Failed to fetch stock.move.line: $e');
-                                      return [];
-                                    });
-
-                                    final productQuantities =
-                                        <int, Map<String, double>>{};
-                                    bool allSerialsValid = true;
-
-                                    if (moveLines.isNotEmpty) {
-                                      // Process stock.move.line records
-                                      for (var line in moveLines) {
-                                        final productId =
-                                            line['product_id'] is List
-                                                ? (line['product_id']
-                                                    as List)[0] as int
-                                                : int.parse(line['product_id']
-                                                    .toString());
-                                        final pickedQty =
-                                            (line[pickedField] as num?)
-                                                    ?.toDouble() ??
-                                                0.0;
-                                        final orderedQty =
-                                            (line[orderedField] as num?)
-                                                    ?.toDouble() ??
-                                                0.0;
-
-                                        productQuantities.putIfAbsent(
-                                            productId,
-                                            () => {
-                                                  'picked': 0.0,
-                                                  'ordered': 0.0
-                                                });
-                                        productQuantities[productId]![
-                                            'picked'] = productQuantities[
-                                                productId]!['picked']! +
-                                            pickedQty;
-                                        productQuantities[productId]![
-                                            'ordered'] = productQuantities[
-                                                productId]!['ordered']! +
-                                            orderedQty;
-
-                                        final productResult =
-                                            await client.callKw({
-                                          'model': 'product.product',
-                                          'method': 'search_read',
-                                          'args': [
-                                            [
-                                              ['id', '=', productId]
-                                            ],
-                                            ['tracking'],
-                                          ],
-                                          'kwargs': {},
-                                        }).catchError((e) {
-                                          debugPrint(
-                                              'Failed to fetch product tracking: $e');
-                                          return [];
-                                        });
-
-                                        final tracking =
-                                            productResult.isNotEmpty
-                                                ? productResult[0]['tracking']
-                                                    as String
-                                                : 'none';
-
-                                        if (tracking == 'serial' &&
-                                            pickedQty > 0) {
-                                          final serials = (line['lot_name'] !=
-                                                      null &&
-                                                  line['lot_name'].isNotEmpty)
-                                              ? (line['lot_name'] as String)
-                                                  .split(',')
-                                              : (line['lot_id'] is List &&
-                                                      line['lot_id'].isNotEmpty)
-                                                  ? [
-                                                      line['lot_id'][1]
-                                                          as String
-                                                    ]
-                                                  : [];
-                                          if (serials.length !=
-                                                  pickedQty.toInt() ||
-                                              serials.any((s) => s.isEmpty)) {
-                                            allSerialsValid = false;
-                                          }
-                                        }
-                                      }
-                                    } else {
-                                      // Fallback to stock.move
-                                      debugPrint(
-                                          'No stock.move.line records found, falling back to stock.move');
-                                      final moves = await client.callKw({
-                                        'model': 'stock.move',
-                                        'method': 'search_read',
-                                        'args': [
-                                          [
-                                            ['picking_id', '=', picking['id']],
-                                            [
-                                              'state',
-                                              'in',
-                                              [
-                                                'confirmed',
-                                                'partially_available',
-                                                'assigned'
-                                              ]
-                                            ],
-                                          ],
-                                          [
-                                            'product_id',
-                                            'product_uom_qty',
-                                            'quantity'
-                                          ],
-                                        ],
-                                        'kwargs': {},
-                                      }).catchError((e) {
-                                        debugPrint(
-                                            'Failed to fetch stock.move: $e');
-                                        return [];
-                                      });
-
-                                      for (var move in moves) {
-                                        final productId =
-                                            move['product_id'] is List
-                                                ? (move['product_id']
-                                                    as List)[0] as int
-                                                : int.parse(move['product_id']
-                                                    .toString());
-                                        final orderedQty =
-                                            (move['product_uom_qty'] as num)
-                                                .toDouble();
-                                        final pickedQty =
-                                            (move['quantity'] as num?)
-                                                    ?.toDouble() ??
-                                                0.0;
-
-                                        productQuantities.putIfAbsent(
-                                            productId,
-                                            () => {
-                                                  'picked': 0.0,
-                                                  'ordered': 0.0
-                                                });
-                                        productQuantities[productId]![
-                                            'picked'] = productQuantities[
-                                                productId]!['picked']! +
-                                            pickedQty;
-                                        productQuantities[productId]![
-                                            'ordered'] = productQuantities[
-                                                productId]!['ordered']! +
-                                            orderedQty;
-                                      }
-                                    }
-
-                                    double totalPicked =
-                                        productQuantities.values.fold(0.0,
-                                            (sum, qty) => sum + qty['picked']!);
-                                    double totalOrdered =
-                                        productQuantities.values.fold(
-                                            0.0,
-                                            (sum, qty) =>
-                                                sum + qty['ordered']!);
-
-                                    if (totalOrdered == 0.0) {
-                                      totalOrdered = 1.0;
-                                    }
-
-                                    final isFullyPicked =
-                                        totalPicked >= totalOrdered &&
-                                            totalOrdered > 0 &&
-                                            allSerialsValid;
-
-                                    return {
-                                      'picked': totalPicked,
-                                      'ordered': totalOrdered,
-                                      'is_fully_picked': isFullyPicked,
-                                    };
-                                  } catch (e) {
-                                    debugPrint(
-                                        'Error fetching picking progress: $e');
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(
-                                        content: Text(
-                                            'Failed to fetch picking progress: $e'),
-                                        backgroundColor: Colors.red,
-                                      ),
-                                    );
-                                    return {
-                                      'picked': 0.0,
-                                      'ordered': 1.0,
-                                      'is_fully_picked': false
-                                    };
-                                  }
-                                }
-
                                 return Card(
                                   elevation: 2,
                                   shape: RoundedRectangleBorder(
                                       borderRadius: BorderRadius.circular(12)),
                                   child: Padding(
                                     padding: const EdgeInsets.all(16.0),
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        // Header Row with Title and Status
-                                        Row(
-                                          mainAxisAlignment:
-                                              MainAxisAlignment.spaceBetween,
-                                          children: [
-                                            Expanded(
-                                              child: Text(
-                                                '$pickingName ($pickingType)',
-                                                style: const TextStyle(
-                                                  fontWeight: FontWeight.bold,
-                                                  fontSize: 16,
-                                                ),
-                                                maxLines: 1,
-                                                overflow: TextOverflow.ellipsis,
-                                              ),
+                                    child: FutureBuilder<Map<String, dynamic>>(
+                                      future: getPickingProgress(
+                                          picking['id'] as int),
+                                      // Single FutureBuilder
+                                      builder: (context, snapshot) {
+                                        if (snapshot.connectionState ==
+                                            ConnectionState.waiting) {
+                                          return const Center(
+                                            child: CircularProgressIndicator(
+                                                strokeWidth: 2.5),
+                                          );
+                                        }
+
+                                        if (snapshot.hasError) {
+                                          return Center(
+                                            child: Text(
+                                              'Error loading progress',
+                                              style: TextStyle(
+                                                  color: Colors.red,
+                                                  fontSize: 14),
                                             ),
-                                            FutureBuilder<Map<String, dynamic>>(
-                                              future: getPickingProgress(),
-                                              builder: (context, snapshot) {
-                                                if (snapshot.connectionState ==
-                                                    ConnectionState.waiting) {
-                                                  return const SizedBox
-                                                      .shrink();
-                                                }
-                                                final isFullyPicked = snapshot
-                                                            .data?[
-                                                        'is_fully_picked'] ??
-                                                    false;
-                                                return Row(
+                                          );
+                                        }
+
+                                        final picked =
+                                            snapshot.data?['picked'] ?? 0.0;
+                                        final ordered =
+                                            snapshot.data?['ordered'] ?? 1.0;
+                                        final isFullyPicked =
+                                            snapshot.data?['is_fully_picked'] ??
+                                                false;
+                                        final progress =
+                                            (picked / ordered).clamp(0.0, 1.0);
+
+                                        return Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Row(
+                                              mainAxisAlignment:
+                                                  MainAxisAlignment
+                                                      .spaceBetween,
+                                              children: [
+                                                Expanded(
+                                                  child: Text(
+                                                    pickingName,
+                                                    style: const TextStyle(
+                                                      fontWeight:
+                                                          FontWeight.bold,
+                                                      fontSize: 16,
+                                                    ),
+                                                    maxLines: 1,
+                                                    overflow:
+                                                        TextOverflow.ellipsis,
+                                                  ),
+                                                ),
+                                                Row(
                                                   children: [
                                                     Container(
                                                       padding: const EdgeInsets
@@ -1334,183 +1134,137 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                                                         ),
                                                       ),
                                                   ],
-                                                );
-                                              },
+                                                ),
+                                              ],
                                             ),
-                                          ],
-                                        ),
-
-                                        const SizedBox(height: 12),
-
-                                        // Type Info
-                                        Row(
-                                          children: [
-                                            Icon(Icons.inventory_2_outlined,
-                                                size: 16,
-                                                color: Colors.grey[700]),
-                                            const SizedBox(width: 8),
-                                            Text(
-                                              pickingType,
-                                              style: TextStyle(
-                                                  fontSize: 14,
-                                                  color: Colors.grey[700]),
+                                            const SizedBox(height: 12),
+                                            Row(
+                                              children: [
+                                                Icon(Icons.inventory_2_outlined,
+                                                    size: 16,
+                                                    color: Colors.grey[700]),
+                                                const SizedBox(width: 8),
+                                                Text(
+                                                  pickingType,
+                                                  style: TextStyle(
+                                                      fontSize: 14,
+                                                      color: Colors.grey[700]),
+                                                ),
+                                              ],
                                             ),
-                                          ],
-                                        ),
-
-                                        // Backorder Warning
-                                        if (backorderId)
-                                          Padding(
-                                            padding:
-                                                const EdgeInsets.only(top: 8),
-                                            child: Container(
-                                              padding:
-                                                  const EdgeInsets.symmetric(
+                                            if (backorderId)
+                                              Padding(
+                                                padding: const EdgeInsets.only(
+                                                    top: 8),
+                                                child: Container(
+                                                  padding: const EdgeInsets
+                                                      .symmetric(
                                                       horizontal: 10,
                                                       vertical: 6),
-                                              decoration: BoxDecoration(
-                                                color: Colors.amber
-                                                    .withOpacity(0.1),
-                                                borderRadius:
-                                                    BorderRadius.circular(8),
-                                              ),
-                                              child: Row(
-                                                mainAxisSize: MainAxisSize.min,
-                                                children: [
-                                                  const Icon(Icons.info_outline,
-                                                      size: 16,
-                                                      color: Colors.amber),
-                                                  const SizedBox(width: 6),
-                                                  Text(
-                                                    'Backorder',
-                                                    style: TextStyle(
-                                                      fontSize: 13,
-                                                      fontWeight:
-                                                          FontWeight.w500,
-                                                      color: Colors.amber[800],
-                                                    ),
+                                                  decoration: BoxDecoration(
+                                                    color: Colors.amber
+                                                        .withOpacity(0.1),
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                            8),
                                                   ),
-                                                ],
-                                              ),
-                                            ),
-                                          ),
-
-                                        // Date Information
-                                        if (scheduledDate != null ||
-                                            dateCompleted != null)
-                                          Padding(
-                                            padding:
-                                                const EdgeInsets.only(top: 12),
-                                            child: Container(
-                                              padding: const EdgeInsets.all(10),
-                                              decoration: BoxDecoration(
-                                                color: Colors.grey[50],
-                                                borderRadius:
-                                                    BorderRadius.circular(8),
-                                              ),
-                                              child: Column(
-                                                crossAxisAlignment:
-                                                    CrossAxisAlignment.start,
-                                                children: [
-                                                  if (scheduledDate != null)
-                                                    Row(
-                                                      children: [
-                                                        Icon(
-                                                            Icons
-                                                                .calendar_today,
-                                                            size: 14,
-                                                            color: Colors
-                                                                .grey[700]),
-                                                        const SizedBox(
-                                                            width: 8),
-                                                        Text(
-                                                          'Scheduled: ${DateFormat('yyyy-MM-dd HH:mm').format(scheduledDate)}',
-                                                          style: TextStyle(
-                                                              fontSize: 13,
-                                                              color: Colors
-                                                                  .grey[800]),
-                                                        ),
-                                                      ],
-                                                    ),
-                                                  if (scheduledDate != null &&
-                                                      dateCompleted != null)
-                                                    const SizedBox(height: 6),
-                                                  if (dateCompleted != null)
-                                                    Row(
-                                                      children: [
-                                                        Icon(
-                                                            Icons
-                                                                .check_circle_outline,
-                                                            size: 14,
-                                                            color: Colors
-                                                                .green[700]),
-                                                        const SizedBox(
-                                                            width: 8),
-                                                        Text(
-                                                          'Completed: ${DateFormat('yyyy-MM-dd HH:mm').format(dateCompleted)}',
-                                                          style: TextStyle(
-                                                              fontSize: 13,
-                                                              color: Colors
-                                                                  .grey[800]),
-                                                        ),
-                                                      ],
-                                                    ),
-                                                ],
-                                              ),
-                                            ),
-                                          ),
-
-                                        // Progress Bar
-                                        if (pickingState != 'cancel')
-                                          FutureBuilder<Map<String, dynamic>>(
-                                            future: getPickingProgress(),
-                                            builder: (context, snapshot) {
-                                              if (snapshot.connectionState ==
-                                                  ConnectionState.waiting) {
-                                                return Padding(
-                                                  padding: const EdgeInsets
-                                                      .symmetric(vertical: 16),
                                                   child: Row(
-                                                    mainAxisAlignment:
-                                                        MainAxisAlignment
-                                                            .center,
+                                                    mainAxisSize:
+                                                        MainAxisSize.min,
                                                     children: [
+                                                      const Icon(
+                                                          Icons.info_outline,
+                                                          size: 16,
+                                                          color: Colors.amber),
+                                                      const SizedBox(width: 6),
                                                       Text(
-                                                        'Loading progress...',
+                                                        'Backorder',
                                                         style: TextStyle(
                                                           fontSize: 13,
+                                                          fontWeight:
+                                                              FontWeight.w500,
                                                           color:
-                                                              Colors.grey[600],
-                                                          fontStyle:
-                                                              FontStyle.italic,
-                                                        ),
-                                                      ),
-                                                      const SizedBox(width: 12),
-                                                      SizedBox(
-                                                        width: 16,
-                                                        height: 16,
-                                                        child:
-                                                            CircularProgressIndicator(
-                                                          strokeWidth: 2,
-                                                          color: primaryColor,
+                                                              Colors.amber[800],
                                                         ),
                                                       ),
                                                     ],
                                                   ),
-                                                );
-                                              }
-
-                                              final picked =
-                                                  snapshot.data?['picked'] ??
-                                                      0.0;
-                                              final ordered =
-                                                  snapshot.data?['ordered'] ??
-                                                      1.0;
-                                              final progress =
-                                                  (picked / ordered)
-                                                      .clamp(0.0, 1.0);
-
-                                              return Padding(
+                                                ),
+                                              ),
+                                            if (scheduledDate != null ||
+                                                dateCompleted != null)
+                                              Padding(
+                                                padding: const EdgeInsets.only(
+                                                    top: 12),
+                                                child: Container(
+                                                  padding:
+                                                      const EdgeInsets.all(10),
+                                                  decoration: BoxDecoration(
+                                                    color: Colors.grey[50],
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                            8),
+                                                  ),
+                                                  child: Column(
+                                                    crossAxisAlignment:
+                                                        CrossAxisAlignment
+                                                            .start,
+                                                    children: [
+                                                      if (scheduledDate != null)
+                                                        Row(
+                                                          children: [
+                                                            Icon(
+                                                                Icons
+                                                                    .calendar_today,
+                                                                size: 14,
+                                                                color: Colors
+                                                                    .grey[700]),
+                                                            const SizedBox(
+                                                                width: 8),
+                                                            Text(
+                                                              'Scheduled: ${DateFormat('yyyy-MM-dd HH:mm').format(scheduledDate)}',
+                                                              style: TextStyle(
+                                                                  fontSize: 13,
+                                                                  color: Colors
+                                                                          .grey[
+                                                                      800]),
+                                                            ),
+                                                          ],
+                                                        ),
+                                                      if (scheduledDate !=
+                                                              null &&
+                                                          dateCompleted != null)
+                                                        const SizedBox(
+                                                            height: 6),
+                                                      if (dateCompleted != null)
+                                                        Row(
+                                                          children: [
+                                                            Icon(
+                                                                Icons
+                                                                    .check_circle_outline,
+                                                                size: 14,
+                                                                color: Colors
+                                                                        .green[
+                                                                    700]),
+                                                            const SizedBox(
+                                                                width: 8),
+                                                            Text(
+                                                              'Completed: ${DateFormat('yyyy-MM-dd HH:mm').format(dateCompleted)}',
+                                                              style: TextStyle(
+                                                                  fontSize: 13,
+                                                                  color: Colors
+                                                                          .grey[
+                                                                      800]),
+                                                            ),
+                                                          ],
+                                                        ),
+                                                    ],
+                                                  ),
+                                                ),
+                                              ),
+                                            if (pickingState != 'cancel' &&
+                                                pickingState != 'done')
+                                              Padding(
                                                 padding: const EdgeInsets.only(
                                                     top: 16),
                                                 child: Column(
@@ -1532,47 +1286,51 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                                                                 .grey[800],
                                                           ),
                                                         ),
-                                                        Text(
-                                                          '${(progress * 100).toInt()}%',
-                                                          style: TextStyle(
-                                                            fontWeight:
-                                                                FontWeight.w600,
-                                                            fontSize: 14,
+                                                        Container(
+                                                          padding:
+                                                              const EdgeInsets
+                                                                  .symmetric(
+                                                                  horizontal: 8,
+                                                                  vertical: 4),
+                                                          decoration:
+                                                              BoxDecoration(
                                                             color: progress ==
                                                                     1.0
                                                                 ? Colors.green
-                                                                : Colors
-                                                                    .grey[800],
-                                                          ),
-                                                        ),
-                                                      ],
-                                                    ),
-                                                    const SizedBox(height: 8),
-                                                    Stack(
-                                                      children: [
-                                                        ClipRRect(
-                                                          borderRadius:
-                                                              BorderRadius
-                                                                  .circular(6),
-                                                          child:
-                                                              LinearProgressIndicator(
-                                                            value: progress,
-                                                            minHeight: 8,
-                                                            backgroundColor:
-                                                                Colors
-                                                                    .grey[200],
-                                                            valueColor:
-                                                                AlwaysStoppedAnimation<
-                                                                    Color>(
-                                                              progress == 1.0
+                                                                    .withOpacity(
+                                                                        0.1)
+                                                                : Colors.blue
+                                                                    .withOpacity(
+                                                                        0.1),
+                                                            borderRadius:
+                                                                BorderRadius
+                                                                    .circular(
+                                                                        8),
+                                                            border: Border.all(
+                                                              color: progress ==
+                                                                      1.0
                                                                   ? Colors.green
-                                                                  : primaryColor,
+                                                                  : Colors.blue,
+                                                              width: 1,
+                                                            ),
+                                                          ),
+                                                          child: Text(
+                                                            '${(progress * 100).toInt()}% Complete',
+                                                            style: TextStyle(
+                                                              fontSize: 12,
+                                                              fontWeight:
+                                                                  FontWeight
+                                                                      .bold,
+                                                              color: progress ==
+                                                                      1.0
+                                                                  ? Colors.green
+                                                                  : Colors.blue,
                                                             ),
                                                           ),
                                                         ),
                                                       ],
                                                     ),
-                                                    const SizedBox(height: 6),
+                                                    const SizedBox(height: 8),
                                                     Text(
                                                       'Picked: ${picked.toStringAsFixed(0)} / ${ordered.toStringAsFixed(0)} items',
                                                       style: TextStyle(
@@ -1582,26 +1340,9 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                                                     ),
                                                   ],
                                                 ),
-                                              );
-                                            },
-                                          ),
-
-                                        // Action Buttons
-                                        if (pickingState != 'cancel')
-                                          FutureBuilder<Map<String, dynamic>>(
-                                            future: getPickingProgress(),
-                                            builder: (context, snapshot) {
-                                              if (snapshot.connectionState ==
-                                                  ConnectionState.waiting) {
-                                                return const SizedBox.shrink();
-                                              }
-
-                                              final isFullyPicked =
-                                                  snapshot.data?[
-                                                          'is_fully_picked'] ??
-                                                      false;
-
-                                              return Padding(
+                                              ),
+                                            if (pickingState != 'cancel')
+                                              Padding(
                                                 padding: const EdgeInsets.only(
                                                     top: 16),
                                                 child: Row(
@@ -1732,10 +1473,10 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                                                     ],
                                                   ],
                                                 ),
-                                              );
-                                            },
-                                          ),
-                                      ],
+                                              ),
+                                          ],
+                                        );
+                                      },
                                     ),
                                   ),
                                 );

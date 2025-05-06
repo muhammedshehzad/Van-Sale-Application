@@ -1,335 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_barcode_scanner/flutter_barcode_scanner.dart';
+import 'package:intl/intl.dart';
+import 'package:latest_van_sale_application/assets/widgets%20and%20consts/page_transition.dart';
+import 'package:latest_van_sale_application/providers/order_picking_provider.dart';
+import 'package:latest_van_sale_application/secondary_pages/1/customers.dart';
+import 'package:latest_van_sale_application/secondary_pages/picking_products_ventorreff.dart';
 import 'dart:async';
 import '../authentication/cyllo_session_model.dart';
-
-class DataProvider with ChangeNotifier {
-  // Fetch stock availability for products
-  Future<Map<int, double>> fetchStockAvailability(
-    List<Map<String, dynamic>> products,
-    int warehouseId,
-  ) async {
-    try {
-      final client = await SessionManager.getActiveClient();
-      if (client == null) {
-        throw Exception('No active Odoo session');
-      }
-
-      final productIds = products
-          .map((product) => (product['product_id'] as List<dynamic>)[0] as int)
-          .toSet()
-          .toList();
-
-      final stockQuantResult = await client.callKw({
-        'model': 'stock.quant',
-        'method': 'search_read',
-        'args': [
-          [
-            ['product_id', 'in', productIds],
-            ['location_id.usage', '=', 'internal'],
-            ['quantity', '>', 0],
-            ['location_id.warehouse_id', '=', warehouseId],
-          ],
-          ['product_id', 'quantity', 'location_id'],
-        ],
-        'kwargs': {},
-      });
-
-      final Map<int, double> availability = {};
-      for (var quant in stockQuantResult) {
-        final productId = (quant['product_id'] as List<dynamic>)[0] as int;
-        final quantity = quant['quantity'] is num
-            ? (quant['quantity'] as num).toDouble()
-            : 0.0;
-        availability[productId] = (availability[productId] ?? 0.0) + quantity;
-      }
-
-      return availability;
-    } catch (e) {
-      debugPrint('Error fetching stock availability: $e');
-      throw Exception('Failed to fetch stock availability: $e');
-    }
-  }
-
-  // Fetch alternative locations for a product
-  Future<List<Map<String, dynamic>>> fetchAlternativeLocations(
-    int productId,
-    int warehouseId,
-  ) async {
-    try {
-      final client = await SessionManager.getActiveClient();
-      if (client == null) {
-        throw Exception('No active Odoo session');
-      }
-
-      final result = await client.callKw({
-        'model': 'stock.quant',
-        'method': 'search_read',
-        'args': [
-          [
-            ['product_id', '=', productId],
-            ['location_id.usage', '=', 'internal'],
-            ['quantity', '>', 0],
-            ['location_id.warehouse_id', '=', warehouseId],
-          ],
-          ['location_id', 'quantity'],
-        ],
-        'kwargs': {},
-      });
-
-      return List<Map<String, dynamic>>.from(result);
-    } catch (e) {
-      debugPrint('Error fetching alternative locations: $e');
-      return [];
-    }
-  }
-
-  // Fetch picking details by ID
-  Future<Map<String, dynamic>> fetchPickingDetails(int pickingId) async {
-    try {
-      final client = await SessionManager.getActiveClient();
-      if (client == null) {
-        throw Exception('No active Odoo session');
-      }
-
-      final result = await client.callKw({
-        'model': 'stock.picking',
-        'method': 'search_read',
-        'args': [
-          [
-            ['id', '=', pickingId]
-          ],
-          [
-            'name',
-            'state',
-            'origin',
-            'partner_id',
-            'location_id',
-            'location_dest_id',
-            'scheduled_date',
-            'date_done',
-            'note',
-          ],
-        ],
-        'kwargs': {},
-      });
-
-      if (result.isEmpty) {
-        throw Exception('Picking not found');
-      }
-
-      return Map<String, dynamic>.from(result[0]);
-    } catch (e) {
-      debugPrint('Error fetching picking details: $e');
-      rethrow;
-    }
-  }
-
-  // Fetch all pickings that need processing
-  Future<List<Map<String, dynamic>>> fetchPendingPickings() async {
-    try {
-      final client = await SessionManager.getActiveClient();
-      if (client == null) {
-        throw Exception('No active Odoo session');
-      }
-
-      final result = await client.callKw({
-        'model': 'stock.picking',
-        'method': 'search_read',
-        'args': [
-          [
-            [
-              'state',
-              'in',
-              ['assigned', 'confirmed']
-            ],
-            ['picking_type_id.code', '=', 'outgoing'],
-          ],
-          [
-            'id',
-            'name',
-            'state',
-            'partner_id',
-            'scheduled_date',
-            'origin',
-          ],
-        ],
-        'kwargs': {'order': 'scheduled_date asc'},
-      });
-
-      return List<Map<String, dynamic>>.from(result);
-    } catch (e) {
-      debugPrint('Error fetching pending pickings: $e');
-      return [];
-    }
-  }
-
-  // Create a new move line
-  Future<int?> createMoveLine(
-    int pickingId,
-    int productId,
-    double quantity,
-    int locationId,
-    int locationDestId, {
-    String? lotName,
-  }) async {
-    try {
-      final client = await SessionManager.getActiveClient();
-      if (client == null) {
-        throw Exception('No active Odoo session');
-      }
-
-      final moveResult = await client.callKw({
-        'model': 'stock.move',
-        'method': 'search_read',
-        'args': [
-          [
-            ['picking_id', '=', pickingId],
-            ['product_id', '=', productId],
-          ],
-          ['id'],
-        ],
-        'kwargs': {},
-      });
-
-      int moveId;
-      if (moveResult.isEmpty) {
-        final productResult = await client.callKw({
-          'model': 'product.product',
-          'method': 'search_read',
-          'args': [
-            [
-              ['id', '=', productId]
-            ],
-            ['name', 'uom_id'],
-          ],
-          'kwargs': {},
-        });
-
-        if (productResult.isEmpty) {
-          throw Exception('Product not found');
-        }
-
-        final product = productResult[0];
-        final uomId = (product['uom_id'] as List<dynamic>)[0] as int;
-
-        final createdMove = await client.callKw({
-          'model': 'stock.move',
-          'method': 'create',
-          'args': [
-            {
-              'name': product['name'] as String,
-              'product_id': productId,
-              'product_uom': uomId,
-              'product_uom_qty': quantity,
-              'picking_id': pickingId,
-              'location_id': locationId,
-              'location_dest_id': locationDestId,
-            },
-          ],
-          'kwargs': {},
-        });
-
-        moveId = createdMove as int;
-      } else {
-        moveId = moveResult[0]['id'] as int;
-      }
-
-      final values = <String, dynamic>{
-        'move_id': moveId,
-        'product_id': productId,
-        'quantity': quantity,
-        'product_uom_qty': quantity,
-        'picking_id': pickingId,
-        'location_id': locationId,
-        'location_dest_id': locationDestId,
-      };
-
-      if (lotName != null && lotName.isNotEmpty) {
-        values['lot_name'] = lotName;
-      }
-
-      final result = await client.callKw({
-        'model': 'stock.move.line',
-        'method': 'create',
-        'args': [values],
-        'kwargs': {},
-      });
-
-      return result as int?;
-    } catch (e) {
-      debugPrint('Error creating move line: $e');
-      throw Exception('Failed to create move line: $e');
-    }
-  }
-
-  // Update the quantity of a move line
-  Future<bool> updateMoveLineQuantity(
-    int moveLineId,
-    double quantity,
-    List<String>? lotSerialNumbers,
-  ) async {
-    try {
-      final client = await SessionManager.getActiveClient();
-      if (client == null) {
-        throw Exception('No active Odoo session');
-      }
-
-      final values = <String, dynamic>{
-        'quantity': quantity,
-        'qty_done': quantity,
-      };
-
-      if (lotSerialNumbers != null && lotSerialNumbers.isNotEmpty) {
-        values['lot_name'] = lotSerialNumbers.join(',');
-      }
-
-      await client.callKw({
-        'model': 'stock.move.line',
-        'method': 'write',
-        'args': [
-          [moveLineId],
-          values,
-        ],
-        'kwargs': {},
-      });
-
-      return true;
-    } catch (e) {
-      debugPrint('Error updating move line quantity: $e');
-      return false;
-    }
-  }
-
-  // Undo a move line
-  Future<bool> undoMoveLine(int moveLineId) async {
-    try {
-      final client = await SessionManager.getActiveClient();
-      if (client == null) {
-        throw Exception('No active Odoo session');
-      }
-
-      await client.callKw({
-        'model': 'stock.move.line',
-        'method': 'write',
-        'args': [
-          [moveLineId],
-          {
-            'quantity': 0.0,
-            'qty_done': 0.0,
-            'lot_name': null,
-          },
-        ],
-        'kwargs': {},
-      });
-
-      return true;
-    } catch (e) {
-      debugPrint('Error undoing move line: $e');
-      return false;
-    }
-  }
-}
+import '../providers/data_provider.dart';
 
 class PickingPage extends StatefulWidget {
   final Map<String, dynamic> picking;
@@ -372,7 +50,7 @@ class _PickingPageState extends State<PickingPage>
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _barcodeFocusNode = FocusNode();
   bool _isScanning = false;
-  String _sortCriteria = 'name'; // Sorting criteria: name, quantity, location
+  String _sortCriteria = 'name';
   bool _sortAscending = true;
   List<Map<String, dynamic>> filteredPickingLines = [];
 
@@ -598,7 +276,6 @@ class _PickingPageState extends State<PickingPage>
         locationIdMap[productId] = locationId;
       }
 
-      // Fetch picking details to ensure location_id and location_dest_id are available
       final pickingDetails =
           await widget.provider.fetchPickingDetails(pickingId);
       final defaultLocationId =
@@ -872,8 +549,18 @@ class _PickingPageState extends State<PickingPage>
         selectedMoveLineId = moveLineId;
         scanMessage = 'Found: ${moveLineData['name']}';
       });
-
-      _showProductPickDialog(moveLineId);
+      showProductPickPage(
+        context,
+        moveLineId,
+        pickingLines,
+        stockAvailability,
+        pickedQuantities,
+        pendingPickedQuantities,
+        quantityControllers,
+        _confirmPick,
+        _undoPick,
+        _suggestAlternativeLocation,
+      );
     } else {
       setState(() => scanMessage = 'Product not found: $barcode');
       _showSnackBar('Product not found: $barcode', Colors.red);
@@ -953,137 +640,198 @@ class _PickingPageState extends State<PickingPage>
     }
   }
 
-  void _showProductPickDialog(int moveLineId) {
-    final line = pickingLines.firstWhere(
+  void showProductPickPage(
+    BuildContext context,
+    int moveLineId,
+    List<Map<String, dynamic>> pickingLines,
+    Map<int, double> stockAvailability,
+    Map<int, double> pickedQuantities,
+    Map<int, double> pendingPickedQuantities,
+    Map<int, TextEditingController> quantityControllers,
+    Function(int) confirmPick,
+    Function(int) undoPick,
+    Function(int, int, StateSetter) suggestAlternativeLocation,
+  ) async {
+    // Store the original context for state operations
+    final pickingContext = context;
+
+    var line = pickingLines.firstWhere(
       (line) => line['id'] == moveLineId,
       orElse: () => <String, dynamic>{},
     );
 
     if (line.isEmpty) {
-      _showSnackBar('Move line not found', Colors.red);
+      debugPrint('Move line not found for ID: $moveLineId');
+      await showDialog(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Move Line Not Found'),
+          content: const Text(
+            'The requested move line was not found in the picking. This could be due to a data sync issue or an invalid move line ID. What would you like to do?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.pop(dialogContext);
+                // Use pickingContext to access _PickingPageState
+                final pickingState =
+                    pickingContext.findAncestorStateOfType<_PickingPageState>();
+                if (pickingState != null) {
+                  pickingState._initializePickingData();
+                } else {
+                  debugPrint(
+                      'Error: _PickingPageState not found in widget tree for refresh');
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content:
+                          Text('Unable to refresh data. Please try again.'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                }
+              },
+              child: const Text('Refresh Data'),
+            ),
+            TextButton(
+              onPressed: () async {
+                Navigator.pop(dialogContext);
+                final barcode = await FlutterBarcodeScanner.scanBarcode(
+                  '#ff0000',
+                  'Cancel',
+                  true,
+                  ScanMode.BARCODE,
+                );
+                if (barcode != '-1' && barcode.isNotEmpty) {
+                  final pickingState = pickingContext
+                      .findAncestorStateOfType<_PickingPageState>();
+                  if (pickingState != null) {
+                    pickingState._processBarcode(barcode);
+                  } else {
+                    debugPrint(
+                        'Error: _PickingPageState not found for barcode processing');
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text(
+                            'Unable to process barcode. Please try again.'),
+                        backgroundColor: Colors.red,
+                      ),
+                    );
+                  }
+                }
+              },
+              child: const Text('Scan Another Barcode'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+          ],
+        ),
+      );
       return;
     }
 
-    final productId = (line['product_id'] as List<dynamic>)[0] as int;
+    final productId =
+        line['product_id'] is List<dynamic> && line['product_id'].isNotEmpty
+            ? line['product_id'][0] as int
+            : 0;
+
+    if (productId == 0) {
+      debugPrint('Invalid product_id for moveLineId: $moveLineId');
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Invalid product data for this move line.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
     final availableQty = stockAvailability[productId] ?? 0.0;
 
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setModalState) {
-            return Padding(
-              padding: EdgeInsets.only(
-                bottom: MediaQuery.of(context).viewInsets.bottom,
-                left: 16,
-                right: 16,
-                top: 16,
-              ),
-              child: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Expanded(
-                          child: Text(
-                            line['product_name'] as String,
-                            style: const TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ),
-                        if (availableQty <= 0)
-                          TextButton(
-                            onPressed: () => _suggestAlternativeLocation(
-                                productId, moveLineId, setModalState),
-                            child: const Text('Change Location'),
-                          ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Text('Code: ${line['product_code']}'),
-                    Text('Location: ${line['location_name']}'),
-                    Text('Ordered: ${line['ordered_qty']}'),
-                    Text('Picked: ${line['picked_qty']}'),
-                    Text('Available: ${availableQty.toStringAsFixed(2)}'),
-                    if (availableQty <= 0)
-                      const Text(
-                        'Out of stock at this location',
-                        style: TextStyle(color: Colors.red),
-                      ),
-                    const SizedBox(height: 16),
-                    TextField(
-                      controller: quantityControllers[moveLineId] ??
-                          TextEditingController(text: '1.0'),
-                      keyboardType: TextInputType.number,
-                      decoration: const InputDecoration(
-                        labelText: 'Quantity to Pick',
-                        border: OutlineInputBorder(),
-                      ),
-                      onChanged: (value) {
-                        final qty = double.tryParse(value) ?? 0.0;
-                        setModalState(() {
-                          pendingPickedQuantities[moveLineId] = qty;
-                        });
-                      },
-                    ),
-                    const SizedBox(height: 16),
-                    if (line['tracking'] == 'lot' ||
-                        line['tracking'] == 'serial')
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            '${line['tracking'] == 'lot' ? 'Lot' : 'Serial'} Numbers:',
-                            style: const TextStyle(fontWeight: FontWeight.bold),
-                          ),
-                          const SizedBox(height: 8),
-                          ..._buildLotSerialInputs(moveLineId, setModalState),
-                        ],
-                      ),
-                    const SizedBox(height: 16),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: [
-                        TextButton(
-                          onPressed: () => Navigator.pop(context),
-                          child: const Text('Cancel'),
-                        ),
-                        const SizedBox(width: 8),
-                        if (pickedQuantities[moveLineId] != null &&
-                            pickedQuantities[moveLineId]! > 0)
-                          TextButton(
-                            onPressed: () {
-                              _undoPick(moveLineId);
-                              Navigator.pop(context);
-                            },
-                            child: const Text('Undo'),
-                          ),
-                        const SizedBox(width: 8),
-                        ElevatedButton(
-                          onPressed: availableQty <= 0
-                              ? null
-                              : () {
-                                  _confirmPick(moveLineId);
-                                  Navigator.pop(context);
-                                },
-                          child: const Text('Confirm'),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                  ],
-                ),
-              ),
-            );
+    if (availableQty <= 0) {
+      final result = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Out of Stock'),
+          content: Text(
+            'The product "${line['product_name'] ?? 'Unknown'}" is not available in the current location (${line['location_name'] ?? 'Unknown'}). Would you like to check for alternative locations?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Skip'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Find Alternative Location'),
+            ),
+          ],
+        ),
+      );
+
+      if (result == true) {
+        final pickingState =
+            pickingContext.findAncestorStateOfType<_PickingPageState>();
+        if (pickingState == null) {
+          debugPrint(
+              'Error: _PickingPageState not found for suggesting alternative location');
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Unable to suggest alternative location.'),
+              backgroundColor: Colors.red,
+            ),
+          );
+          return;
+        }
+
+        await pickingState._suggestAlternativeLocation(
+          productId,
+          moveLineId,
+          (state) {
+            setState(() {
+              line['is_available'] = true;
+            });
           },
         );
-      },
+
+        final updatedLine = pickingLines.firstWhere(
+          (line) => line['id'] == moveLineId,
+          orElse: () => <String, dynamic>{},
+        );
+        if (updatedLine.isEmpty) {
+          debugPrint('Move line still not found after location update');
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Move line not found after location update'),
+              backgroundColor: Colors.red,
+            ),
+          );
+          return;
+        }
+        line = updatedLine;
+
+        pickingState._filterPickingLines();
+      } else {
+        return;
+      }
+    }
+
+    Navigator.of(context).push(
+      SlidingPageTransitionRL(
+        page: ProductPickScreen(
+          moveLineId: moveLineId,
+          line: line,
+          availableQty: stockAvailability[productId] ?? 0.0,
+          productId: productId,
+          pickedQuantities: pickedQuantities,
+          pendingPickedQuantities: pendingPickedQuantities,
+          quantityControllers: quantityControllers,
+          confirmPick: confirmPick,
+          undoPick: undoPick,
+          suggestAlternativeLocation: suggestAlternativeLocation,
+        ),
+      ),
     );
   }
 
@@ -1519,8 +1267,9 @@ class _PickingPageState extends State<PickingPage>
     );
   }
 
-  Widget _buildDetailsTab() {
+  Widget buildDetailsTab() {
     final pickingData = widget.picking;
+    final textTheme = Theme.of(context).textTheme;
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16.0),
@@ -1528,7 +1277,10 @@ class _PickingPageState extends State<PickingPage>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Card(
-            elevation: 2,
+            elevation: 1,
+            margin: const EdgeInsets.only(bottom: 16.0),
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
             child: Padding(
               padding: const EdgeInsets.all(16.0),
               child: Column(
@@ -1539,75 +1291,375 @@ class _PickingPageState extends State<PickingPage>
                     children: [
                       Text(
                         'Delivery Order',
-                        style: Theme.of(context).textTheme.titleLarge,
+                        style: textTheme.titleLarge
+                            ?.copyWith(fontWeight: FontWeight.bold),
                       ),
-                      Text(
-                        pickingData['name'] ?? 'N/A',
-                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12.0, vertical: 6.0),
+                        decoration: BoxDecoration(
+                          color:
+                              Theme.of(context).primaryColor.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: Text(
+                          pickingData['name'] ?? 'N/A',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: Theme.of(context).primaryColor,
+                          ),
+                        ),
                       ),
                     ],
                   ),
-                  const Divider(),
-                  _buildInfoRow(
-                      'Status', _formatPickingState(pickingData['state'])),
-                  _buildInfoRow('Origin', pickingData['origin'] ?? 'N/A'),
-                  _buildInfoRow(
+                  const Divider(height: 24),
+                  buildStatusRow(pickingData['state']),
+                  const SizedBox(height: 16),
+                  buildInfoRow(
+                    'Origin',
+                    pickingData['origin'] ?? 'N/A',
+                    icon: Icons.location_on_outlined,
+                  ),
+                  buildInfoRow(
                     'Source Location',
                     pickingData['location_id'] is List<dynamic>
                         ? pickingData['location_id'][1] as String
                         : 'N/A',
+                    icon: Icons.home_outlined,
                   ),
-                  _buildInfoRow(
+                  buildInfoRow(
                     'Destination',
                     pickingData['location_dest_id'] is List<dynamic>
                         ? pickingData['location_dest_id'][1] as String
                         : 'N/A',
+                    icon: Icons.place_outlined,
                   ),
-                  _buildInfoRow(
+                  buildInfoRow(
                     'Scheduled Date',
-                    _formatDate(pickingData['scheduled_date']),
+                    formatDate(pickingData['scheduled_date']),
+                    icon: Icons.calendar_today_outlined,
                   ),
-                  _buildInfoRow(
+                  buildInfoRow(
                     'Partner',
                     pickingData['partner_id'] is List<dynamic>
                         ? pickingData['partner_id'][1] as String
                         : 'N/A',
+                    icon: Icons.business_outlined,
                   ),
                   if (pickingData['note'] != null &&
                       pickingData['note'].toString().isNotEmpty)
-                    _buildInfoRow('Note', pickingData['note'] as String),
+                    buildNoteSection(pickingData['note'] as String),
                 ],
               ),
             ),
           ),
-          const SizedBox(height: 16),
-          if (!isProcessing && isInitialized)
-            Row(
-              children: [
-                Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed:
-                        isProcessing ? null : _validateAndCompletePicking,
-                    icon: const Icon(Icons.check),
-                    label: const Text('Validate Picking'),
-                    style: ElevatedButton.styleFrom(
-                      foregroundColor: Colors.white,
-                      backgroundColor: Colors.green,
-                      minimumSize: const Size(double.infinity, 50),
-                    ),
+          if (pickingData['move_ids_without_package'] != null &&
+              pickingData['move_ids_without_package'].isNotEmpty)
+            buildProductsCard(pickingData['move_ids_without_package']),
+          Card(
+            elevation: 1,
+            margin: const EdgeInsets.only(top: 8.0),
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            child: Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Additional Information',
+                    style: textTheme.titleMedium
+                        ?.copyWith(fontWeight: FontWeight.bold),
                   ),
-                ),
-                const SizedBox(width: 8),
-                IconButton(
-                  icon: const Icon(Icons.refresh),
-                  onPressed: isProcessing ? null : _initializePickingData,
-                  tooltip: 'Refresh',
-                ),
-              ],
+                  const Divider(height: 24),
+                  buildInfoRow(
+                    'Created On',
+                    formatDate(pickingData['create_date']),
+                    icon: Icons.access_time_outlined,
+                  ),
+                  buildInfoRow(
+                    'Last Modified',
+                    formatDate(pickingData['write_date']),
+                    icon: Icons.update_outlined,
+                  ),
+                  if (pickingData['priority'] != null)
+                    buildInfoRow(
+                      'Priority',
+                      formatPriority(pickingData['priority']),
+                      icon: Icons.flag_outlined,
+                    ),
+                ],
+              ),
             ),
+          ),
         ],
       ),
     );
+  }
+
+  Widget buildStatusRow(dynamic state) {
+    final statusInfo = formatPickingState(state);
+    final statusColor = getStatusColor(state);
+
+    return Container(
+      padding: const EdgeInsets.all(12.0),
+      decoration: BoxDecoration(
+        color: statusColor.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: statusColor.withOpacity(0.3)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.circle, size: 12, color: statusColor),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'Status: $statusInfo',
+              style: TextStyle(
+                fontWeight: FontWeight.w600,
+                color: statusColor,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Color getStatusColor(dynamic state) {
+    if (state == null) return Colors.grey;
+
+    switch (state.toString().toLowerCase()) {
+      case 'draft':
+        return Colors.grey;
+      case 'waiting':
+      case 'confirmed':
+        return Colors.orange;
+      case 'assigned':
+        return Colors.blue;
+      case 'done':
+        return Colors.green;
+      case 'cancel':
+        return Colors.red;
+      default:
+        return Colors.grey;
+    }
+  }
+
+  Widget buildInfoRow(String label, String value, {IconData? icon}) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12.0),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (icon != null) ...[
+            Icon(icon, size: 18, color: Colors.grey[600]),
+            const SizedBox(width: 8),
+          ],
+          SizedBox(
+            width: 120,
+            child: Text(
+              '$label:',
+              style: TextStyle(
+                fontWeight: FontWeight.w500,
+                color: Colors.grey[700],
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: const TextStyle(fontWeight: FontWeight.w400),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget buildNoteSection(String note) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 8.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Divider(),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Icon(Icons.note_outlined, size: 18, color: Colors.grey[600]),
+              const SizedBox(width: 8),
+              Text(
+                'Notes',
+                style: TextStyle(
+                  fontWeight: FontWeight.w500,
+                  color: Colors.grey[700],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Container(
+            padding: const EdgeInsets.all(12),
+            width: double.infinity,
+            decoration: BoxDecoration(
+              color: Colors.grey[100],
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Text(note),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget buildProductsCard(List<dynamic> products) {
+    return Card(
+      elevation: 2,
+      margin: const EdgeInsets.only(bottom: 16.0),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.inventory_2_outlined,
+                    color: Theme.of(context).primaryColor),
+                const SizedBox(width: 8),
+                Text(
+                  'Products',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                ),
+              ],
+            ),
+            const Divider(height: 24),
+            ListView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: products.length,
+              itemBuilder: (context, index) {
+                final product = products[index];
+                return buildProductItem(product, index);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget buildProductItem(dynamic product, int index) {
+    final productName = product['product_id'] is List<dynamic>
+        ? product['product_id'][1] as String
+        : 'Unknown Product';
+
+    final quantity = product['product_uom_qty']?.toString() ?? '0';
+    final uom = product['product_uom'] is List<dynamic>
+        ? product['product_uom'][1] as String
+        : '';
+
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      decoration: BoxDecoration(
+        border: index > 0
+            ? Border(top: BorderSide(color: Colors.grey[200]!))
+            : null,
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 40,
+            height: 40,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: Theme.of(context).primaryColor.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Text(
+              '${index + 1}',
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                color: Theme.of(context).primaryColor,
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  productName,
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Quantity: $quantity $uom',
+                  style: TextStyle(color: Colors.grey[600], fontSize: 13),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String formatPickingState(dynamic state) {
+    if (state == null) return 'Unknown';
+
+    final stateStr = state.toString().toLowerCase();
+    switch (stateStr) {
+      case 'draft':
+        return 'Draft';
+      case 'waiting':
+        return 'Waiting Another Operation';
+      case 'confirmed':
+        return 'Waiting';
+      case 'assigned':
+        return 'Ready';
+      case 'done':
+        return 'Done';
+      case 'cancel':
+        return 'Cancelled';
+      default:
+        return stateStr.capitalize();
+    }
+  }
+
+  String formatDate(dynamic dateStr) {
+    if (dateStr == null || dateStr.toString().isEmpty) {
+      return 'N/A';
+    }
+
+    try {
+      final date = DateTime.parse(dateStr.toString());
+      return DateFormat('MMM dd, yyyy HH:mm').format(date);
+    } catch (e) {
+      return dateStr.toString();
+    }
+  }
+
+  String formatPriority(dynamic priority) {
+    if (priority == null) return 'Normal';
+
+    switch (priority.toString()) {
+      case '0':
+        return 'Not Urgent';
+      case '1':
+        return 'Normal';
+      case '2':
+        return 'Urgent';
+      case '3':
+        return 'Very Urgent';
+      default:
+        return 'Normal';
+    }
   }
 
   Widget _buildInfoRow(String label, String value) {
@@ -1665,17 +1717,41 @@ class _PickingPageState extends State<PickingPage>
     }
   }
 
-  Widget _buildToDoTab() {
+  Widget buildToDoTab() {
     if (isProcessing) {
-      return const Center(child: CircularProgressIndicator());
+      return const Center(
+        child: CircularProgressIndicator(),
+      );
     }
 
     if (errorMessage != null) {
       return Center(
-        child: Text(
-          errorMessage!,
-          style: const TextStyle(color: Colors.red),
-          textAlign: TextAlign.center,
+        child: Container(
+          margin: const EdgeInsets.all(24),
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.red.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.red.withOpacity(0.3)),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.error_outline, color: Colors.red, size: 48),
+              const SizedBox(height: 16),
+              Text(
+                errorMessage!,
+                style: const TextStyle(color: Colors.red),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 16),
+              TextButton.icon(
+                onPressed: _initializePickingData,
+                icon: const Icon(Icons.refresh),
+                label: const Text('Retry'),
+              ),
+            ],
+          ),
         ),
       );
     }
@@ -1686,89 +1762,452 @@ class _PickingPageState extends State<PickingPage>
 
     return Column(
       children: [
-        Padding(
-          padding: const EdgeInsets.all(16.0),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           child: Column(
             children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _searchController,
-                      decoration: const InputDecoration(
-                        hintText: 'Search by name or code',
-                        prefixIcon: Icon(Icons.search),
-                        border: OutlineInputBorder(),
+              Container(
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(8),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.05),
+                      blurRadius: 10,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _searchController,
+                        decoration: InputDecoration(
+                          hintText: 'Search by name or code',
+                          hintStyle: TextStyle(color: Colors.grey[400]),
+                          prefixIcon:
+                              Icon(Icons.search, color: Colors.grey[500]),
+                          border: InputBorder.none,
+                          contentPadding:
+                              const EdgeInsets.symmetric(vertical: 15),
+                        ),
                       ),
                     ),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.sort),
-                    onPressed: _showSortOptions,
-                    tooltip: 'Sort',
-                  ),
-                ],
+                    Container(
+                      height: 30,
+                      width: 1,
+                      color: Colors.grey.withOpacity(0.3),
+                      margin: const EdgeInsets.symmetric(horizontal: 8),
+                    ),
+                    IconButton(
+                      icon: Icon(Icons.sort, color: Colors.grey[600]),
+                      onPressed: _showSortOptions,
+                      tooltip: 'Sort',
+                      constraints: const BoxConstraints(minWidth: 40),
+                      splashRadius: 24,
+                    ),
+                  ],
+                ),
               ),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _barcodeController,
-                      focusNode: _barcodeFocusNode,
-                      decoration: const InputDecoration(
-                        hintText: 'Scan or enter barcode',
-                        prefixIcon: Icon(Icons.search),
-                        border: OutlineInputBorder(),
-                      ),
-                      onSubmitted: (value) {
-                        if (value.isNotEmpty) {
-                          _processBarcode(value);
-                          _barcodeController.clear();
-                          _barcodeFocusNode.requestFocus();
-                        }
-                      },
+              const SizedBox(height: 12),
+              Container(
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(8),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.05),
+                      blurRadius: 10,
+                      offset: const Offset(0, 2),
                     ),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.qr_code_scanner),
-                    onPressed: _scanBarcode,
-                    tooltip: 'Scan Barcode',
-                  ),
-                ],
+                  ],
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _barcodeController,
+                        focusNode: _barcodeFocusNode,
+                        decoration: InputDecoration(
+                          hintText: 'Scan or enter barcode',
+                          hintStyle: TextStyle(color: Colors.grey[400]),
+                          prefixIcon:
+                              Icon(Icons.qr_code, color: Colors.grey[500]),
+                          border: InputBorder.none,
+                          contentPadding:
+                              const EdgeInsets.symmetric(vertical: 15),
+                        ),
+                        onSubmitted: (value) {
+                          if (value.isNotEmpty) {
+                            _processBarcode(value);
+                            _barcodeController.clear();
+                            _barcodeFocusNode.requestFocus();
+                          }
+                        },
+                      ),
+                    ),
+                    Container(
+                      height: 30,
+                      width: 1,
+                      color: Colors.grey.withOpacity(0.3),
+                      margin: const EdgeInsets.symmetric(horizontal: 8),
+                    ),
+                    IconButton(
+                      icon: Icon(Icons.qr_code_scanner,
+                          color: Theme.of(context).primaryColor),
+                      onPressed: _scanBarcode,
+                      tooltip: 'Scan',
+                      constraints: const BoxConstraints(minWidth: 40),
+                      splashRadius: 24,
+                    ),
+                  ],
+                ),
               ),
               if (scanMessage != null)
-                Padding(
-                  padding: const EdgeInsets.only(top: 8.0),
-                  child: Text(
-                    scanMessage!,
-                    style: TextStyle(
+                Container(
+                  width: double.infinity,
+                  margin: const EdgeInsets.only(top: 12),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: scanMessage!.startsWith('Found')
+                        ? Colors.green.withOpacity(0.1)
+                        : Colors.red.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
                       color: scanMessage!.startsWith('Found')
-                          ? Colors.green
-                          : Colors.red,
+                          ? Colors.green.withOpacity(0.3)
+                          : Colors.red.withOpacity(0.3),
                     ),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        scanMessage!.startsWith('Found')
+                            ? Icons.check_circle_outline
+                            : Icons.error_outline,
+                        color: scanMessage!.startsWith('Found')
+                            ? Colors.green
+                            : Colors.red,
+                        size: 20,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          scanMessage!,
+                          style: TextStyle(
+                            color: scanMessage!.startsWith('Found')
+                                ? Colors.green
+                                : Colors.red,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
             ],
           ),
         ),
+        const SizedBox(height: 16),
         Expanded(
           child: todoItems.isEmpty
-              ? const Center(
-                  child: Text(
-                    'All items have been picked!',
-                    style: TextStyle(fontSize: 16),
+              ? Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        Icons.check_circle_outline,
+                        size: 64,
+                        color: Colors.green[300],
+                      ),
+                      const SizedBox(height: 16),
+                      const Text(
+                        'All items have been picked!',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'The picking process is complete',
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: Colors.grey[600],
+                        ),
+                      ),
+                    ],
                   ),
                 )
               : ListView.builder(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
                   itemCount: todoItems.length,
                   itemBuilder: (context, index) {
                     final item = todoItems[index];
-                    return _buildProductCard(item);
+                    return buildProductCard(item);
                   },
                 ),
         ),
+        if (!isProcessing && isInitialized)
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+            child: Row(
+              children: [
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed:
+                        isProcessing ? null : _validateAndCompletePicking,
+                    icon: const Icon(Icons.check),
+                    label: const Text('Validate'),
+                    style: ElevatedButton.styleFrom(
+                      foregroundColor: Colors.white,
+                      backgroundColor: Colors.green,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Container(
+                  decoration: BoxDecoration(
+                    color: Colors.grey.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: IconButton(
+                    icon: const Icon(Icons.refresh),
+                    onPressed: isProcessing ? null : _initializePickingData,
+                    tooltip: 'Refresh',
+                    iconSize: 20,
+                  ),
+                ),
+              ],
+            ),
+          )
       ],
+    );
+  }
+
+  Widget buildProductCard(Map<String, dynamic> item, {bool isDone = false}) {
+    final productName = item['product_name'] as String? ?? 'Unknown';
+    final orderedQty = item['ordered_qty'] as double? ?? 0.0;
+    final pickedQty = item['picked_qty'] as double? ?? 0.0;
+    final locationName = item['location_name'] as String? ?? 'Not in stock';
+    final moveLineId = item['id'] ?? 0;
+
+    final quantity = item['product_uom_qty']?.toString() ?? '0';
+    final uom = item['product_uom'] is List<dynamic>
+        ? item['product_uom'][1] as String
+        : '';
+
+    final productCode =
+        item['product_id'] is List<dynamic> && item['product_id'].length > 2
+            ? item['product_id'][2]?.toString() ?? ''
+            : '';
+
+    final lotNumber =
+        item['lot_id'] is List<dynamic> ? item['lot_id'][1] as String : null;
+
+    final double progressPercent =
+        orderedQty > 0 ? (pickedQty / orderedQty) * 100 : 0;
+    final bool isComplete = pickedQty >= orderedQty;
+
+    final Color statusColor = isComplete
+        ? Colors.green
+        : (pickedQty > 0 ? Colors.orange : Colors.blue);
+
+    return Card(
+      elevation: 2,
+      margin: const EdgeInsets.only(bottom: 12),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: Colors.grey.withOpacity(0.2)),
+      ),
+      child: InkWell(
+        onTap: () => showProductPickPage(
+          context,
+          moveLineId,
+          pickingLines,
+          stockAvailability,
+          pickedQuantities,
+          pendingPickedQuantities,
+          quantityControllers,
+          _confirmPick,
+          _undoPick,
+          _suggestAlternativeLocation,
+        ),
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    width: 48,
+                    height: 48,
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).primaryColor.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Icon(
+                      Icons.inventory_2_outlined,
+                      color: Theme.of(context).primaryColor,
+                      size: 24,
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                productName,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 16,
+                                ),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Container(
+                              width: 12,
+                              height: 12,
+                              decoration: BoxDecoration(
+                                color: statusColor,
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                          ],
+                        ),
+                        if (productCode.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 4),
+                            child: Text(
+                              'CODE: $productCode',
+                              style: TextStyle(
+                                color: Colors.grey[600],
+                                fontSize: 12,
+                              ),
+                            ),
+                          ),
+                        if (lotNumber != null)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 4),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.label_outline,
+                                  size: 14,
+                                  color: Colors.grey[600],
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  'Lot: $lotNumber',
+                                  style: TextStyle(
+                                    color: Colors.grey[600],
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).primaryColor.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Text(
+                      '$quantity $uom',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: Theme.of(context).primaryColor,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.grey[100],
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.location_on_outlined,
+                      size: 16,
+                      color: Colors.grey[700],
+                    ),
+                    const SizedBox(width: 4),
+                    Expanded(
+                      child: Text(
+                        'Location: $locationName',
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: Colors.grey[800],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'Progress: ${pickedQty.toStringAsFixed(1)}/${orderedQty.toStringAsFixed(1)} $uom',
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      Text(
+                        '${progressPercent.toStringAsFixed(0)}%',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.bold,
+                          color: statusColor,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(4),
+                    child: LinearProgressIndicator(
+                      value: orderedQty > 0 ? (pickedQty / orderedQty) : 0,
+                      backgroundColor: Colors.grey[200],
+                      valueColor: AlwaysStoppedAnimation<Color>(statusColor),
+                      minHeight: 8,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
@@ -1902,13 +2341,29 @@ class _PickingPageState extends State<PickingPage>
     final progressPercentage =
         orderedQty > 0 ? (pickedQty / orderedQty * 100).clamp(0.0, 100.0) : 0.0;
 
+    // Function to open the product pick page
+    void openProductPickPage() {
+      if (moveLineId == null) return;
+
+      showProductPickPage(
+        context,
+        moveLineId,
+        pickingLines,
+        stockAvailability,
+        pickedQuantities,
+        pendingPickedQuantities,
+        quantityControllers,
+        _confirmPick,
+        _undoPick,
+        _suggestAlternativeLocation,
+      );
+    }
+
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
       color: availableQty <= 0 && !isDone ? Colors.red[50] : null,
       child: InkWell(
-        onTap: isDone || moveLineId == null
-            ? null
-            : () => _showProductPickDialog(moveLineId),
+        onTap: isDone || moveLineId == null ? null : openProductPickPage,
         child: Padding(
           padding: const EdgeInsets.all(16.0),
           child: Column(
@@ -2019,7 +2474,7 @@ class _PickingPageState extends State<PickingPage>
                         IconButton(
                           icon: const Icon(Icons.add_circle_outline),
                           color: Colors.blue,
-                          onPressed: () => _showProductPickDialog(moveLineId),
+                          onPressed: openProductPickPage,
                           tooltip: 'Pick Item',
                         ),
                       ],
@@ -2073,16 +2528,25 @@ class _PickingPageState extends State<PickingPage>
           : TabBarView(
               controller: _tabController,
               children: [
-                _buildDetailsTab(),
-                _buildToDoTab(),
+                buildDetailsTab(),
+                buildToDoTab(),
                 _buildDoneTab(),
               ],
             ),
       floatingActionButton: _tabController.index == 1
-          ? FloatingActionButton(
-              onPressed: isProcessing ? null : _scanBarcode,
-              child: const Icon(Icons.qr_code_scanner),
-              tooltip: 'Scan Barcode',
+          ? Align(
+              alignment: Alignment.bottomLeft,
+              child: FloatingActionButton(
+                backgroundColor: Theme.of(context).primaryColor,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                elevation: 0,
+                onPressed: isProcessing ? null : _scanBarcode,
+                child: const Icon(Icons.qr_code_scanner),
+                tooltip: 'Scan Barcode',
+              ),
             )
           : null,
     );

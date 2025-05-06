@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:latest_van_sale_application/assets/widgets%20and%20consts/create_sale_order_dialog.dart';
 import 'package:latest_van_sale_application/authentication/login_provider.dart';
+import 'package:latest_van_sale_application/providers/data_provider.dart';
 import 'package:latest_van_sale_application/providers/invoice_details_provider.dart';
 import 'package:latest_van_sale_application/providers/invoice_provider.dart';
 import 'package:latest_van_sale_application/providers/order_picking_provider.dart';
