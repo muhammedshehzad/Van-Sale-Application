@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:latest_van_sale_application/assets/widgets%20and%20consts/cached_data.dart';
 import 'package:latest_van_sale_application/main_page/main_page.dart';
 import 'package:provider/provider.dart';
 import 'package:pdf/pdf.dart';
@@ -597,13 +598,18 @@ class OrderConfirmationPage extends StatelessWidget {
                         ),
                       ),
                       onPressed: () {
+                        final syncManager = Provider.of<DataSyncManager>(
+                            context,
+                            listen: false);
+
                         salesOrderProvider.clearOrder();
                         salesOrderProvider.resetInventory();
                         salesOrderProvider.notifyOrderConfirmed();
                         Navigator.pushAndRemoveUntil(
                           context,
                           MaterialPageRoute(
-                            builder: (context) => const MainPage(),
+                            builder: (context) =>
+                                MainPage(syncManager: syncManager),
                           ),
                           (route) => false,
                         );

@@ -7,7 +7,6 @@ import '../../assets/widgets and consts/page_transition.dart';
 import '../../providers/sale_order_provider.dart';
 import '../assets/widgets and consts/create_sale_order_dialog.dart';
 import '../providers/order_picking_provider.dart';
-import '../../main_page/main_page.dart';
 import '../../assets/widgets and consts/order_utils.dart';
 
 class TodaysSalesPage extends StatefulWidget {
@@ -147,7 +146,8 @@ class _TodaysSalesPageState extends State<TodaysSalesPage> {
       body: Column(
         children: [
           Padding(
-            padding: const EdgeInsets.all(16.0),
+            padding: const EdgeInsets.only(
+                left: 16.0, right: 16, top: 16, bottom: 8),
             child: Container(
               decoration: BoxDecoration(
                 boxShadow: [
@@ -187,6 +187,75 @@ class _TodaysSalesPageState extends State<TodaysSalesPage> {
                     borderRadius: BorderRadius.circular(10),
                     borderSide: BorderSide(color: primaryColor),
                   ),
+                ),
+              ),
+            ),
+          ),
+          Consumer<SalesOrderProvider>(
+            builder: (context, provider, child) => Card(
+              elevation: 2,
+              margin:
+                  const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12)),
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    // Left side: Title and Order Count
+                    Expanded(
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.start,
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          const Text(
+                            'Total Sales Today',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.black87,
+                            ),
+                          ),
+                          if (provider.todaysOrders.isNotEmpty) ...[
+                            const SizedBox(width: 8),
+                            // Space between title and count
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 4,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.grey.shade100,
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(
+                                    color: Colors.grey.shade300, width: 1),
+                              ),
+                              child: Text(
+                                '${_getFilteredOrders(provider.todaysOrders).length} order(s)',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.grey.shade600,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                    // Right side: Total Amount
+                    Text(
+                      provider.currencyFormat
+                          .format(provider.getTotalSalesAmount()),
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: primaryColor,
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),
@@ -281,41 +350,16 @@ class _TodaysSalesPageState extends State<TodaysSalesPage> {
         _loadOrders();
       },
       child: SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(horizontal: 16.0),
+        padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
         physics: const AlwaysScrollableScrollPhysics(),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text(
-                  'Today\'s Sales',
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.grey,
-                  ),
-                ),
-                if (provider.todaysOrders.isNotEmpty)
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: primaryColor.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Text(
-                      '${_getFilteredOrders(provider.todaysOrders).length} order(s)',
-                      style: TextStyle(
-                        color: primaryColor,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-            const SizedBox(height: 12),
+            // Total Sales Widget
+
+            // Today's Sales Header
+            const SizedBox(height: 16), // Consistent spacing
+            // Order List or Empty State
             provider.todaysOrders.isEmpty
                 ? _buildEmptyState(context, provider)
                 : _buildOrderList(context, provider),

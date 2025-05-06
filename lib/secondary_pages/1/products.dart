@@ -1,12 +1,11 @@
 import 'dart:typed_data';
-
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import 'package:latest_van_sale_application/assets/widgets%20and%20consts/demodetailsproducts.dart';
+import 'package:odoo_rpc/odoo_rpc.dart';
 import 'package:provider/provider.dart';
 import 'dart:convert';
-import 'dart:developer';
+import 'dart:developer' as developer;
 import '../../../authentication/cyllo_session_model.dart';
 import '../../assets/widgets and consts/page_transition.dart';
 import '../../main_page/main_page.dart';
@@ -31,7 +30,7 @@ class ProductSelectionPage extends StatefulWidget {
 }
 
 class _ProductSelectionPageState extends State<ProductSelectionPage> {
-  List<Product> filteredProducts = [];
+  List<Map<String, dynamic>> filteredProductTemplates = [];
   TextEditingController searchController = TextEditingController();
   Map<String, bool> selectedProducts = {};
   Map<String, int> quantities = {};
@@ -41,22 +40,56 @@ class _ProductSelectionPageState extends State<ProductSelectionPage> {
   @override
   void initState() {
     super.initState();
-    log('initState: Initial availableProducts count: ${widget.availableProducts.length}');
-    filteredProducts = List.from(widget.availableProducts);
-    log('initState: filteredProducts initialized with ${filteredProducts.length} products');
+    developer.log(
+        'initState: Initial availableProducts count: ${widget.availableProducts.length}');
+    _initializeProductTemplates();
     _restoreDraftState();
+  }
+
+  void _initializeProductTemplates() {
+    final templateMap = <String, Map<String, dynamic>>{};
+    for (var product in widget.availableProducts) {
+      final templateName = product.name.split(' [').first.trim();
+      final templateId = templateName.hashCode.toString();
+      if (!templateMap.containsKey(templateId)) {
+        templateMap[templateId] = {
+          'id': templateId,
+          'name': templateName,
+          'defaultCode': product.defaultCode,
+          'price': product.price,
+          'vanInventory': 0,
+          'imageUrl': product.imageUrl,
+          'category': product.category,
+          'attributes': product.attributes,
+          'variants': <Product>[],
+          'variantCount': product.variantCount,
+        };
+      }
+      templateMap[templateId]!['variants'].add(product);
+      templateMap[templateId]!['vanInventory'] += product.vanInventory;
+      if (product.attributes != null && product.attributes!.isNotEmpty) {
+        templateMap[templateId]!['attributes'] = product.attributes;
+      }
+    }
+    setState(() {
+      filteredProductTemplates = templateMap.values.toList();
+      developer.log(
+          'initState: Initialized ${filteredProductTemplates.length} product templates');
+    });
   }
 
   void _restoreDraftState() {
     final salesProvider =
         Provider.of<SalesOrderProvider>(context, listen: false);
-    log('restoreDraftState: Draft order ID: ${salesProvider.draftOrderId}');
+    developer.log(
+        'restoreDraftState: Draft order ID: ${salesProvider.draftOrderId}');
     if (salesProvider.draftOrderId != null) {
       setState(() {
         selectedProducts.clear();
         quantities.clear();
         productAttributes.clear();
-        log('restoreDraftState: Cleared selections, quantities, and attributes');
+        developer.log(
+            'restoreDraftState: Cleared selections, quantities, and attributes');
         for (var product in salesProvider.draftSelectedProducts) {
           selectedProducts[product.id] = true;
           final attrQuantities =
@@ -65,49 +98,87 @@ class _ProductSelectionPageState extends State<ProductSelectionPage> {
             quantities[product.id] = attrQuantities.fold<int>(
                 0, (sum, comb) => sum + (comb['quantity'] as int));
             productAttributes[product.id] = List.from(attrQuantities);
-            log('restoreDraftState: Added product ${product.id} with attributes, quantity: ${quantities[product.id]}');
+            developer.log(
+                'restoreDraftState: Added product ${product.id} with attributes, quantity: ${quantities[product.id]}');
           } else {
             quantities[product.id] =
                 salesProvider.draftQuantities[product.id] ?? 1;
-            log('restoreDraftState: Added product ${product.id} without attributes, quantity: ${quantities[product.id]}');
+            developer.log(
+                'restoreDraftState: Added product ${product.id} without attributes, quantity: ${quantities[product.id]}');
           }
         }
-        filteredProducts = List.from(widget.availableProducts);
-        log('restoreDraftState: filteredProducts set to ${filteredProducts.length} products');
+        _filterProductTemplates('');
       });
     } else {
-      for (var product in widget.availableProducts) {
-        selectedProducts[product.id] = false;
-        quantities[product.id] = 1;
+      for (var template in filteredProductTemplates) {
+        selectedProducts[template['id']] = false;
+        quantities[template['id']] = 1;
       }
-      log('restoreDraftState: No draft order, initialized ${widget.availableProducts.length} products');
+      developer.log(
+          'restoreDraftState: No draft order, initialized ${filteredProductTemplates.length} templates');
     }
   }
 
-  void _filterProducts(String query) {
+  void _filterProductTemplates(String query) {
     setState(() {
       if (query.isEmpty) {
-        filteredProducts = List.from(widget.availableProducts);
-        log('filterProducts: Query empty, showing all ${filteredProducts.length} products');
+        filteredProductTemplates = _groupProducts(widget.availableProducts);
+        developer.log(
+            'filterProductTemplates: Query empty, showing all ${filteredProductTemplates.length} templates');
       } else {
-        filteredProducts = widget.availableProducts
-            .where((product) => product.filter(query))
+        filteredProductTemplates = _groupProducts(widget.availableProducts)
+            .where((template) =>
+                template['name'].toLowerCase().contains(query.toLowerCase()) ||
+                (template['defaultCode']
+                        ?.toLowerCase()
+                        ?.contains(query.toLowerCase()) ??
+                    false))
             .toList();
-        log('filterProducts: Query "$query", filtered to ${filteredProducts.length} products');
+        developer.log(
+            'filterProductTemplates: Query "$query", filtered to ${filteredProductTemplates.length} templates');
       }
     });
   }
 
+  List<Map<String, dynamic>> _groupProducts(List<Product> products) {
+    final templateMap = <String, Map<String, dynamic>>{};
+    for (var product in products) {
+      final templateName = product.name.split(' [').first.trim();
+      final templateId = templateName.hashCode.toString();
+      if (!templateMap.containsKey(templateId)) {
+        templateMap[templateId] = {
+          'id': templateId,
+          'name': templateName,
+          'defaultCode': product.defaultCode,
+          'price': product.price,
+          'vanInventory': 0,
+          'imageUrl': product.imageUrl,
+          'category': product.category,
+          'attributes': product.attributes,
+          'variants': <Product>[],
+          'variantCount': product.variantCount,
+        };
+      }
+      templateMap[templateId]!['variants'].add(product);
+      templateMap[templateId]!['vanInventory'] += product.vanInventory;
+      if (product.attributes != null && product.attributes!.isNotEmpty) {
+        templateMap[templateId]!['attributes'] = product.attributes;
+      }
+    }
+    return templateMap.values.toList();
+  }
+
   void clearSelections() {
     setState(() {
-      for (var product in widget.availableProducts) {
-        selectedProducts[product.id] = false;
-        quantities[product.id] = 1;
+      for (var template in filteredProductTemplates) {
+        selectedProducts[template['id']] = false;
+        quantities[template['id']] = 1;
       }
       productAttributes.clear();
       searchController.clear();
-      filteredProducts = List.from(widget.availableProducts);
-      log('clearSelections: Cleared all selections, reset filteredProducts to ${filteredProducts.length}');
+      filteredProductTemplates = _groupProducts(widget.availableProducts);
+      developer.log(
+          'clearSelections: Cleared all selections, reset filteredProductTemplates to ${filteredProductTemplates.length}');
     });
     final salesProvider =
         Provider.of<SalesOrderProvider>(context, listen: false);
@@ -118,21 +189,22 @@ class _ProductSelectionPageState extends State<ProductSelectionPage> {
     try {
       final saleorderProvider =
           Provider.of<SalesOrderProvider>(context, listen: false);
-      log('refreshProducts: Starting product refresh');
+      developer.log('refreshProducts: Starting product refresh');
       await saleorderProvider.loadProducts();
       setState(() {
         widget.availableProducts.clear();
         widget.availableProducts.addAll(saleorderProvider.products);
-        filteredProducts = List.from(widget.availableProducts);
+        filteredProductTemplates = _groupProducts(widget.availableProducts);
         searchController.clear();
         selectedProducts.clear();
         quantities.clear();
         productAttributes.clear();
-        for (var product in widget.availableProducts) {
-          selectedProducts[product.id] = false;
-          quantities[product.id] = 1;
+        for (var template in filteredProductTemplates) {
+          selectedProducts[template['id']] = false;
+          quantities[template['id']] = 1;
         }
-        log('refreshProducts: Refreshed, availableProducts: ${widget.availableProducts.length}, filteredProducts: ${filteredProducts.length}');
+        developer.log(
+            'refreshProducts: Refreshed, availableProducts: ${widget.availableProducts.length}, filteredProductTemplates: ${filteredProductTemplates.length}');
         _restoreDraftState();
       });
       ScaffoldMessenger.of(context).showSnackBar(
@@ -143,7 +215,7 @@ class _ProductSelectionPageState extends State<ProductSelectionPage> {
         ),
       );
     } catch (e) {
-      log('refreshProducts: Error refreshing products: $e');
+      developer.log('refreshProducts: Error refreshing products: $e');
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Failed to refresh products: $e'),
@@ -160,21 +232,22 @@ class _ProductSelectionPageState extends State<ProductSelectionPage> {
       setState(() {
         widget.availableProducts.clear();
         widget.availableProducts.addAll(salesProvider.products);
-        filteredProducts = List.from(widget.availableProducts);
+        filteredProductTemplates = _groupProducts(widget.availableProducts);
         searchController.clear();
         selectedProducts.clear();
         quantities.clear();
         productAttributes.clear();
-        for (var product in widget.availableProducts) {
-          selectedProducts[product.id] = false;
-          quantities[product.id] = 1;
+        for (var template in filteredProductTemplates) {
+          selectedProducts[template['id']] = false;
+          quantities[template['id']] = 1;
         }
-        log('updateProductList: Updated availableProducts: ${widget.availableProducts.length}, filteredProducts: ${filteredProducts.length}');
+        developer.log(
+            'updateProductList: Updated availableProducts: ${widget.availableProducts.length}, filteredProductTemplates: ${filteredProductTemplates.length}');
         _restoreDraftState();
       });
       orderPickingProvider.resetProductRefreshFlag();
     } else {
-      log('updateProductList: No refresh needed');
+      developer.log('updateProductList: No refresh needed');
     }
   }
 
@@ -187,7 +260,8 @@ class _ProductSelectionPageState extends State<ProductSelectionPage> {
         Provider.of<OrderPickingProvider>(context, listen: false);
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      log('didUpdateWidget: Checking for product refresh, needsRefresh: ${orderPickingProvider.needsProductRefresh}');
+      developer.log(
+          'didUpdateWidget: Checking for product refresh, needsRefresh: ${orderPickingProvider.needsProductRefresh}');
       if (orderPickingProvider.needsProductRefresh) {
         _updateProductList(salesProvider, orderPickingProvider);
       }
@@ -202,13 +276,15 @@ class _ProductSelectionPageState extends State<ProductSelectionPage> {
         Provider.of<OrderPickingProvider>(context, listen: false);
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      log('build: Checking for product refresh, needsRefresh: ${orderPickingProvider.needsProductRefresh}');
+      developer.log(
+          'build: Checking for product refresh, needsRefresh: ${orderPickingProvider.needsProductRefresh}');
       if (orderPickingProvider.needsProductRefresh) {
         _updateProductList(salesProvider, orderPickingProvider);
       }
     });
 
-    log('build: Rendering with availableProducts: ${widget.availableProducts.length}, filteredProducts: ${filteredProducts.length}');
+    developer.log(
+        'build: Rendering with availableProducts: ${widget.availableProducts.length}, filteredProductTemplates: ${filteredProductTemplates.length}');
     return Scaffold(
       resizeToAvoidBottomInset: false,
       backgroundColor: backgroundColor,
@@ -229,13 +305,369 @@ class _ProductSelectionPageState extends State<ProductSelectionPage> {
     );
   }
 
+  Future<void> _showVariantsDialog(
+    BuildContext context,
+    Map<String, dynamic> template,
+    OdooClient odooClient,
+    Map<String, String>? selectedAttributes,
+  ) async {
+    final variants =
+        (template['variants'] as List<dynamic>).cast<Product>().toList();
+    if (variants.isEmpty) return;
+
+    final deviceSize = MediaQuery.of(context).size;
+    final dialogHeight = deviceSize.height * 0.75; // 75% of screen height
+
+    await showDialog(
+      context: context,
+      barrierDismissible: true,
+      builder: (BuildContext dialogContext) {
+        return Dialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          elevation: 5,
+          backgroundColor: Colors.white,
+          insetPadding: EdgeInsets.zero,
+          // Remove default padding to allow full width
+          child: FractionallySizedBox(
+            widthFactor: .9, // Use full screen width
+            child: Container(
+              constraints: BoxConstraints(
+                maxHeight: dialogHeight,
+                minHeight: 300,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Header
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: primaryColor,
+                      borderRadius: const BorderRadius.only(
+                        topLeft: Radius.circular(16),
+                        topRight: Radius.circular(16),
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            'Select ${template["name"]} Variant',
+                            style: const TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.close, color: Colors.white),
+                          onPressed: () => Navigator.of(dialogContext).pop(),
+                        ),
+                      ],
+                    ),
+                  ),
+                  // Variants list
+                  Flexible(
+                    child: FutureBuilder<
+                        List<Map<Product, List<Map<String, String>>>>>(
+                      future: Future.wait(variants.map((variant) async {
+                        final attributes = await _fetchVariantAttributes(
+                          odooClient,
+                          variant.productTemplateAttributeValueIds,
+                        );
+                        return {variant: attributes};
+                      })).then((results) => results),
+                      builder: (context, snapshot) {
+                        if (snapshot.connectionState ==
+                            ConnectionState.waiting) {
+                          return const Center(
+                              child: CircularProgressIndicator());
+                        }
+                        if (snapshot.hasError) {
+                          return const Center(
+                              child: Text('Error loading variants'));
+                        }
+                        final variantAttributes = snapshot.data ?? [];
+
+                        // Filter unique variants by default_code and attributes
+                        final uniqueVariants =
+                            <String, Map<Product, List<Map<String, String>>>>{};
+                        for (var entry in variantAttributes) {
+                          final variant = entry.keys.first;
+                          final attrs = entry.values.first;
+                          final key =
+                              '${variant.defaultCode ?? variant.id}_${attrs.map((a) => '${a['attribute_name']}:${a['value_name']}').join('|')}';
+                          uniqueVariants[key] = entry;
+                        }
+
+                        return ListView.separated(
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          shrinkWrap: true,
+                          itemCount: uniqueVariants.length,
+                          separatorBuilder: (context, index) => const Divider(
+                            height: 1,
+                            thickness: 1,
+                            indent: 16,
+                            endIndent: 16,
+                          ),
+                          itemBuilder: (context, index) {
+                            final entry =
+                                uniqueVariants.values.elementAt(index);
+                            final variant = entry.keys.first;
+                            final attributes = entry.values.first;
+                            return _buildVariantListItem(
+                              variant: variant,
+                              dialogContext: dialogContext,
+                              template: template,
+                              attributes: attributes,
+                              selectedAttributes: selectedAttributes,
+                              odooClient: odooClient,
+                            );
+                          },
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildVariantListItem({
+    required Product variant,
+    required BuildContext dialogContext,
+    required Map<String, dynamic> template,
+    required List<Map<String, String>> attributes,
+    required Map<String, String>? selectedAttributes,
+    required OdooClient odooClient,
+  }) {
+    // Process image data
+    Uint8List? imageBytes;
+    final imageUrl = variant.imageUrl ?? template['imageUrl'] as String?;
+
+    if (imageUrl != null &&
+        imageUrl.isNotEmpty &&
+        !imageUrl.startsWith('http')) {
+      String base64String = imageUrl;
+      if (base64String.contains(',')) {
+        base64String = base64String.split(',')[1];
+      }
+      try {
+        imageBytes = base64Decode(base64String);
+      } catch (e) {
+        developer.log(
+            'buildVariantListItem: Invalid base64 image for ${variant.name}: $e');
+        imageBytes = null;
+      }
+    }
+
+    // Check if this variant is selected based on selectedAttributes
+    bool isSelected = false;
+    if (selectedAttributes != null) {
+      isSelected = attributes.every((attr) =>
+          selectedAttributes[attr['attribute_name']] == attr['value_name']);
+    }
+
+    return InkWell(
+      onTap: () {
+        Navigator.of(dialogContext).pop();
+        Navigator.push(
+          context,
+          SlidingPageTransitionRL(
+            page: ProductDetailsPage(
+              productId: variant.id,
+              selectedAttributes: variant.selectedVariants,
+            ),
+          ),
+        );
+      },
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Product image
+            Container(
+              width: 60,
+              height: 60,
+              decoration: BoxDecoration(
+                color: Colors.grey[100],
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.grey[300]!),
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: imageUrl != null && imageUrl.isNotEmpty
+                    ? (imageUrl.startsWith('http')
+                        ? CachedNetworkImage(
+                            imageUrl: imageUrl,
+                            httpHeaders: {
+                              "Cookie":
+                                  "session_id=${Provider.of<CylloSessionModel>(context, listen: false).sessionId}",
+                            },
+                            width: 60,
+                            height: 60,
+                            fit: BoxFit.cover,
+                            progressIndicatorBuilder:
+                                (context, url, downloadProgress) => SizedBox(
+                              width: 60,
+                              height: 60,
+                              child: Center(
+                                child: CircularProgressIndicator(
+                                  value: downloadProgress.progress,
+                                  strokeWidth: 2,
+                                  color: primaryColor,
+                                ),
+                              ),
+                            ),
+                            errorWidget: (context, url, error) {
+                              return const Icon(
+                                Icons.inventory_2_rounded,
+                                color: primaryColor,
+                                size: 24,
+                              );
+                            },
+                          )
+                        : Image.memory(
+                            imageBytes!,
+                            fit: BoxFit.cover,
+                            errorBuilder: (context, error, stackTrace) {
+                              return const Icon(
+                                Icons.inventory_2_rounded,
+                                color: primaryColor,
+                                size: 24,
+                              );
+                            },
+                          ))
+                    : const Icon(
+                        Icons.inventory_2_rounded,
+                        color: primaryColor,
+                        size: 24,
+                      ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            // Product details
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    nameParts(variant.name)[0],
+                    style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.black87,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 6),
+                  // Attributes section
+                  if (attributes.isNotEmpty)
+                    Text(
+                      attributes
+                          .map((attr) =>
+                              '${attr['attribute_name']}: ${attr['value_name']}')
+                          .join(', '),
+                      style: TextStyle(color: Colors.grey[600], fontSize: 12),
+                    ),
+                  const SizedBox(height: 6),
+                  // SKU and price row
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.grey[100],
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          "SKU: ${variant.defaultCode ?? 'N/A'}",
+                          style: TextStyle(
+                            color: Colors.grey[700],
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        "\$${variant.price.toStringAsFixed(2)}",
+                        style: const TextStyle(
+                          color: primaryColor,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  // Stock status
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: variant.vanInventory > 0
+                          ? Colors.green[50]
+                          : Colors.red[50],
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text(
+                      "${variant.vanInventory} in stock",
+                      style: TextStyle(
+                        color: variant.vanInventory > 0
+                            ? Colors.green[700]
+                            : Colors.red[700],
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            // Arrow icon
+            Icon(
+              Icons.chevron_right,
+              color: Colors.grey[600],
+              size: 24,
+            ),
+          ],
+        ),
+      ),
+    );
+  } // Helper function to split product name into base name and variant parts
+
+  List<String> nameParts(String name) {
+    final parts = name.split(' [');
+    if (parts.length > 1) {
+      return [parts[0], parts[1].replaceAll(']', '')];
+    }
+    return [name, ''];
+  }
+
   Widget buildProductsList() {
-    List<String> categories = widget.availableProducts
-        .map((p) => p.category)
+    List<String> categories = filteredProductTemplates
+        .map((p) => p['category'] as String)
         .toSet()
         .toList()
       ..sort();
-    log('buildProductsList: Categories: ${categories.length}, availableProducts: ${widget.availableProducts.length}, filteredProducts: ${filteredProducts.length}');
+    developer.log(
+        'buildProductsList: Categories: ${categories.length}, filteredProductTemplates: ${filteredProductTemplates.length}');
 
     return DefaultTabController(
       length: categories.length,
@@ -247,15 +679,14 @@ class _ProductSelectionPageState extends State<ProductSelectionPage> {
               controller: searchController,
               decoration: InputDecoration(
                 hintText: 'Search products...',
-                hintStyle: TextStyle(color: Colors.grey),
+                hintStyle: const TextStyle(color: Colors.grey),
                 prefixIcon: const Icon(Icons.search, color: Colors.grey),
                 suffixIcon: searchController.text.isNotEmpty
                     ? IconButton(
                         icon: const Icon(Icons.clear, color: Colors.grey),
                         onPressed: () {
                           searchController.clear();
-                          _filterProducts(
-                              ''); // Trigger filter with empty query
+                          _filterProductTemplates('');
                         },
                       )
                     : null,
@@ -271,20 +702,18 @@ class _ProductSelectionPageState extends State<ProductSelectionPage> {
                 ),
                 focusedBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(10),
-                  borderSide: BorderSide(color: primaryColor),
+                  borderSide: const BorderSide(color: Color(0xFF1F2C54)),
                 ),
               ),
-              onChanged: _filterProducts,
+              onChanged: _filterProductTemplates,
             ),
           ),
           TabBar(
             isScrollable: true,
-            labelColor: primaryColor,
+            labelColor: const Color(0xFF1F2C54),
             unselectedLabelColor: Colors.grey,
             labelStyle: const TextStyle(fontWeight: FontWeight.bold),
-            unselectedLabelStyle: const TextStyle(
-              fontWeight: FontWeight.w500,
-            ),
+            unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.w500),
             tabs: categories
                 .map((category) => Tab(
                       child: Padding(
@@ -294,80 +723,76 @@ class _ProductSelectionPageState extends State<ProductSelectionPage> {
                     ))
                 .toList(),
           ),
-          SizedBox(
-            height: 10,
-          ),
+          const SizedBox(height: 10),
           Expanded(
             child: TabBarView(
               children: categories.map((category) {
                 final filteredByCategory = category == 'All'
-                    ? filteredProducts
-                    : filteredProducts
-                        .where((p) => p.category == category)
+                    ? filteredProductTemplates
+                    : filteredProductTemplates
+                        .where((p) => p['category'] == category)
                         .toList();
-                log('buildProductsList: Category "$category" has ${filteredByCategory.length} products');
+                developer.log(
+                    'buildProductsList: Category "$category" has ${filteredByCategory.length} templates');
 
                 return filteredByCategory.isEmpty
-                    ? Center(
-                        child: Text("No products in this category."),
-                      )
+                    ? const Center(child: Text("No products in this category."))
                     : RefreshIndicator(
                         onRefresh: _refreshProducts,
-                        color: primaryColor,
+                        color: const Color(0xFF1F2C54),
                         child: ListView.builder(
                           physics: const AlwaysScrollableScrollPhysics(),
                           itemCount: filteredByCategory.length,
                           itemBuilder: (context, index) {
-                            final product = filteredByCategory[index];
-                            Uint8List? imageBytes; // Nullable Uint8List
-                            if (product.imageUrl != null) {
-                              String base64String = product.imageUrl!;
-                              if (base64String.contains(',')) {
-                                base64String =
-                                    base64String.split(',')[1]; // Remove prefix
-                              }
-                              imageBytes = base64Decode(base64String);
-                            } else {
-                              imageBytes =
-                                  Uint8List(0); // Fallback for null image
-                            }
-
+                            final template = filteredByCategory[index];
                             return GestureDetector(
-                              onTap: () {
-                                Navigator.push(
+                              onTap: () async {
+                                if (template['variants'].length > 1) {
+                                  // Get OdooClient from SessionManager
+                                  final odooClient =
+                                      await SessionManager.getActiveClient();
+                                  if (odooClient == null) {
+                                    developer.log(
+                                        'Error: Failed to initialize OdooClient');
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text(
+                                            'Unable to load variants: Session not initialized'),
+                                        backgroundColor: Colors.red,
+                                        behavior: SnackBarBehavior.floating,
+                                      ),
+                                    );
+                                    return;
+                                  }
+
+                                  // Prepare selectedAttributes
+                                  Map<String, String>? selectedAttributes;
+                                  if (template['variants'].isNotEmpty) {
+                                    selectedAttributes =
+                                        (template['variants'][0] as Product)
+                                            .selectedVariants;
+                                  }
+                                  await _showVariantsDialog(
+                                    context,
+                                    template,
+                                    odooClient,
+                                    selectedAttributes,
+                                  );
+                                } else {
+                                  Navigator.push(
                                     context,
                                     SlidingPageTransitionRL(
-                                        page: ProductDetailsPage(
-                                      productId: filteredByCategory[index].id,
-                                    )));
-                                // Navigator.push(
-                                //   context,
-                                //   MaterialPageRoute(
-                                //     builder: (context) => ProductsDetailsPage(
-                                //       product: {
-                                //         'id': product.id,
-                                //         'name': product.name,
-                                //         'default_code': product.defaultCode,
-                                //         'list_price': product.price,
-                                //         'standard_price': product.cost ?? 0.0,
-                                //         'barcode': product.barcode,
-                                //         'type': product.category,
-                                //         'categ_id': [
-                                //           product.categId ?? 1,
-                                //           product.category
-                                //         ],
-                                //         'description_sale': product.description,
-                                //         'weight': product.weight,
-                                //         'volume': product.volume,
-                                //         'qty_available': product.vanInventory,
-                                //         'image_1920': imageBytes,
-                                //         // Pass Uint8List or empty Uint8List
-                                //       },
-                                //     ),
-                                //   ),
-                                // );
+                                      page: ProductDetailsPage(
+                                        productId: template['variants'][0].id,
+                                        selectedAttributes:
+                                            (template['variants'][0] as Product)
+                                                .selectedVariants,
+                                      ),
+                                    ),
+                                  );
+                                }
                               },
-                              child: _buildProductCard(product),
+                              child: _buildProductCard(template),
                             );
                           },
                         ),
@@ -380,650 +805,267 @@ class _ProductSelectionPageState extends State<ProductSelectionPage> {
     );
   }
 
-  Widget _buildProductCard(Product product) {
-    log('buildProductCard: Rendering card for product ${product.id}, name: ${product.name}');
+  Widget _buildProductCard(Map<String, dynamic> template) {
+    developer.log(
+        'buildProductCard: Rendering card for template ${template['id']}, name: ${template['name']}');
+    final imageUrl = template['imageUrl'] as String?;
+    Uint8List? imageBytes;
+    if (imageUrl != null && imageUrl.isNotEmpty) {
+      String base64String = imageUrl;
+      if (base64String.contains(',')) {
+        base64String = base64String.split(',')[1];
+      }
+      try {
+        imageBytes = base64Decode(base64String);
+      } catch (e) {
+        developer.log(
+            'buildProductCard: Invalid base64 image for ${template['name']}: $e');
+        imageBytes = null;
+      }
+    }
+
     return Card(
-      color: Colors.white,
-      elevation: 1,
-      margin: const EdgeInsets.only(bottom: 12),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Transform.scale(
-                //   scale: 1.0,
-                //   child: Checkbox(
-                //     value: selectedProducts[product.id] ?? false,
-                //     activeColor: primaryColor,
-                //     shape: RoundedRectangleBorder(
-                //       borderRadius: BorderRadius.circular(4),
-                //     ),
-                //     materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                //     visualDensity: VisualDensity.compact,
-                //     onChanged: (value) {
-                //       setState(() {
-                //         selectedProducts[product.id] = value ?? false;
-                //         if (!value! &&
-                //             productAttributes.containsKey(product.id)) {
-                //           productAttributes.remove(product.id);
-                //         }
-                //         log('buildProductCard: Checkbox for ${product.id} set to $value');
-                //       });
-                //     },
-                //   ),
-                // ),
-                const SizedBox(width: 8),
-                Container(
-                  width: 60,
-                  height: 60,
-                  decoration: BoxDecoration(
-                    color: Colors.grey[100],
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
-                    child: product.imageUrl != null &&
-                            product.imageUrl!.isNotEmpty
-                        ? (product.imageUrl!.startsWith('http')
-                            ? CachedNetworkImage(
-                                imageUrl: product.imageUrl!,
-                                httpHeaders: {
-                                  "Cookie":
-                                      "session_id=${Provider.of<CylloSessionModel>(context, listen: false).sessionId}",
-                                },
-                                width: 60,
-                                height: 60,
-                                fit: BoxFit.cover,
-                                progressIndicatorBuilder:
-                                    (context, url, downloadProgress) =>
-                                        SizedBox(
+        color: Colors.white,
+        elevation: 1,
+        margin: const EdgeInsets.only(bottom: 12),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    width: 60,
+                    height: 60,
+                    decoration: BoxDecoration(
+                      color: Colors.grey[100],
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: imageUrl != null && imageUrl.isNotEmpty
+                          ? (imageUrl.startsWith('http')
+                              ? CachedNetworkImage(
+                                  imageUrl: imageUrl,
+                                  httpHeaders: {
+                                    "Cookie":
+                                        "session_id=${Provider.of<CylloSessionModel>(context, listen: false).sessionId}",
+                                  },
                                   width: 60,
                                   height: 60,
-                                  child: Center(
-                                    child: CircularProgressIndicator(
-                                      value: downloadProgress.progress,
-                                      strokeWidth: 2,
-                                      color: primaryColor,
-                                    ),
-                                  ),
-                                ),
-                                imageBuilder: (context, imageProvider) {
-                                  log("Image loaded successfully for product: ${product.name}");
-                                  return Container(
-                                    decoration: BoxDecoration(
-                                      image: DecorationImage(
-                                        image: imageProvider,
-                                        fit: BoxFit.cover,
+                                  fit: BoxFit.cover,
+                                  progressIndicatorBuilder:
+                                      (context, url, downloadProgress) =>
+                                          SizedBox(
+                                    width: 60,
+                                    height: 60,
+                                    child: Center(
+                                      child: CircularProgressIndicator(
+                                        value: downloadProgress.progress,
+                                        strokeWidth: 2,
+                                        color: primaryColor,
                                       ),
                                     ),
-                                  );
-                                },
-                                errorWidget: (context, url, error) {
-                                  log("Failed to load image for product ${product.name}: $error");
-                                  return Icon(
-                                    Icons.inventory_2_rounded,
-                                    color: primaryColor,
-                                    size: 24,
-                                  );
-                                },
-                              )
-                            : Image.memory(
-                                base64Decode(product.imageUrl!.split(',').last),
-                                fit: BoxFit.cover,
-                                errorBuilder: (context, error, stackTrace) {
-                                  log("Failed to load image for product ${product.name}: $error");
-                                  return Icon(
-                                    Icons.inventory_2_rounded,
-                                    color: primaryColor,
-                                    size: 24,
-                                  );
-                                },
-                              ))
-                        : Icon(
-                            Icons.inventory_2_rounded,
-                            color: primaryColor,
-                            size: 24,
-                          ),
+                                  ),
+                                  imageBuilder: (context, imageProvider) {
+                                    developer.log(
+                                        "Image loaded successfully for template: ${template['name']}");
+                                    return Container(
+                                      decoration: BoxDecoration(
+                                        image: DecorationImage(
+                                          image: imageProvider,
+                                          fit: BoxFit.cover,
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                  errorWidget: (context, url, error) {
+                                    developer.log(
+                                        "Failed to load image for template ${template['name']}: $error");
+                                    return const Icon(
+                                      Icons.inventory_2_rounded,
+                                      color: primaryColor,
+                                      size: 24,
+                                    );
+                                  },
+                                )
+                              : Image.memory(
+                                  imageBytes!,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (context, error, stackTrace) {
+                                    developer.log(
+                                        "Failed to load image for template ${template['name']}: $error");
+                                    return const Icon(
+                                      Icons.inventory_2_rounded,
+                                      color: primaryColor,
+                                      size: 24,
+                                    );
+                                  },
+                                ))
+                          : const Icon(
+                              Icons.inventory_2_rounded,
+                              color: primaryColor,
+                              size: 24,
+                            ),
+                    ),
                   ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        product.name,
-                        style: const TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.black87,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      const SizedBox(height: 4),
-                      Wrap(
-                        spacing: 6,
-                        runSpacing: 4,
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 6, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: Colors.grey[100],
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                            child: Text(
-                              "SL: ${product.defaultCode ?? 'N/A'}",
-                              style: TextStyle(
-                                color: Colors.grey[700],
-                                fontSize: 12,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          template['name'] as String,
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.black87,
                           ),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 6, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: product.vanInventory > 0
-                                  ? Colors.green[50]
-                                  : Colors.red[50],
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                            child: Text(
-                              "${product.vanInventory} in stock",
-                              style: TextStyle(
-                                color: product.vanInventory > 0
-                                    ? Colors.green[700]
-                                    : Colors.red[700],
-                                fontSize: 12,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        "\$${product.price}",
-                        style: TextStyle(
-                          color: primaryColor,
-                          fontSize: 15,
-                          fontWeight: FontWeight.bold,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
                         ),
-                      ),
-                      if (product.attributes != null &&
-                          product.attributes!.isNotEmpty) ...[
-                        const SizedBox(height: 8),
-                        Wrap(
-                          spacing: 6,
-                          runSpacing: 4,
-                          children: product.attributes!.map((attribute) {
-                            return Container(
+                        const SizedBox(height: 4),
+                        Row(
+                          children: [
+                            Container(
                               padding: const EdgeInsets.symmetric(
                                   horizontal: 6, vertical: 2),
                               decoration: BoxDecoration(
-                                color: Colors.blueGrey[50],
+                                color: Colors.grey[100],
                                 borderRadius: BorderRadius.circular(4),
                               ),
                               child: Text(
-                                "${attribute.name}: ${attribute.values.join(', ')}",
+                                "SKU: ${template['defaultCode'] ?? 'N/A'}",
                                 style: TextStyle(
-                                  color: Colors.blueGrey[700],
+                                  color: Colors.grey[700],
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              "\$${(template['price'] as double).toStringAsFixed(2)}",
+                              style: const TextStyle(
+                                color: primaryColor,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: (template['vanInventory'] as int) > 0
+                                    ? Colors.green[50]
+                                    : Colors.red[50],
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: Text(
+                                "${template['vanInventory']} in stock",
+                                style: TextStyle(
+                                  color: (template['vanInventory'] as int) > 0
+                                      ? Colors.green[700]
+                                      : Colors.red[700],
                                   fontSize: 12,
                                   fontWeight: FontWeight.w500,
                                 ),
                               ),
-                            );
-                          }).toList(),
-                        ),
-                        if (productAttributes.containsKey(product.id))
-                          Padding(
-                            padding: const EdgeInsets.only(top: 8),
-                            child: TextButton(
-                              onPressed: () async {
-                                // final combinations =
-                                //     await _showAttributeSelectionDialog(
-                                //         context, product,
-                                //         requestedQuantity:
-                                //             quantities[product.id]);
-                                // if (combinations != null) {
-                                //   setState(() {
-                                //     productAttributes[product.id] =
-                                //         combinations;
-                                //     quantities[product.id] =
-                                //         combinations.fold<int>(
-                                //             0,
-                                //             (sum, comb) =>
-                                //                 sum +
-                                //                 (comb['quantity'] as int));
-                                //     log('buildProductCard: Updated attributes for ${product.id}, new quantity: ${quantities[product.id]}');
-                                //   });
-                                // }
-                              },
-                              child: Text(
-                                'Edit Attributes',
-                                style: TextStyle(
-                                  color: primaryColor,
-                                  fontSize: 12,
+                            ),
+                            const SizedBox(width: 8),
+                            if ((template['variants'] as List).length > 1)
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 6, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: Colors.blue[50],
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: Text(
+                                  "${(template['variants'] as List).length} variants",
+                                  style: TextStyle(
+                                    color: Colors.blue[700],
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w500,
+                                  ),
                                 ),
                               ),
-                            ),
-                          ),
-                      ],
-                    ],
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            // Row(
-            //   crossAxisAlignment: CrossAxisAlignment.start,
-            //   mainAxisAlignment: MainAxisAlignment.end,
-            //   children: [
-            //     Container(
-            //       decoration: BoxDecoration(
-            //         border: Border.all(color: Colors.grey[300]!),
-            //         borderRadius: BorderRadius.circular(8),
-            //         color: Colors.grey[100],
-            //       ),
-            //       child: Row(
-            //         mainAxisSize: MainAxisSize.min,
-            //         children: [
-            //           Material(
-            //             color: Colors.transparent,
-            //             child: InkWell(
-            //               borderRadius: const BorderRadius.only(
-            //                 topLeft: Radius.circular(7),
-            //                 bottomLeft: Radius.circular(7),
-            //               ),
-            //               onTap: () async {
-            //                 if (quantities[product.id]! > 1) {
-            //                   setState(() {
-            //                     quantities[product.id] =
-            //                         quantities[product.id]! - 1;
-            //                   });
-            //                   log('buildProductCard: Decreased quantity for ${product.id} to ${quantities[product.id]}');
-            //                   if (product.attributes != null) {
-            //                     final combinations =
-            //                         await _showAttributeSelectionDialog(
-            //                             context, product,
-            //                             requestedQuantity:
-            //                                 quantities[product.id]);
-            //                     if (combinations != null) {
-            //                       setState(() {
-            //                         productAttributes[product.id] =
-            //                             combinations;
-            //                         quantities[product.id] =
-            //                             combinations.fold<int>(
-            //                                 0,
-            //                                 (sum, comb) =>
-            //                                     sum +
-            //                                     (comb['quantity'] as int));
-            //                         log('buildProductCard: Updated attributes for ${product.id}, new quantity: ${quantities[product.id]}');
-            //                       });
-            //                     } else {
-            //                       setState(() {
-            //                         quantities[product.id] =
-            //                             quantities[product.id]! + 1;
-            //                       });
-            //                       log('buildProductCard: Reverted quantity for ${product.id} to ${quantities[product.id]}');
-            //                     }
-            //                   }
-            //                 }
-            //               },
-            //               child: Container(
-            //                 padding: const EdgeInsets.all(8),
-            //                 decoration: BoxDecoration(
-            //                   color: Colors.grey[200],
-            //                   borderRadius: const BorderRadius.only(
-            //                     topLeft: Radius.circular(7),
-            //                     bottomLeft: Radius.circular(7),
-            //                   ),
-            //                 ),
-            //                 child: Icon(
-            //                   Icons.remove_rounded,
-            //                   size: 16,
-            //                   color: quantities[product.id]! > 1
-            //                       ? primaryColor
-            //                       : Colors.grey[400],
-            //                 ),
-            //               ),
-            //             ),
-            //           ),
-            //           SizedBox(
-            //             width: 40,
-            //             child: TextField(
-            //               controller: TextEditingController(
-            //                   text: quantities[product.id].toString()),
-            //               textAlign: TextAlign.center,
-            //               keyboardType: TextInputType.number,
-            //               style: TextStyle(
-            //                 fontSize: 13,
-            //                 fontWeight: FontWeight.w600,
-            //                 color: Colors.grey[800],
-            //               ),
-            //               decoration: InputDecoration(
-            //                 isDense: true,
-            //                 contentPadding: const EdgeInsets.symmetric(
-            //                     vertical: 8, horizontal: 4),
-            //                 border: InputBorder.none,
-            //                 counterText: '',
-            //                 fillColor: Colors.grey[100],
-            //                 filled: true,
-            //               ),
-            //               maxLength: 4,
-            //               onChanged: (value) async {
-            //                 int? newQuantity = int.tryParse(value);
-            //                 if (newQuantity != null && newQuantity > 0) {
-            //                   setState(() {
-            //                     quantities[product.id] = newQuantity;
-            //                   });
-            //                   log('buildProductCard: Quantity changed for ${product.id} to $newQuantity');
-            //                   if (product.attributes != null) {
-            //                     final combinations =
-            //                         await _showAttributeSelectionDialog(
-            //                             context, product,
-            //                             requestedQuantity: newQuantity);
-            //                     if (combinations != null) {
-            //                       setState(() {
-            //                         productAttributes[product.id] =
-            //                             combinations;
-            //                         quantities[product.id] =
-            //                             combinations.fold<int>(
-            //                                 0,
-            //                                 (sum, comb) =>
-            //                                     sum +
-            //                                     (comb['quantity'] as int));
-            //                         log('buildProductCard: Updated attributes for ${product.id}, new quantity: ${quantities[product.id]}');
-            //                       });
-            //                     } else {
-            //                       setState(() {
-            //                         quantities[product.id] = productAttributes
-            //                                 .containsKey(product.id)
-            //                             ? productAttributes[product.id]!
-            //                                 .fold<int>(
-            //                                     0,
-            //                                     (sum, comb) =>
-            //                                         sum +
-            //                                         (comb['quantity'] as int))
-            //                             : 1;
-            //                       });
-            //                       log('buildProductCard: Reverted quantity for ${product.id} to ${quantities[product.id]}');
-            //                     }
-            //                   }
-            //                 }
-            //               },
-            //               onSubmitted: (value) {
-            //                 int? newQuantity = int.tryParse(value);
-            //                 if (newQuantity == null || newQuantity <= 0) {
-            //                   setState(() {
-            //                     quantities[product.id] = 1;
-            //                   });
-            //                   log('buildProductCard: Invalid quantity for ${product.id}, reset to 1');
-            //                 }
-            //               },
-            //             ),
-            //           ),
-            //           Material(
-            //             color: Colors.transparent,
-            //             child: InkWell(
-            //               borderRadius: const BorderRadius.only(
-            //                 topRight: Radius.circular(7),
-            //                 bottomRight: Radius.circular(7),
-            //               ),
-            //               onTap: () async {
-            //                 setState(() {
-            //                   quantities[product.id] =
-            //                       quantities[product.id]! + 1;
-            //                 });
-            //                 log('buildProductCard: Increased quantity for ${product.id} to ${quantities[product.id]}');
-            //                 if (product.attributes != null) {
-            //                   final combinations =
-            //                       await _showAttributeSelectionDialog(
-            //                           context, product,
-            //                           requestedQuantity:
-            //                               quantities[product.id]);
-            //                   if (combinations != null) {
-            //                     setState(() {
-            //                       productAttributes[product.id] = combinations;
-            //                       quantities[product.id] =
-            //                           combinations.fold<int>(
-            //                               0,
-            //                               (sum, comb) =>
-            //                                   sum + (comb['quantity'] as int));
-            //                       log('buildProductCard: Updated attributes for ${product.id}, new quantity: ${quantities[product.id]}');
-            //                     });
-            //                   } else {
-            //                     setState(() {
-            //                       quantities[product.id] =
-            //                           quantities[product.id]! - 1;
-            //                     });
-            //                     log('buildProductCard: Reverted quantity for ${product.id} to ${quantities[product.id]}');
-            //                   }
-            //                 }
-            //               },
-            //               child: Container(
-            //                 padding: const EdgeInsets.all(8),
-            //                 decoration: BoxDecoration(
-            //                   color: Colors.grey[200],
-            //                   borderRadius: const BorderRadius.only(
-            //                     topRight: Radius.circular(7),
-            //                     bottomRight: Radius.circular(7),
-            //                   ),
-            //                 ),
-            //                 child: Icon(
-            //                   Icons.add_rounded,
-            //                   size: 16,
-            //                   color: primaryColor,
-            //                 ),
-            //               ),
-            //             ),
-            //           ),
-            //         ],
-            //       ),
-            //     ),
-            //   ],
-            // ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _AttributeCombinationForm extends StatefulWidget {
-  final Product product;
-  final Function(Map<String, String>, int) onAdd;
-
-  const _AttributeCombinationForm({
-    required this.product,
-    required this.onAdd,
-  });
-
-  @override
-  __AttributeCombinationFormState createState() =>
-      __AttributeCombinationFormState();
-}
-
-class __AttributeCombinationFormState extends State<_AttributeCombinationForm> {
-  Map<String, String> selectedAttributes = {};
-  final TextEditingController quantityController =
-      TextEditingController(text: '1');
-  final currencyFormat = NumberFormat.currency(symbol: '\$');
-
-  double calculateExtraCost() {
-    double extraCost = 0;
-    for (var attr in widget.product.attributes!) {
-      final value = selectedAttributes[attr.name];
-      if (value != null && attr.extraCost != null) {
-        extraCost += attr.extraCost![value] ?? 0;
-      }
-    }
-    return extraCost;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final extraCost = calculateExtraCost();
-    final basePrice = widget.product.price;
-    final qty = int.tryParse(quantityController.text) ?? 0;
-    final totalCost = (basePrice + extraCost) * qty;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Add New Combination',
-          style: TextStyle(
-            fontSize: 14,
-            fontWeight: FontWeight.w600,
-            color: Colors.grey[700],
-          ),
-        ),
-        const SizedBox(height: 12),
-        ...widget.product.attributes!.map((attribute) {
-          return Padding(
-            padding: const EdgeInsets.only(bottom: 8.0),
-            child: DropdownButtonFormField<String>(
-              value: selectedAttributes[attribute.name],
-              decoration: InputDecoration(
-                labelText: attribute.name,
-                labelStyle: TextStyle(color: Colors.grey[600]),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  borderSide: BorderSide(color: Colors.grey[300]!),
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  borderSide: BorderSide(color: Colors.grey[300]!),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  borderSide: const BorderSide(color: primaryColor, width: 2),
-                ),
-                filled: true,
-                fillColor: Colors.grey[50],
-                contentPadding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              ),
-              items: attribute.values.map((value) {
-                final extra = attribute.extraCost?[value] ?? 0;
-                return DropdownMenuItem<String>(
-                  value: value,
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(value),
-                      if (extra > 0)
-                        Text(
-                          '+\$${extra.toStringAsFixed(2)}',
-                          style: const TextStyle(
-                              color: Colors.redAccent, fontSize: 12),
+                          ],
                         ),
-                    ],
+                      ],
+                    ),
                   ),
-                );
-              }).toList(),
-              onChanged: (value) {
-                setState(() {
-                  if (value != null) {
-                    selectedAttributes[attribute.name] = value;
-                  }
-                });
-              },
-            ),
-          );
-        }).toList(),
-        const SizedBox(height: 12),
-        Row(
-          children: [
-            Expanded(
-              child: TextField(
-                controller: quantityController,
-                keyboardType: TextInputType.number,
-                decoration: InputDecoration(
-                  labelText: 'Quantity',
-                  labelStyle: TextStyle(color: Colors.grey[600]),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                    borderSide: BorderSide(color: Colors.grey[300]!),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                    borderSide: BorderSide(color: Colors.grey[300]!),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                    borderSide: const BorderSide(color: primaryColor, width: 2),
-                  ),
-                  filled: true,
-                  fillColor: Colors.grey[50],
-                  contentPadding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                ),
-                onChanged: (value) => setState(() {}),
+                ],
               ),
-            ),
-            const SizedBox(width: 12),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Text(
-                  'Extra: ${currencyFormat.format(extraCost)}',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: extraCost > 0 ? Colors.redAccent : Colors.grey[600],
-                  ),
-                ),
-                Text(
-                  'Total: ${currencyFormat.format(totalCost)}',
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.bold,
-                    color: primaryColor,
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        Align(
-          alignment: Alignment.centerRight,
-          child: ElevatedButton.icon(
-            onPressed: selectedAttributes.length ==
-                        widget.product.attributes!.length &&
-                    qty > 0
-                ? () {
-                    widget.onAdd(Map.from(selectedAttributes), qty);
-                    setState(() {
-                      selectedAttributes.clear();
-                      quantityController.text = '1';
-                    });
-                  }
-                : null,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: primaryColor,
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
-              ),
-            ),
-            icon: const Icon(Icons.add, size: 18),
-            label: const Text('Add', style: TextStyle(fontSize: 14)),
+            ],
           ),
-        ),
-      ],
-    );
+        ));
+  }
+
+  @override
+  void dispose() {
+    searchController.dispose();
+    super.dispose();
+  }
+}
+
+Future<List<Map<String, String>>> _fetchVariantAttributes(
+  OdooClient odooClient,
+  List<int> attributeValueIds,
+) async {
+  try {
+    final attributeValueResult = await odooClient.callKw({
+      'model': 'product.template.attribute.value',
+      'method': 'read',
+      'args': [attributeValueIds],
+      'kwargs': {
+        'fields': ['product_attribute_value_id', 'attribute_id'],
+      },
+    });
+
+    List<Map<String, String>> attributes = [];
+    for (var attrValue in attributeValueResult) {
+      final valueId = attrValue['product_attribute_value_id'][0] as int;
+      final attributeId = attrValue['attribute_id'][0] as int;
+
+      final valueData = await odooClient.callKw({
+        'model': 'product.attribute.value',
+        'method': 'read',
+        'args': [
+          [valueId]
+        ],
+        'kwargs': {
+          'fields': ['name'],
+        },
+      });
+
+      final attributeData = await odooClient.callKw({
+        'model': 'product.attribute',
+        'method': 'read',
+        'args': [
+          [attributeId]
+        ],
+        'kwargs': {
+          'fields': ['name'],
+        },
+      });
+
+      attributes.add({
+        'attribute_name': attributeData[0]['name'] as String,
+        'value_name': valueData[0]['name'] as String,
+      });
+    }
+    return attributes;
+  } catch (e) {
+    developer.log("Error fetching variant attributes: $e");
+    return [];
   }
 }

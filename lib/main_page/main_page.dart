@@ -7,6 +7,7 @@ import 'package:latest_van_sale_application/assets/widgets%20and%20consts/create
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../assets/widgets and consts/cached_data.dart';
 import '../assets/widgets and consts/create_sale_order_dialog.dart';
 import '../assets/widgets and consts/page_transition.dart';
 import '../providers/invoice_provider.dart';
@@ -19,6 +20,7 @@ import '../secondary_pages/1/products.dart';
 import '../secondary_pages/1/sale_orders.dart';
 import '../secondary_pages/add_products_page.dart';
 import '../assets/widgets and consts/order_utils.dart';
+import '../secondary_pages/pending_deliveries.dart';
 import '../secondary_pages/todays_sales_page.dart';
 
 const Color secondaryColor = Color(0xFFD32F2F); // Red accent
@@ -29,12 +31,13 @@ final List<Map<String, dynamic>> saleOrders = [];
 int selectedIndex = 0;
 
 class MainPage extends StatefulWidget {
-  const MainPage({Key? key}) : super(key: key);
+  final DataSyncManager syncManager;
+
+  const MainPage({super.key, required this.syncManager});
 
   @override
-  _MainPageState createState() => _MainPageState();
+  State<MainPage> createState() => _MainPageState();
 }
-
 class _MainPageState extends State<MainPage> with TickerProviderStateMixin {
   late TabController _tabController;
   late AnimationController _animationController;
@@ -46,7 +49,44 @@ class _MainPageState extends State<MainPage> with TickerProviderStateMixin {
   String userName = ""; // Will be updated from SharedPreferences
   String? _userImageBase64; // Store base64 image
   bool _isLoadingImage = true; // Loading state for image
+  late PageController _pageController;
+  bool _isRefreshing = false;
 
+
+  Future<void> _refreshData() async {
+    if (_isRefreshing) return; // Prevent multiple concurrent refreshes
+
+    setState(() {
+      _isRefreshing = true;
+    });
+
+    try {
+      // Force a full sync regardless of last sync time
+      await widget.syncManager.forceSyncData(context);
+
+      // Show a success message
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Data refreshed successfully'),
+          backgroundColor: Colors.green,
+          duration: Duration(seconds: 2),
+        ),
+      );
+    } catch (e) {
+      // Show an error message
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to refresh data: $e'),
+          backgroundColor: Colors.red,
+          duration: Duration(seconds: 3),
+        ),
+      );
+    } finally {
+      setState(() {
+        _isRefreshing = false;
+      });
+    }
+  }
   @override
   void initState() {
     super.initState();
@@ -55,12 +95,9 @@ class _MainPageState extends State<MainPage> with TickerProviderStateMixin {
       vsync: this,
       duration: const Duration(milliseconds: 200),
     );
-    _scaleAnimation = Tween<double>(begin: 1.0, end: 1.0).animate(
-      CurvedAnimation(
-        parent: _animationController,
-        curve: Curves.fastEaseInToSlowEaseOut,
-      ),
-    );
+    _scaleAnimation =
+        Tween<double>(begin: 1.0, end: 0.95).animate(_animationController);
+
     _initializeServiceAndLoadData(); // Initialize service and load data
   }
 
@@ -94,6 +131,21 @@ class _MainPageState extends State<MainPage> with TickerProviderStateMixin {
     }
   }
 
+  void _onNavItemTapped(int index) {
+    // If tapping the same index, don't animate
+    if (selectedIndex == index) return;
+
+    // Apply scale animation and page transition
+    _animationController.forward().then((_) {
+      _pageController.animateToPage(
+        index,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeInOut,
+      );
+      _animationController.reverse();
+    });
+  }
+
   @override
   void dispose() {
     _animationController.dispose();
@@ -111,18 +163,21 @@ class _MainPageState extends State<MainPage> with TickerProviderStateMixin {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      key: _scaffoldKey,
       backgroundColor: backgroundColor,
       appBar: _buildAppBar(),
       drawer: _buildDrawer(),
-      body: AnimatedBuilder(
-        animation: _scaleAnimation,
-        builder: (context, child) {
-          return Transform.scale(
-            scale: _scaleAnimation.value,
-            child: _buildBody(),
-          );
-        },
+      body: RefreshIndicator(
+        onRefresh: _refreshData,
+
+        child: AnimatedBuilder(
+          animation: _scaleAnimation,
+          builder: (context, child) {
+            return Transform.scale(
+              scale: _scaleAnimation.value,
+              child: _buildBody(),
+            );
+          },
+        ),
       ),
       floatingActionButton: _buildFloatingActionButton(),
       floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
@@ -180,11 +235,11 @@ class _MainPageState extends State<MainPage> with TickerProviderStateMixin {
     }
 
     return [
-
       const Padding(
         padding: EdgeInsets.only(right: 4.0),
         child: LogoutButton(),
       ),
+
       // IconButton(
       //   onPressed: () {
       //     Navigator.push(
@@ -388,6 +443,22 @@ class _MainPageState extends State<MainPage> with TickerProviderStateMixin {
               // Management Section
               _buildSectionHeader("Management"),
               ListTile(
+                leading: const Icon(Icons.delivery_dining),
+                title: const Text('Deliveries'),
+                selectedTileColor: primaryColor.withOpacity(0.1),
+                selectedColor: primaryColor,
+                onTap: () {
+                  Navigator.pop(context);
+
+                  Navigator.push(
+                      context,
+                      SlidingPageTransitionRL(
+                          page: PendingDeliveriesPage(
+                        showPendingOnly: false,
+                      )));
+                },
+              ),
+              ListTile(
                 leading: const Icon(Icons.bar_chart),
                 title: const Text('Reports & Analytics'),
                 selectedTileColor: primaryColor.withOpacity(0.1),
@@ -536,7 +607,11 @@ class _MainPageState extends State<MainPage> with TickerProviderStateMixin {
         onCustomerSelected: (Customer selectedCustomer) {
           Navigator.pop(context);
           // Then show the order creation sheet with the selected customer
-Navigator.push(context, SlidingPageTransitionRL(page: CreateOrderPage(customer: selectedCustomer)));        },
+          Navigator.push(
+              context,
+              SlidingPageTransitionRL(
+                  page: CreateOrderPage(customer: selectedCustomer)));
+        },
       ),
     );
   } // Handle FAB press based on selected index
@@ -581,42 +656,40 @@ Navigator.push(context, SlidingPageTransitionRL(page: CreateOrderPage(customer: 
     final screenHeight = MediaQuery.of(context).size.height;
     final isSmallScreen = screenWidth < 360;
 
-    return SafeArea(
-      child: BottomAppBar(
-        shape: const CircularNotchedRectangle(),
-        notchMargin: 6.0,
-        color: Colors.white,
-        elevation: 10,
-        child: Container(
-          height: screenHeight * 0.08,
-          padding: EdgeInsets.symmetric(horizontal: screenWidth * 0.04),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              // Left side
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  _buildNavItem(0, Icons.dashboard,
-                      isSmallScreen ? null : 'Dashboard', screenWidth),
-                  SizedBox(width: screenWidth * 0.02),
-                  _buildNavItem(1, Icons.inventory,
-                      isSmallScreen ? null : 'Products', screenWidth),
-                ],
-              ),
-              // Right side
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  _buildNavItem(2, Icons.assignment,
-                      isSmallScreen ? null : 'Orders', screenWidth),
-                  SizedBox(width: screenWidth * 0.02),
-                  _buildNavItem(3, Icons.people,
-                      isSmallScreen ? null : 'Customers', screenWidth),
-                ],
-              ),
-            ],
-          ),
+    return BottomAppBar(
+      shape: const CircularNotchedRectangle(),
+      notchMargin: 6.0,
+      color: Colors.white,
+      elevation: 10,
+      child: Container(
+        height: screenHeight * 0.08,
+        padding: EdgeInsets.symmetric(horizontal: screenWidth * 0.04),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            // Left side
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                _buildNavItem(0, Icons.dashboard,
+                    isSmallScreen ? null : 'Dashboard', screenWidth),
+                SizedBox(width: screenWidth * 0.02),
+                _buildNavItem(1, Icons.inventory,
+                    isSmallScreen ? null : 'Products', screenWidth),
+              ],
+            ),
+            // Right side
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                _buildNavItem(2, Icons.assignment,
+                    isSmallScreen ? null : 'Orders', screenWidth),
+                SizedBox(width: screenWidth * 0.02),
+                _buildNavItem(3, Icons.people,
+                    isSmallScreen ? null : 'Customers', screenWidth),
+              ],
+            ),
+          ],
         ),
       ),
     );

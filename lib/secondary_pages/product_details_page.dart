@@ -1,13 +1,11 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:latest_van_sale_application/assets/widgets%20and%20consts/editproductpage.dart';
-import 'package:latest_van_sale_application/assets/widgets%20and%20consts/page_transition.dart';
-import 'package:latest_van_sale_application/secondary_pages/add_products_page.dart';
-import 'package:latest_van_sale_application/secondary_pages/customer_details_page.dart';
 import 'package:odoo_rpc/odoo_rpc.dart';
 import 'package:photo_view/photo_view.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:intl/intl.dart';
+import '../assets/widgets and consts/page_transition.dart';
 import '../authentication/cyllo_session_model.dart';
 import '../providers/order_picking_provider.dart';
 import 'package:flutter/services.dart';
@@ -16,9 +14,13 @@ import 'dart:developer' as developer;
 
 class ProductDetailsPage extends StatefulWidget {
   final String productId;
+  final Map<String, String>? selectedAttributes;
 
-  const ProductDetailsPage({Key? key, required this.productId})
-      : super(key: key);
+  const ProductDetailsPage({
+    Key? key,
+    required this.productId,
+    this.selectedAttributes,
+  }) : super(key: key);
 
   @override
   State<ProductDetailsPage> createState() => _ProductDetailsPageState();
@@ -40,8 +42,11 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
+    _tabController = TabController(length: 2, vsync: this);
     _initializeOdooClient();
+    if (widget.selectedAttributes != null) {
+      _selectedVariants = Map.from(widget.selectedAttributes!);
+    }
   }
 
   Future<void> _initializeOdooClient() async {
@@ -96,11 +101,8 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
             'volume',
             'taxes_id',
             'seller_ids',
-            'attribute_line_ids',
-            'property_account_income_id',
-            'property_account_expense_id',
-            'stock_quant_ids',
             'product_tmpl_id',
+            'product_template_attribute_value_ids',
           ],
         },
       });
@@ -110,21 +112,22 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
         final templateId = productData['product_tmpl_id'][0] as int;
         List<Map<String, dynamic>> attributes = [];
 
-        try {
-          final attributeLineResult = await client.callKw({
-            'model': 'product.template.attribute.line',
-            'method': 'search_read',
-            'args': [
-              [
-                ['product_tmpl_id', '=', templateId]
-              ]
-            ],
-            'kwargs': {
-              'fields': ['product_tmpl_id', 'attribute_id', 'value_ids'],
-            },
-          });
+        // Fetch attribute lines for the product template
+        final attributeLineResult = await client.callKw({
+          'model': 'product.template.attribute.line',
+          'method': 'search_read',
+          'args': [
+            [
+              ['product_tmpl_id', '=', templateId]
+            ]
+          ],
+          'kwargs': {
+            'fields': ['product_tmpl_id', 'attribute_id', 'value_ids'],
+          },
+        });
 
-          final attributeIds = (attributeLineResult as List)
+        if (attributeLineResult.isNotEmpty) {
+          final attributeIds = attributeLineResult
               .map((attr) => attr['attribute_id'][0] as int)
               .toSet()
               .toList();
@@ -141,7 +144,7 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
             },
           });
 
-          final valueIds = (attributeLineResult as List)
+          final valueIds = attributeLineResult
               .expand((attr) => attr['value_ids'] as List)
               .toSet()
               .toList();
@@ -194,10 +197,7 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
             templateAttributeValueMap.putIfAbsent(templateId, () => {});
             templateAttributeValueMap[templateId]!
                 .putIfAbsent(attributeId, () => {});
-            templateAttributeValueMap[templateId]![attributeId]!
-                .putIfAbsent(valueId, () => {});
             templateAttributeValueMap[templateId]![attributeId]![valueId] = {
-              'name': attributeValueMap[valueId] ?? 'Unknown',
               'price_extra': priceExtra,
             };
           }
@@ -213,20 +213,17 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
             final extraCosts = <String, double>{
               for (var id in valueIds)
                 attributeValueMap[id as int]!:
-                    (templateAttributeValueMap[templateId]?[attributeId]
-                                ?[id as int]?['price_extra'] as num?)
-                            ?.toDouble() ??
+                    templateAttributeValueMap[templateId]?[attributeId]
+                            ?[id as int]?['price_extra'] as double? ??
                         0.0
             };
+
             attributes.add({
               'name': attributeName,
               'values': values,
               'extraCost': extraCosts,
             });
           }
-        } catch (e) {
-          developer.log("Error fetching attributes: $e");
-          attributes = [];
         }
 
         String? imageUrl;
@@ -271,26 +268,19 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
                   'https://placeholder.com/product_alt_2',
                 ];
 
-          _selectedVariants.clear();
-          for (var attr in attributes) {
-            if (attr['values'].isNotEmpty) {
-              _selectedVariants[attr['name']] = attr['values'][0];
+          if (widget.selectedAttributes == null && attributes.isNotEmpty) {
+            _selectedVariants.clear();
+            for (var attr in attributes) {
+              if (attr['values'].isNotEmpty) {
+                _selectedVariants[attr['name']] = attr['values'][0];
+              }
             }
           }
         });
 
-        developer.log("Successfully fetched product: ${productData['name']}");
-        developer.log("Product details:");
-        developer.log("Default Code: ${productData['default_code'] ?? 'N/A'}");
-        developer.log("Seller IDs: ${productData['seller_ids']}");
-        developer.log("Taxes IDs: ${productData['taxes_id']}");
-        developer.log("Category: ${productData['categ_id']}");
-        if (attributes.isNotEmpty) {
-          developer.log(
-              "Attributes: ${attributes.map((a) => '${a['name']}: ${a['values'].join(', ')} (Extra Costs: ${a['extraCost']})').join('; ')}");
-        } else {
-          developer.log("Attributes: None");
-        }
+        developer.log("Fetched product: ${productData['name']}");
+        developer.log(
+            "Attributes: ${attributes.isNotEmpty ? attributes.map((a) => '${a['name']}: ${a['values'].join(', ')}').join('; ') : 'None'}");
       } else {
         setState(() {
           _productData = {
@@ -307,7 +297,7 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
         developer.log("No product found for ID: ${widget.productId}");
       }
     } catch (e) {
-      developer.log("Error loading product: $e");
+      developer.log("Error loading product data: $e");
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Error loading product: $e')),
       );
@@ -326,13 +316,11 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
 
   double _calculateFinalPrice() {
     double finalPrice = _productData['list_price']?.toDouble() ?? 0.0;
-
     final attributes =
         _productData['attributes'] as List<Map<String, dynamic>>?;
     if (attributes != null) {
       for (var attribute in attributes) {
-        final attributeName = attribute['name'] as String;
-        final selectedValue = _selectedVariants[attributeName];
+        final selectedValue = _selectedVariants[attribute['name']];
         if (selectedValue != null) {
           final extraCosts = attribute['extraCost'] as Map<String, double>;
           final extraCost = extraCosts[selectedValue] ?? 0.0;
@@ -340,8 +328,13 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
         }
       }
     }
-
     return finalPrice;
+  }
+
+  String _getSelectedVariantDefaultCode() {
+    return _productData['default_code'] is String
+        ? _productData['default_code']
+        : 'N/A';
   }
 
   @override
@@ -349,75 +342,13 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
     if (_isLoading) {
       return Scaffold(
         appBar: AppBar(
-          title: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  'Product Details',
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontWeight: FontWeight.bold),
-                ),
-              ),
-              if (_productData['default_code'] is String &&
-                  _productData['default_code'].isNotEmpty)
-                Text(
-                  '[${_productData['default_code'] as String}]',
-                  style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.normal,
-                  ),
-                ),
-            ],
-          ),
+          title: const Text('Product Details'),
           backgroundColor: primaryColor,
           foregroundColor: Colors.white,
           elevation: 0,
-          actions: [
-            // IconButton(
-            //   icon: const Icon(Icons.share),
-            //   onPressed: () {
-            //     _shareProduct();
-            //   },
-            // ),
-            IconButton(
-              icon: const Icon(Icons.edit),
-              onPressed: () {
-                print('1');
-              },
-            ),
-            // _buildOverflowMenu(context),
-          ],
-          bottom: TabBar(
-            controller: _tabController,
-            isScrollable: false,
-            labelColor: Colors.white,
-            unselectedLabelColor: Colors.grey.shade300,
-            tabs: const [
-              Tab(text: 'General Information'),
-              Tab(text: 'Inventory'),
-              Tab(text: 'Accounting'),
-            ],
-          ),
         ),
         body: Center(
-          child: Container(
-            color: Colors.white,
-            height: MediaQuery.of(context).size.height,
-            width: MediaQuery.of(context).size.width,
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                SizedBox(
-                  height: 60,
-                  width: 60,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 5,
-                    color: primaryColor, // You can customize color
-                  ),
-                ),
-              ],
-            ),
-          ),
+          child: CircularProgressIndicator(color: primaryColor),
         ),
       );
     }
@@ -435,8 +366,9 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
           children: [
             Expanded(
               child: Text(
-                'Product Details',
-                style: TextStyle(fontWeight: FontWeight.bold),
+                "Product details",
+                style: const TextStyle(fontWeight: FontWeight.bold),
+                overflow: TextOverflow.ellipsis,
               ),
             ),
           ],
@@ -445,38 +377,43 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
         foregroundColor: Colors.white,
         elevation: 0,
         actions: [
-          // IconButton(
-          //   icon: const Icon(Icons.share),
-          //   onPressed: () {
-          //     _shareProduct();
-          //   },
-          // ),
           IconButton(
             icon: const Icon(Icons.edit),
             onPressed: () {
               Navigator.push(
                   context,
                   SlidingPageTransitionRL(
-                      page: EditProductPage(productId: widget.productId)));
+                      page: EditProductPage(
+                    productId: widget.productId,
+                  )));
             },
           ),
-          // _buildOverflowMenu(context),
         ],
-        bottom: TabBar(
-          controller: _tabController,
-          isScrollable: false,
-          labelColor: Colors.white,
-          unselectedLabelColor: Colors.grey.shade300,
-          tabs: const [
-            Tab(text: 'General Information'),
-            Tab(text: 'Inventory'),
-            Tab(text: 'Accounting'),
-          ],
-        ),
       ),
       backgroundColor: Colors.white,
       body: Column(
         children: [
+          TabBar(
+            controller: _tabController,
+            isScrollable: false,
+            labelColor: primaryColor,
+            indicatorColor: primaryColor,
+            indicatorWeight: 3,
+            indicatorSize: TabBarIndicatorSize.tab,
+            unselectedLabelStyle: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
+            ),
+            labelStyle: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.bold,
+            ),
+            unselectedLabelColor: Colors.grey.shade500,
+            tabs: const [
+              Tab(text: 'General Information'),
+              Tab(text: 'Inventory'),
+            ],
+          ),
           Container(
             color: Colors.grey[100],
             margin: const EdgeInsets.all(8),
@@ -489,26 +426,12 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
                     GestureDetector(
                       onTap: () {
                         if (_imageGallery.isNotEmpty) {
-                          final image = _imageGallery[0];
-                          if (image.startsWith('data:image')) {
-                            Navigator.push(
-                              context,
-                              SlidingPageTransitionRL(
-                                page: PhotoViewer(imageUrl: image),
-                              ),
-                            );
-                          } else {
-                            Navigator.push(
-                              context,
-                              SlidingPageTransitionRL(
-                                page: PhotoView(
-                                  imageProvider: MemoryImage(
-                                    base64Decode(image.split(',')[1]),
-                                  ),
-                                ),
-                              ),
-                            );
-                          }
+                          Navigator.push(
+                            context,
+                            SlidingPageTransitionRL(
+                              page: PhotoViewer(imageUrl: _imageGallery[0]),
+                            ),
+                          );
                         }
                       },
                       child: Container(
@@ -577,7 +500,7 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
                               _productData['barcode'].isNotEmpty) ...[
                             Row(
                               children: [
-                                const Icon(Icons.qr_code,
+                                const Icon(Icons.barcode_reader,
                                     size: 16, color: Colors.grey),
                                 const SizedBox(width: 4),
                                 Text(
@@ -600,13 +523,6 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
                                             content: Text(
                                                 'Barcode copied to clipboard')),
                                       );
-                                    } else {
-                                      ScaffoldMessenger.of(context)
-                                          .showSnackBar(
-                                        const SnackBar(
-                                            content: Text(
-                                                'No valid barcode available to copy')),
-                                      );
                                     }
                                   },
                                   child: const Icon(Icons.copy,
@@ -626,6 +542,21 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
                                   _productData['categ_id'] is List
                                       ? _productData['categ_id'][1]
                                       : 'Uncategorized',
+                                  style: const TextStyle(color: Colors.grey),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 4),
+                          Row(
+                            children: [
+                              const Icon(Icons.qr_code,
+                                  size: 16, color: Colors.grey),
+                              const SizedBox(width: 4),
+                              Expanded(
+                                child: Text(
+                                  _getSelectedVariantDefaultCode(),
                                   style: const TextStyle(color: Colors.grey),
                                   overflow: TextOverflow.ellipsis,
                                 ),
@@ -660,16 +591,17 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
                                 crossAxisAlignment: CrossAxisAlignment.end,
                                 children: [
                                   Text(
-                                    '${_calculateFinalPrice().toStringAsFixed(2)}',
+                                    '\$${_calculateFinalPrice().toStringAsFixed(2)}',
                                     style: const TextStyle(
-                                        fontSize: 20,
-                                        fontWeight: FontWeight.bold,
-                                        color: primaryColor),
+                                      fontSize: 20,
+                                      fontWeight: FontWeight.bold,
+                                      color: primaryColor,
+                                    ),
                                   ),
                                   if (_productData['list_price'] !=
                                       _calculateFinalPrice())
                                     Text(
-                                      'Base: ${(_productData['list_price'] ?? 0.0).toStringAsFixed(2)}',
+                                      'Base: \$${(_productData['list_price'] ?? 0.0).toStringAsFixed(2)}',
                                       style: TextStyle(
                                         fontSize: 12,
                                         color: Colors.grey[600],
@@ -680,6 +612,17 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
                               ),
                             ],
                           ),
+                          if (widget.selectedAttributes != null) ...[
+                            const SizedBox(height: 8),
+                            Text(
+                              'Selected Variant: ${_selectedVariants.entries.map((e) => '${e.key}: ${e.value}').join(', ')}',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey[700],
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
                         ],
                       ),
                     ),
@@ -692,10 +635,8 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
             child: TabBarView(
               controller: _tabController,
               children: [
-                // General Information Tab
                 RefreshIndicator(
                   onRefresh: _loadProductData,
-
                   child: SingleChildScrollView(
                     controller: _scrollController,
                     padding: const EdgeInsets.all(16),
@@ -706,7 +647,8 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
                           title: 'Basic Information',
                           content: Column(
                             children: [
-                              _buildInfoRow('Product Name', _productData['name']),
+                              _buildInfoRow(
+                                  'Product Name', _productData['name']),
                               _buildInfoRow('Internal Reference',
                                   _productData['default_code'] ?? 'N/A'),
                               _buildInfoRow(
@@ -719,8 +661,9 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
                               if (_productData['create_date'] != false)
                                 _buildInfoRow(
                                   'Created On',
-                                  DateFormat('yyyy-MM-dd').format(DateTime.parse(
-                                      _productData['create_date'])),
+                                  DateFormat('yyyy-MM-dd').format(
+                                      DateTime.parse(
+                                          _productData['create_date'])),
                                 ),
                             ],
                           ),
@@ -731,7 +674,8 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
                           _buildSectionCard(
                             title: 'Description',
                             content: Padding(
-                              padding: const EdgeInsets.symmetric(vertical: 8.0),
+                              padding:
+                                  const EdgeInsets.symmetric(vertical: 8.0),
                               child: Text(
                                 _productData['description_sale'],
                                 style: const TextStyle(height: 1.5),
@@ -763,70 +707,11 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
                           content: Column(
                             children: [
                               _buildInfoRow('Sales Price',
-                                  '${(_productData['list_price'] ?? 0.0).toStringAsFixed(2)}'),
+                                  '\$${(_productData['list_price'] ?? 0.0).toStringAsFixed(2)}'),
                               _buildInfoRow('Cost',
-                                  '${(_productData['standard_price'] ?? (_productData['list_price'] * 0.7)).toStringAsFixed(2)}'),
+                                  '\$${(_productData['standard_price'] ?? (_productData['list_price'] * 0.7)).toStringAsFixed(2)}'),
                               _buildInfoRow('Profit Margin',
                                   '${(((_productData['list_price'] - (_productData['standard_price'] ?? (_productData['list_price'] * 0.7))) / _productData['list_price']) * 100).toStringAsFixed(0)}%'),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(height: 16),
-                        _buildSectionCard(
-                          title: 'Taxes',
-                          content: Column(
-                            children: [
-                              if (_productData['taxes_id'] != null &&
-                                  (_productData['taxes_id'] as List).isNotEmpty)
-                                ...(_productData['taxes_id'] as List)
-                                    .map((taxId) {
-                                  return FutureBuilder(
-                                    future: _odooClient.callKw({
-                                      'model': 'account.tax',
-                                      'method': 'read',
-                                      'args': [
-                                        [taxId]
-                                      ],
-                                      'kwargs': {
-                                        'fields': ['name']
-                                      },
-                                    }),
-                                    builder: (context, snapshot) {
-                                      if (snapshot.hasData) {
-                                        return _buildInfoRow('Tax Rule',
-                                            snapshot.data[0]['name'] ?? 'N/A');
-                                      }
-                                      return const SizedBox.shrink();
-                                    },
-                                  );
-                                }).toList()
-                              else
-                                _buildInfoRow('Tax Rule', 'No taxes applied'),
-                              const SizedBox(height: 8),
-                              SizedBox(
-                                width: double.infinity,
-                                child: OutlinedButton.icon(
-                                  onPressed: () {
-                                    _showAddTaxDialog();
-                                  },
-                                  icon: const Icon(
-                                    Icons.add,
-                                    color: primaryColor,
-                                  ),
-                                  label: const Text(
-                                    'Add Tax Rule',
-                                    style: TextStyle(color: primaryColor),
-                                  ),
-                                  style: OutlinedButton.styleFrom(
-                                    side: BorderSide(color: primaryColor),
-                                    padding: const EdgeInsets.symmetric(
-                                        horizontal: 24, vertical: 12),
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(12),
-                                    ),
-                                  ),
-                                ),
-                              ),
                             ],
                           ),
                         ),
@@ -839,7 +724,11 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
                               'method': 'search_read',
                               'args': [
                                 [
-                                  ['product_id', '=', int.parse(widget.productId)]
+                                  [
+                                    'product_id',
+                                    '=',
+                                    int.parse(widget.productId)
+                                  ]
                                 ]
                               ],
                               'kwargs': {
@@ -853,13 +742,15 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
                               },
                             }),
                             builder: (context, snapshot) {
-                              if (snapshot.hasData && snapshot.data.isNotEmpty) {
+                              if (snapshot.hasData &&
+                                  snapshot.data.isNotEmpty) {
                                 return Column(
                                   children: snapshot.data.map<Widget>((sale) {
                                     return ListTile(
-                                      title: Text('Order ${sale['order_id'][1]}'),
+                                      title:
+                                          Text('Order ${sale['order_id'][1]}'),
                                       subtitle: Text(
-                                          'Qty: ${sale['product_uom_qty']} | Price: ${sale['price_unit'].toStringAsFixed(2)}'),
+                                          'Qty: ${sale['product_uom_qty']} | Price: \$${sale['price_unit'].toStringAsFixed(2)}'),
                                       trailing: Text(DateFormat('yyyy-MM-dd')
                                           .format(DateTime.parse(
                                               sale['create_date']))),
@@ -875,41 +766,48 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
                     ),
                   ),
                 ),
-                // Inventory Tab
                 RefreshIndicator(
                   onRefresh: _loadProductData,
-
                   child: SingleChildScrollView(
                     padding: const EdgeInsets.all(16),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        _buildSectionCard(
-                          title: 'Stock Information',
-                          content: Column(
-                            children: [
-                              _buildInfoRow('Quantity On Hand',
-                                  '${_productData['qty_available'] ?? 0} units'),
-                              _buildInfoRow('Reserved', '0 units'),
-                              _buildInfoRow('Available',
-                                  '${_productData['qty_available'] ?? 0} units'),
-                              _buildInfoRow('Forecasted',
-                                  '${(_productData['qty_available'] ?? 0) + 5} units'),
-                              Row(
-                                mainAxisAlignment: MainAxisAlignment.end,
-                                children: [
-                                  TextButton(
-                                    onPressed: () {
-                                      _showInventoryHistoryDialog();
-                                    },
-                                    child: const Text('View History'),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Text(
+                                  'Stock Information',
+                                  style: const TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold,
                                   ),
-                                ],
-                              ),
-                            ],
-                          ),
+                                ),
+                                TextButton(
+                                  onPressed: () {
+                                    _showInventoryHistoryDialog();
+                                  },
+                                  child: const Text('View History'),
+                                ),
+                              ],
+                            ),
+                            Column(
+                              children: [
+                                _buildInfoRow('Quantity On Hand',
+                                    '${_productData['qty_available'] ?? 0} units'),
+                                _buildInfoRow('Reserved', '0 units'),
+                                _buildInfoRow('Available',
+                                    '${_productData['qty_available'] ?? 0} products'),
+                                _buildInfoRow('Forecasted',
+                                    '${(_productData['qty_available'] ?? 0) + 5} units'),
+                              ],
+                            ),
+                          ],
                         ),
-                        const SizedBox(height: 16),
+                        const SizedBox(height: 24),
                         _buildSectionCard(
                           title: 'Warehouse Locations',
                           content: Column(
@@ -957,34 +855,10 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
                                 },
                               ),
                               const SizedBox(height: 8),
-                              SizedBox(
-                                width: double.infinity,
-                                child: OutlinedButton.icon(
-                                  onPressed: () {
-                                    _showAddLocationDialog();
-                                  },
-                                  icon: const Icon(
-                                    Icons.add,
-                                    color: primaryColor,
-                                  ),
-                                  label: const Text(
-                                    'Add Location',
-                                    style: TextStyle(color: primaryColor),
-                                  ),
-                                  style: OutlinedButton.styleFrom(
-                                    side: BorderSide(color: primaryColor),
-                                    padding: const EdgeInsets.symmetric(
-                                        horizontal: 24, vertical: 12),
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(12),
-                                    ),
-                                  ),
-                                ),
-                              ),
                             ],
                           ),
                         ),
-                        const SizedBox(height: 16),
+                        const SizedBox(height: 24),
                         _buildSectionCard(
                           title: 'Recent Inventory Movements',
                           content: FutureBuilder(
@@ -993,7 +867,11 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
                               'method': 'search_read',
                               'args': [
                                 [
-                                  ['product_id', '=', int.parse(widget.productId)]
+                                  [
+                                    'product_id',
+                                    '=',
+                                    int.parse(widget.productId)
+                                  ]
                                 ]
                               ],
                               'kwargs': {
@@ -1007,7 +885,8 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
                               },
                             }),
                             builder: (context, snapshot) {
-                              if (snapshot.hasData && snapshot.data.isNotEmpty) {
+                              if (snapshot.hasData &&
+                                  snapshot.data.isNotEmpty) {
                                 return Column(
                                   children: snapshot.data.map<Widget>((move) {
                                     return _buildInventoryMovementItem(
@@ -1027,10 +906,9 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
                           ),
                         ),
                         if (_productData['attributes'] != null &&
-                            (_productData['attributes'] as List).isNotEmpty) ...[
-                          SizedBox(
-                            height: 24,
-                          ),
+                            (_productData['attributes'] as List)
+                                .isNotEmpty) ...[
+                          const SizedBox(height: 24),
                           _buildSectionCard(
                             title: 'Attributes',
                             content: Column(
@@ -1044,529 +922,12 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
                         ] else
                           _buildNoVariantsMessage(),
                         const SizedBox(height: 24),
-                        SizedBox(
-                          width: double.infinity,
-                          child: ElevatedButton.icon(
-                            onPressed: () {
-                              _showAddAttributeDialog();
-                            },
-                            icon: const Icon(
-                              Icons.add,
-                              color: Colors.white,
-                            ),
-                            label: const Text(
-                              'ADD NEW ATTRIBUTE',
-                              style: TextStyle(color: Colors.white),
-                            ),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: primaryColor,
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 24, vertical: 12),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                            ),
-                          ),
-                        ),
                       ],
                     ),
                   ),
                 ),
-                // Accounting Tab
-                RefreshIndicator(
-                  onRefresh: _loadProductData,
-
-                  child: SingleChildScrollView(
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        _buildSectionCard(
-                          title: 'General Accounting',
-                          content: Column(
-                            children: [
-                              _buildInfoRow(
-                                  'Income Account',
-                                  _productData['property_account_income_id']
-                                          is List
-                                      ? _productData['property_account_income_id']
-                                          [1]
-                                      : 'Sales Income'),
-                              _buildInfoRow(
-                                  'Expense Account',
-                                  _productData['property_account_expense_id']
-                                          is List
-                                      ? _productData[
-                                          'property_account_expense_id'][1]
-                                      : 'Cost of Goods Sold'),
-                              _buildInfoRow('Asset Type', 'Consumable'),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(height: 16),
-                        _buildSectionCard(
-                          title: 'Costing Method',
-                          content: Column(
-                            children: [
-                              _buildInfoRow('Costing Method', 'Standard Price'),
-                              _buildInfoRow('Standard Price',
-                                  '${(_productData['standard_price'] ?? 0.0).toStringAsFixed(2)}'),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(height: 16),
-                        _buildSectionCard(
-                          title: 'Financial Tags',
-                          content: Column(
-                            children: [
-                              _buildInfoRow('Analytic Account', 'Sales / Europe'),
-                              _buildInfoRow(
-                                  'Analytic Tags', 'Retail, Standard Product'),
-                              const SizedBox(height: 8),
-                              SizedBox(
-                                width: double.infinity,
-                                child: OutlinedButton.icon(
-                                  onPressed: () {
-                                    _showAddFinancialTagDialog();
-                                  },
-                                  icon: const Icon(
-                                    Icons.add,
-                                    color: primaryColor,
-                                  ),
-                                  label: const Text(
-                                    'Add Financial Tag',
-                                    style: TextStyle(color: primaryColor),
-                                  ),
-                                  style: OutlinedButton.styleFrom(
-                                    side: BorderSide(color: primaryColor),
-                                    padding: const EdgeInsets.symmetric(
-                                        horizontal: 24, vertical: 12),
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(12),
-                                    ),
-                                  ),
-                                ),
-                              )
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                // Variants Tab
               ],
             ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _shareProduct() {
-    final String productInfo = '''
-${_productData['name']}
-Price: ${(_productData['list_price'] ?? 0.0).toStringAsFixed(2)}
-Code: ${_productData['default_code'] ?? 'N/A'}
-Stock: ${_productData['qty_available'] ?? 0} units
-    ''';
-    Clipboard.setData(ClipboardData(text: productInfo));
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Product information copied to clipboard!')),
-    );
-  }
-
-  Widget _buildOverflowMenu(BuildContext context) {
-    return PopupMenuButton<String>(
-      onSelected: (value) async {
-        switch (value) {
-          case 'archive':
-            await _archiveProduct();
-            break;
-          case 'duplicate':
-            await _duplicateProduct();
-            break;
-          case 'delete':
-            _showDeleteConfirmation(context);
-            break;
-          case 'print':
-            _printProductDetails();
-            break;
-          case 'export':
-            _exportProductData();
-            break;
-          case 'adjust_inventory':
-            _showAdjustInventoryDialog();
-            break;
-        }
-      },
-      itemBuilder: (context) => [
-        const PopupMenuItem(
-          value: 'archive',
-          child: ListTile(
-            leading: Icon(Icons.archive),
-            title: Text('Archive'),
-            contentPadding: EdgeInsets.zero,
-          ),
-        ),
-        const PopupMenuItem(
-          value: 'duplicate',
-          child: ListTile(
-            leading: Icon(Icons.copy),
-            title: Text('Duplicate'),
-            contentPadding: EdgeInsets.zero,
-          ),
-        ),
-        const PopupMenuItem(
-          value: 'adjust_inventory',
-          child: ListTile(
-            leading: Icon(Icons.inventory),
-            title: Text('Adjust Inventory'),
-            contentPadding: EdgeInsets.zero,
-          ),
-        ),
-        const PopupMenuItem(
-          value: 'delete',
-          child: ListTile(
-            leading: Icon(Icons.delete, color: Colors.red),
-            title: Text('Delete', style: TextStyle(color: Colors.red)),
-            contentPadding: EdgeInsets.zero,
-          ),
-        ),
-        const PopupMenuDivider(),
-        const PopupMenuItem(
-          value: 'print',
-          child: ListTile(
-            leading: Icon(Icons.print),
-            title: Text('Print'),
-            contentPadding: EdgeInsets.zero,
-          ),
-        ),
-        const PopupMenuItem(
-          value: 'export',
-          child: ListTile(
-            leading: Icon(Icons.download),
-            title: Text('Export'),
-            contentPadding: EdgeInsets.zero,
-          ),
-        ),
-      ],
-    );
-  }
-
-  Future<void> _archiveProduct() async {
-    try {
-      await _odooClient.callKw({
-        'model': 'product.product',
-        'method': 'write',
-        'args': [
-          [int.parse(widget.productId)],
-          {'active': false}
-        ],
-        'kwargs': {},
-      });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('${_productData['name']} has been archived'),
-          action: SnackBarAction(
-            label: 'UNDO',
-            onPressed: () async {
-              await _odooClient.callKw({
-                'model': 'product.product',
-                'method': 'write',
-                'args': [
-                  [int.parse(widget.productId)],
-                  {'active': true}
-                ],
-                'kwargs': {},
-              });
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                    content:
-                        Text('${_productData['name']} restored from archive')),
-              );
-            },
-          ),
-        ),
-      );
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error archiving product: $e')),
-      );
-    }
-  }
-
-  Future<void> _duplicateProduct() async {
-    try {
-      final newProductId = await _odooClient.callKw({
-        'model': 'product.product',
-        'method': 'copy',
-        'args': [int.parse(widget.productId)],
-        'kwargs': {},
-      });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Product duplicated. New ID: $newProductId'),
-        ),
-      );
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error duplicating product: $e')),
-      );
-    }
-  }
-
-  void _printProductDetails() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-          content: Text('Preparing product details for printing...')),
-    );
-  }
-
-  void _exportProductData() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Exporting product data as CSV...')),
-    );
-  }
-
-  void _showAdjustInventoryDialog() {
-    int newQuantity = _productData['qty_available'] ?? 0;
-    String reason = 'Stock count';
-
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Adjust Inventory'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text('Current inventory: ${_productData['qty_available']} units'),
-            const SizedBox(height: 16),
-            TextField(
-              decoration: const InputDecoration(
-                labelText: 'New Quantity',
-                border: OutlineInputBorder(),
-              ),
-              keyboardType: TextInputType.number,
-              onChanged: (value) {
-                newQuantity =
-                    int.tryParse(value) ?? _productData['qty_available'];
-              },
-            ),
-            const SizedBox(height: 16),
-            DropdownButtonFormField<String>(
-              decoration: const InputDecoration(
-                labelText: 'Reason for Adjustment',
-                border: OutlineInputBorder(),
-              ),
-              value: reason,
-              items: const [
-                DropdownMenuItem(
-                    value: 'Stock count', child: Text('Stock count')),
-                DropdownMenuItem(
-                    value: 'Damaged goods', child: Text('Damaged goods')),
-                DropdownMenuItem(
-                    value: 'Supplier return', child: Text('Supplier return')),
-                DropdownMenuItem(
-                    value: 'System correction',
-                    child: Text('System correction')),
-              ],
-              onChanged: (value) {
-                if (value != null) {
-                  reason = value;
-                }
-              },
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('CANCEL'),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              try {
-                await _odooClient.callKw({
-                  'model': 'stock.inventory',
-                  'method': 'create',
-                  'args': [
-                    {
-                      'name': 'Inventory Adjustment ${DateTime.now()}',
-                      'product_ids': [int.parse(widget.productId)],
-                      'line_ids': [
-                        [
-                          0,
-                          0,
-                          {
-                            'product_id': int.parse(widget.productId),
-                            'product_qty': newQuantity,
-                            'location_id': 8,
-                          }
-                        ]
-                      ],
-                    }
-                  ],
-                  'kwargs': {},
-                });
-                Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text('Inventory adjusted to $newQuantity units'),
-                    backgroundColor: Colors.green,
-                  ),
-                );
-                await _loadProductData();
-              } catch (e) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Error adjusting inventory: $e')),
-                );
-              }
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: primaryColor,
-            ),
-            child: const Text('SAVE'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showDeleteConfirmation(BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Confirm Deletion'),
-        content: Text(
-            'Are you sure you want to delete ${_productData['name']}? This action cannot be undone.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('CANCEL'),
-          ),
-          TextButton(
-            onPressed: () async {
-              try {
-                await _odooClient.callKw({
-                  'model': 'product.product',
-                  'method': 'unlink',
-                  'args': [
-                    [int.parse(widget.productId)]
-                  ],
-                  'kwargs': {},
-                });
-                Navigator.pop(context);
-                Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('${_productData['name']} deleted')),
-                );
-              } catch (e) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Error deleting product: $e')),
-                );
-              }
-            },
-            child: const Text('DELETE', style: TextStyle(color: Colors.red)),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showAddTaxDialog() {
-    String selectedTax = 'VAT 21%';
-    int? taxId;
-
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Add Tax Rule'),
-        content: SingleChildScrollView(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxHeight: 300),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                FutureBuilder(
-                  future: _odooClient.callKw({
-                    'model': 'account.tax',
-                    'method': 'search_read',
-                    'args': [[]],
-                    'kwargs': {
-                      'fields': ['name', 'id']
-                    },
-                  }),
-                  builder: (context, snapshot) {
-                    if (snapshot.hasData) {
-                      final List<dynamic> taxes =
-                          snapshot.data as List<dynamic>;
-                      return DropdownButtonFormField<String>(
-                        decoration: const InputDecoration(
-                          labelText: 'Tax Rule',
-                          border: OutlineInputBorder(),
-                        ),
-                        value: selectedTax,
-                        items: taxes.map<DropdownMenuItem<String>>((tax) {
-                          return DropdownMenuItem<String>(
-                            value: tax['name'] as String,
-                            child: Text(tax['name']),
-                          );
-                        }).toList(),
-                        onChanged: (value) {
-                          if (value != null) {
-                            selectedTax = value;
-                            taxId = taxes.firstWhere(
-                                (tax) => tax['name'] == value)['id'] as int;
-                          }
-                        },
-                      );
-                    }
-                    return const CircularProgressIndicator();
-                  },
-                ),
-              ],
-            ),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('CANCEL'),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              if (taxId != null) {
-                try {
-                  await _odooClient.callKw({
-                    'model': 'product.product',
-                    'method': 'write',
-                    'args': [
-                      [int.parse(widget.productId)],
-                      {
-                        'taxes_id': [
-                          [4, taxId]
-                        ]
-                      }
-                    ],
-                    'kwargs': {},
-                  });
-                  Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Tax rule $selectedTax added')),
-                  );
-                  await _loadProductData();
-                } catch (e) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Error adding tax: $e')),
-                  );
-                }
-              }
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: primaryColor,
-            ),
-            child: const Text('ADD'),
           ),
         ],
       ),
@@ -1710,88 +1071,6 @@ Stock: ${_productData['qty_available'] ?? 0} units
     );
   }
 
-  void _showAddLocationDialog() {
-    String locationName = '';
-    int stockQuantity = 0;
-
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Add Warehouse Location'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              decoration: const InputDecoration(
-                labelText: 'Location Name',
-                border: OutlineInputBorder(),
-              ),
-              onChanged: (value) {
-                locationName = value;
-              },
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              decoration: const InputDecoration(
-                labelText: 'Initial Stock',
-                border: OutlineInputBorder(),
-              ),
-              keyboardType: TextInputType.number,
-              onChanged: (value) {
-                stockQuantity = int.tryParse(value) ?? 0;
-              },
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('CANCEL'),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              try {
-                final locationId = await _odooClient.callKw({
-                  'model': 'stock.location',
-                  'method': 'create',
-                  'args': [
-                    {'name': locationName}
-                  ],
-                  'kwargs': {},
-                });
-                await _odooClient.callKw({
-                  'model': 'stock.quant',
-                  'method': 'create',
-                  'args': [
-                    {
-                      'product_id': int.parse(widget.productId),
-                      'location_id': locationId,
-                      'quantity': stockQuantity,
-                    }
-                  ],
-                  'kwargs': {},
-                });
-                Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Location $locationName added')),
-                );
-                await _loadProductData();
-              } catch (e) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Error adding location: $e')),
-                );
-              }
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: primaryColor,
-            ),
-            child: const Text('ADD'),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildLocationRow(
       String locationName, String warehouse, int quantity) {
     return Container(
@@ -1870,87 +1149,6 @@ Stock: ${_productData['qty_available'] ?? 0} units
     );
   }
 
-  void _showAddFinancialTagDialog() {
-    String tagType = 'Analytic Tag';
-    String tagValue = '';
-
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Add Financial Tag'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            DropdownButtonFormField<String>(
-              decoration: const InputDecoration(
-                labelText: 'Tag Type',
-                border: OutlineInputBorder(),
-              ),
-              value: tagType,
-              items: const [
-                DropdownMenuItem(
-                    value: 'Analytic Tag', child: Text('Analytic Tag')),
-                DropdownMenuItem(
-                    value: 'Cost Center', child: Text('Cost Center')),
-                DropdownMenuItem(
-                    value: 'Budget Line', child: Text('Budget Line')),
-              ],
-              onChanged: (value) {
-                if (value != null) {
-                  tagType = value;
-                }
-              },
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              decoration: const InputDecoration(
-                labelText: 'Tag Value',
-                border: OutlineInputBorder(),
-              ),
-              onChanged: (value) {
-                tagValue = value;
-              },
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('CANCEL'),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              if (tagValue.isNotEmpty) {
-                try {
-                  await _odooClient.callKw({
-                    'model': 'account.analytic.tag',
-                    'method': 'create',
-                    'args': [
-                      {'name': tagValue}
-                    ],
-                    'kwargs': {},
-                  });
-                  Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('$tagType "$tagValue" added')),
-                  );
-                } catch (e) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Error adding tag: $e')),
-                  );
-                }
-              }
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: primaryColor,
-            ),
-            child: const Text('ADD'),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildAttributeSection(Map<String, dynamic> attribute) {
     final values = attribute['values'] as List<String>;
     final extraCosts = attribute['extraCost'] as Map<String, double>;
@@ -1975,33 +1173,25 @@ Stock: ${_productData['qty_available'] ?? 0} units
           spacing: 8,
           runSpacing: 8,
           children: values.map<Widget>((value) {
-            final isSelected = _selectedVariants[attribute['name']] == value;
+            final isSelected = widget.selectedAttributes != null &&
+                widget.selectedAttributes![attribute['name']] == value;
             final extraCost = extraCosts[value] ?? 0.0;
-            return InkWell(
-              onTap: () {
-                setState(() {
-                  _selectedVariants[attribute['name']] = value;
-                });
-              },
-              child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                decoration: BoxDecoration(
-                  color: isSelected ? primaryColor : Colors.white,
-                  border: Border.all(
-                    color: isSelected ? primaryColor : Colors.grey.shade300,
-                  ),
-                  borderRadius: BorderRadius.circular(8),
+            return Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              decoration: BoxDecoration(
+                color: isSelected ? primaryColor : Colors.white,
+                border: Border.all(
+                  color: isSelected ? primaryColor : Colors.grey.shade300,
                 ),
-                child: Text(
-                  extraCost != 0.0
-                      ? '$value (+${extraCost.toStringAsFixed(2)})'
-                      : value,
-                  style: TextStyle(
-                    color: isSelected ? Colors.white : Colors.black,
-                    fontWeight:
-                        isSelected ? FontWeight.bold : FontWeight.normal,
-                  ),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                extraCost != 0.0
+                    ? '$value (+\$${extraCost.toStringAsFixed(2)})'
+                    : value,
+                style: TextStyle(
+                  color: isSelected ? Colors.white : Colors.black,
+                  fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
                 ),
               ),
             );
@@ -2026,6 +1216,7 @@ Stock: ${_productData['qty_available'] ?? 0} units
 
   Widget _buildNoVariantsMessage() {
     return Container(
+      width: double.infinity,
       padding: const EdgeInsets.all(24),
       margin: const EdgeInsets.symmetric(vertical: 16),
       decoration: BoxDecoration(
@@ -2054,162 +1245,10 @@ Stock: ${_productData['qty_available'] ?? 0} units
             textAlign: TextAlign.center,
             style: TextStyle(color: Colors.grey.shade700),
           ),
-          const SizedBox(height: 16),
-          Text(
-            'Use the "Add New Attribute" button below to define attributes like size, color, or material.',
-            textAlign: TextAlign.center,
-            style: TextStyle(color: Colors.grey.shade700),
-          ),
         ],
       ),
     );
   }
-
-  void _showAddAttributeDialog() {
-    String attributeName = '';
-    List<String> attributeValues = [''];
-
-    showDialog(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setState) => AlertDialog(
-          title: const Text('Add Product Attribute'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                decoration: const InputDecoration(
-                  labelText: 'Attribute Name (e.g. Size, Color)',
-                  border: OutlineInputBorder(),
-                ),
-                onChanged: (value) {
-                  attributeName = value;
-                },
-              ),
-              const SizedBox(height: 16),
-              const Text('Attribute Values:',
-                  style: TextStyle(fontWeight: FontWeight.w500)),
-              const SizedBox(height: 8),
-              ...attributeValues
-                  .asMap()
-                  .entries
-                  .map((entry) => Padding(
-                        padding: const EdgeInsets.only(bottom: 8.0),
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: TextField(
-                                decoration: InputDecoration(
-                                  labelText: 'Value ${entry.key + 1}',
-                                  border: const OutlineInputBorder(),
-                                ),
-                                onChanged: (value) {
-                                  attributeValues[entry.key] = value;
-                                },
-                              ),
-                            ),
-                            IconButton(
-                              icon: const Icon(Icons.remove_circle,
-                                  color: Colors.red),
-                              onPressed: attributeValues.length > 1
-                                  ? () {
-                                      setState(() {
-                                        attributeValues.removeAt(entry.key);
-                                      });
-                                    }
-                                  : null,
-                            ),
-                          ],
-                        ),
-                      ))
-                  .toList(),
-              const SizedBox(height: 8),
-              OutlinedButton.icon(
-                onPressed: () {
-                  setState(() {
-                    attributeValues.add('');
-                  });
-                },
-                icon: const Icon(Icons.add),
-                label: const Text('Add Another Value'),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('CANCEL'),
-            ),
-            ElevatedButton(
-              onPressed: () async {
-                if (attributeName.isNotEmpty &&
-                    attributeValues.where((v) => v.isNotEmpty).isNotEmpty) {
-                  try {
-                    final attributeId = await _odooClient.callKw({
-                      'model': 'product.attribute',
-                      'method': 'create',
-                      'args': [
-                        {'name': attributeName}
-                      ],
-                      'kwargs': {},
-                    });
-
-                    final valueIds = [];
-                    for (var value
-                        in attributeValues.where((v) => v.isNotEmpty)) {
-                      final valueId = await _odooClient.callKw({
-                        'model': 'product.attribute.value',
-                        'method': 'create',
-                        'args': [
-                          {
-                            'name': value,
-                            'attribute_id': attributeId,
-                          }
-                        ],
-                        'kwargs': {},
-                      });
-                      valueIds.add(valueId);
-                    }
-
-                    await _odooClient.callKw({
-                      'model': 'product.template.attribute.line',
-                      'method': 'create',
-                      'args': [
-                        {
-                          'product_tmpl_id': _productData['product_tmpl_id'][0],
-                          'attribute_id': attributeId,
-                          'value_ids': [
-                            [6, 0, valueIds]
-                          ],
-                        }
-                      ],
-                      'kwargs': {},
-                    });
-
-                    Navigator.pop(context);
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                          content: Text('Attribute "$attributeName" added')),
-                    );
-                    await _loadProductData();
-                  } catch (e) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Error adding attribute: $e')),
-                    );
-                  }
-                }
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: primaryColor,
-              ),
-              child: const Text('SAVE',),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
 
   Widget _buildSectionCard({required String title, required Widget content}) {
     return Column(
@@ -2253,6 +1292,28 @@ Stock: ${_productData['qty_available'] ?? 0} units
         ),
         if (showDivider) Divider(height: 1, color: Colors.grey.shade300),
       ],
+    );
+  }
+}
+
+class PhotoViewer extends StatelessWidget {
+  final String imageUrl;
+
+  const PhotoViewer({Key? key, required this.imageUrl}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        backgroundColor: Colors.black,
+        foregroundColor: Colors.white,
+      ),
+      body: PhotoView(
+        imageProvider: imageUrl.startsWith('data:image')
+            ? MemoryImage(base64Decode(imageUrl.split(',')[1]))
+            : NetworkImage(imageUrl) as ImageProvider,
+        backgroundDecoration: const BoxDecoration(color: Colors.black),
+      ),
     );
   }
 }

@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:latest_van_sale_application/main_page/main_page.dart';
 import 'package:latest_van_sale_application/secondary_pages/1/sale_orders.dart';
+import 'package:latest_van_sale_application/secondary_pages/sale_order_details_page.dart';
 import 'package:odoo_rpc/odoo_rpc.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -17,6 +18,7 @@ import '../../authentication/login_page.dart';
 import '../../providers/invoice_provider.dart';
 import '../../providers/order_picking_provider.dart';
 import '../../providers/sale_order_provider.dart';
+import '../pending_deliveries.dart';
 import '../todays_sales_page.dart';
 import 'invoice_list_page.dart';
 
@@ -28,6 +30,7 @@ class SaleOrder {
   final double total;
   final String state;
   final String invoiceStatus;
+  final String? deliveryStatus;
   final List<dynamic> partnerId;
 
   SaleOrder({
@@ -37,6 +40,7 @@ class SaleOrder {
     required this.total,
     required this.state,
     required this.invoiceStatus,
+    this.deliveryStatus,
     required this.partnerId,
   });
 
@@ -48,6 +52,7 @@ class SaleOrder {
       total: json['amount_total'].toDouble(),
       state: json['state'],
       invoiceStatus: json['invoice_status'] ?? 'Not Invoiced',
+      deliveryStatus: json['delivery_status'],
       partnerId: json['partner_id'] ?? [0, 'Unknown'],
     );
   }
@@ -352,6 +357,7 @@ class OdooService {
       final startOfWeek = today.subtract(Duration(days: today.weekday - 1));
       final endOfWeek = startOfWeek.add(Duration(days: 7));
 
+      // Daily sales
       final salesResult = await callKW(
         model: 'sale.order',
         method: 'search_read',
@@ -371,17 +377,96 @@ class OdooService {
         },
       );
 
+      // Pending deliveries
       final pendingDeliveriesResult = await callKW(
         model: 'sale.order',
         method: 'search_count',
         args: [
           [
             ['state', '=', 'sale'],
+            [
+              'delivery_status',
+              'in',
+              ['pending', 'partial', 'in_progress', 'incomplete']
+            ]
           ]
         ],
         kwargs: {},
       );
 
+      // Deliveries to be completed (scheduled)
+      final deliveriesToBeCompletedResult = await callKW(
+        model: 'sale.order',
+        method: 'search_count',
+        args: [
+          [
+            [
+              'state',
+              'in',
+              ['sale', 'done']
+            ],
+            [
+              'delivery_status',
+              'in',
+              ['pending', 'partial', 'in_progress', 'incomplete']
+            ]
+          ]
+        ],
+        kwargs: {},
+      );
+
+      // In-transit deliveries
+      final inTransitDeliveriesResult = await callKW(
+        model: 'sale.order',
+        method: 'search_count',
+        args: [
+          [
+            [
+              'state',
+              'in',
+              ['sale', 'done']
+            ],
+            ['delivery_status', '=', 'in_progress']
+          ]
+        ],
+        kwargs: {},
+      );
+
+      // Delivered orders
+      final deliveredResult = await callKW(
+        model: 'sale.order',
+        method: 'search_count',
+        args: [
+          [
+            [
+              'state',
+              'in',
+              ['sale', 'done']
+            ],
+            ['delivery_status', '=', 'delivered']
+          ]
+        ],
+        kwargs: {},
+      );
+
+      // Delayed deliveries (you can customize the logic based on business rules)
+      final delayedDeliveriesResult = await callKW(
+        model: 'sale.order',
+        method: 'search_count',
+        args: [
+          [
+            [
+              'state',
+              'in',
+              ['sale', 'done']
+            ],
+            ['delivery_status', '=', 'late']
+          ]
+        ],
+        kwargs: {},
+      );
+
+      // Unpaid invoices
       final unpaidInvoicesResult = await callKW(
         model: 'account.move',
         method: 'search_count',
@@ -399,6 +484,7 @@ class OdooService {
         kwargs: {},
       );
 
+      // Weekly sales
       final weeklySalesResult = await callKW(
         model: 'sale.order',
         method: 'search_read',
@@ -418,6 +504,7 @@ class OdooService {
         },
       );
 
+      // Visited customers today
       final visitedCustomersResult = await callKW(
         model: 'sale.order',
         method: 'search_read',
@@ -437,6 +524,7 @@ class OdooService {
         },
       );
 
+      // Total customers
       final totalCustomersResult = await callKW(
         model: 'res.partner',
         method: 'search_count',
@@ -448,6 +536,7 @@ class OdooService {
         kwargs: {},
       );
 
+      // Parsing results
       int todaySales = 0;
       double totalRevenue = 0.0;
       Set<int> visitedCustomerIds = {};
@@ -460,15 +549,11 @@ class OdooService {
       if (visitedCustomersResult is List) {
         visitedCustomerIds = visitedCustomersResult
             .where((order) =>
-                order['partner_id'] is List && order['partner_id'].length > 0)
+                order['partner_id'] is List && order['partner_id'].isNotEmpty)
             .map((order) => order['partner_id'][0] as int)
             .toSet();
       }
 
-      int pendingDeliveries =
-          pendingDeliveriesResult is int ? pendingDeliveriesResult : 0;
-      int unpaidInvoices =
-          unpaidInvoicesResult is int ? unpaidInvoicesResult : 0;
       int visitedCustomers = visitedCustomerIds.length;
       int totalCustomers =
           totalCustomersResult is int ? totalCustomersResult : 0;
@@ -476,8 +561,10 @@ class OdooService {
 
       double weeklyRevenue = 0.0;
       if (weeklySalesResult is List) {
-        weeklyRevenue = weeklySalesResult.fold(0.0,
-            (sum, item) => sum + (item['amount_total']?.toDouble() ?? 0.0));
+        weeklyRevenue = weeklySalesResult.fold(
+          0.0,
+          (sum, item) => sum + (item['amount_total']?.toDouble() ?? 0.0),
+        );
       }
 
       double weeklyTrend =
@@ -485,17 +572,17 @@ class OdooService {
 
       return DashboardStats(
         todaySales: todaySales,
-        pendingDeliveries: pendingDeliveries,
-        unpaidInvoices: unpaidInvoices,
+        pendingDeliveries: pendingDeliveriesResult ?? 0,
+        unpaidInvoices: unpaidInvoicesResult ?? 0,
         totalRevenue: totalRevenue,
         weeklyTrend: weeklyTrend,
         topSellingProduct: 'N/A',
         visitedCustomers: visitedCustomers,
         remainingCustomers: remainingCustomers,
-        scheduledDeliveries: 0,
-        inTransitDeliveries: 0,
-        delivered: 0,
-        delayedDeliveries: 0,
+        scheduledDeliveries: deliveriesToBeCompletedResult ?? 0,
+        inTransitDeliveries: inTransitDeliveriesResult ?? 0,
+        delivered: deliveredResult ?? 0,
+        delayedDeliveries: delayedDeliveriesResult ?? 0,
       );
     } catch (e) {
       debugPrint('Error fetching dashboard stats: $e');
@@ -618,20 +705,30 @@ class _DashboardPageState extends State<DashboardPage>
   List<SaleOrder>? _cachedOrders;
   String _username = "";
   bool _isInitialLoad = true;
+  bool _isMounted = false; // Add a flag to track mounted state
 
   @override
   void initState() {
     super.initState();
+    _isMounted = true; // Set to true when the widget is created
     _loadCachedData();
     _loadUsername();
     _initFuture = _initializeService();
   }
 
+  @override
+  void dispose() {
+    _isMounted = false; // Set to false when the widget is disposed
+    super.dispose();
+  }
+
   Future<void> _loadUsername() async {
     final prefs = await SharedPreferences.getInstance();
-    setState(() {
-      _username = prefs.getString('userName') ?? "User";
-    });
+    if (_isMounted) { // Check if mounted before calling setState
+      setState(() {
+        _username = prefs.getString('userName') ?? "User";
+      });
+    }
   }
 
   Future<void> _loadCachedData() async {
@@ -655,7 +752,9 @@ class _DashboardPageState extends State<DashboardPage>
             .map((json) => SaleOrder.fromJson(json as Map<String, dynamic>))
             .toList();
       }
-      setState(() {});
+      if (_isMounted) { // Check if mounted before calling setState
+        setState(() {});
+      }
     } catch (e) {
       debugPrint('Error loading cached data: $e');
     }
@@ -688,7 +787,9 @@ class _DashboardPageState extends State<DashboardPage>
         debugPrint('Base64 decoding failed: $e');
       }
     }
-    setState(() {});
+    if (_isMounted) { // Check if mounted before calling setState
+      setState(() {});
+    }
   }
 
   Future<bool> _initializeService() async {
@@ -698,40 +799,48 @@ class _DashboardPageState extends State<DashboardPage>
         await _loadUserImage();
         _refreshData();
       }
-      setState(() {
-        _isInitialLoad = false;
-      });
+      if (_isMounted) { // Check if mounted before calling setState
+        setState(() {
+          _isInitialLoad = false;
+        });
+      }
       return initialized;
     } catch (e) {
       debugPrint('Initialization error: $e');
-      setState(() {
-        _isInitialLoad = false;
-      });
+      if (_isMounted) { // Check if mounted before calling setState
+        setState(() {
+          _isInitialLoad = false;
+        });
+      }
       return false;
     }
   }
 
-  void _refreshData() async {
+  Future<void> _refreshData() async {
     try {
       final stats = await _odooService.getDashboardStats();
       final customers = await _odooService.getTodayCustomers();
       final orders = await _odooService.getRecentSaleOrders();
       await _saveCachedData(stats: stats, customers: customers, orders: orders);
-      setState(() {
-        _cachedStats = stats;
-        _cachedCustomers = customers;
-        _cachedOrders = orders;
-      });
+      if (_isMounted) { // Check if mounted before calling setState
+        setState(() {
+          _cachedStats = stats;
+          _cachedCustomers = customers;
+          _cachedOrders = orders;
+        });
+      }
     } catch (e) {
       debugPrint('Error refreshing data: $e');
     }
   }
 
   Future<void> _handleRefresh() async {
-    _refreshData();
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Dashboard refreshed')),
-    );
+    await _refreshData();
+    if (mounted) { // Use the built-in mounted check here as it's within a UI interaction
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Dashboard refreshed')),
+      );
+    }
     return Future.delayed(const Duration(seconds: 1));
   }
 
@@ -762,9 +871,11 @@ class _DashboardPageState extends State<DashboardPage>
                     ),
                   ),
                   onPressed: () {
-                    setState(() {
-                      _initFuture = _initializeService();
-                    });
+                    if (_isMounted) { // Check if mounted before calling setState
+                      setState(() {
+                        _initFuture = _initializeService();
+                      });
+                    }
                   },
                   child: const Text('Retry',
                       style: TextStyle(color: Colors.white)),
@@ -774,7 +885,7 @@ class _DashboardPageState extends State<DashboardPage>
                   onPressed: () {
                     Navigator.pushReplacement(
                       context,
-                      MaterialPageRoute(builder: (context) => const Login()),
+                      MaterialPageRoute(builder: (context) =>  Login()),
                     );
                   },
                   child: const Text('Log In',
@@ -787,10 +898,10 @@ class _DashboardPageState extends State<DashboardPage>
 
         if (snapshot.data == false) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
-            Navigator.pushReplacement(
-              context,
-              MaterialPageRoute(builder: (context) => const Login()),
-            );
+            // Navigator.pushReplacement(
+            //   context,
+            //   MaterialPageRoute(builder: (context) => const Login()),
+            // );
           });
           return _buildDashboard();
         }
@@ -1102,12 +1213,22 @@ class _DashboardPageState extends State<DashboardPage>
                           ),
                           const SizedBox(width: 16),
                           Expanded(
-                            child: _buildStatCard(
-                              'Pending Deliveries',
-                              '${_cachedStats!.pendingDeliveries}',
-                              Icons.local_shipping,
-                              Colors.orange[700]!,
-                              subtitle: 'Today',
+                            child: GestureDetector(
+                              onTap: () {
+                                Navigator.push(
+                                    context,
+                                    SlidingPageTransitionRL(
+                                        page: PendingDeliveriesPage(
+                                      showPendingOnly: true,
+                                    )));
+                              },
+                              child: _buildStatCard(
+                                'Pending Deliveries',
+                                '${_cachedStats!.pendingDeliveries}',
+                                Icons.local_shipping,
+                                Colors.orange[700]!,
+                                subtitle: 'Today',
+                              ),
                             ),
                           ),
                         ],
@@ -1141,12 +1262,22 @@ class _DashboardPageState extends State<DashboardPage>
                           ),
                           const SizedBox(width: 16),
                           Expanded(
-                            child: _buildStatCard(
-                              'Total Revenue',
-                              '\$${_cachedStats!.totalRevenue.toStringAsFixed(2)}',
-                              Icons.attach_money,
-                              const Color(0xFFC13030),
-                              subtitle: 'Today',
+                            child: InkWell(
+                              onTap: () {
+                                Navigator.push(
+                                    context,
+                                    SlidingPageTransitionRL(
+                                        page: PendingDeliveriesPage(
+                                      showPendingOnly: false,
+                                    )));
+                              },
+                              child: _buildStatCard(
+                                'Total Revenue',
+                                '\$${_cachedStats!.totalRevenue.toStringAsFixed(2)}',
+                                Icons.attach_money,
+                                const Color(0xFFC13030),
+                                subtitle: 'Today',
+                              ),
                             ),
                           ),
                         ],
@@ -1226,8 +1357,15 @@ class _DashboardPageState extends State<DashboardPage>
                 ),
                 TextButton(
                   onPressed: () {
-                    // Navigator.push(context,
-                    //     SlidingPageTransitionRL(page: SaleOrdersList()));
+                    // Navigator.push(
+                    //   context,
+                    //   SlidingPageTransitionRL(
+                    //     page: TodaysSalesPage(
+                    //       provider: Provider.of<SalesOrderProvider>(context,
+                    //           listen: false),
+                    //     ),
+                    //   ),
+                    // );
                   },
                   child: const Text(
                     'View All',
@@ -1253,11 +1391,6 @@ class _DashboardPageState extends State<DashboardPage>
                       itemBuilder: (context, index) {
                         final order = _cachedOrders![index];
                         return ListTile(
-                          leading: CircleAvatar(
-                            backgroundColor: Colors.blue[100],
-                            child:
-                                const Icon(Icons.receipt, color: Colors.blue),
-                          ),
                           title: Text(order.name),
                           subtitle: Text(
                             '${order.customerName} • \$${order.total.toStringAsFixed(2)}',
@@ -1286,7 +1419,14 @@ class _DashboardPageState extends State<DashboardPage>
                               ),
                             ),
                           ),
-                          onTap: () {},
+                          onTap: () {
+                            Navigator.push(
+                                context,
+                                SlidingPageTransitionRL(
+                                    page: SaleOrderDetailPage(
+                                  orderData: order.toJson(),
+                                )));
+                          },
                         );
                       },
                     ),
@@ -1504,6 +1644,10 @@ class _DashboardPageState extends State<DashboardPage>
   }
 
   Widget _buildDeliveryStatusCard() {
+    if (_cachedStats == null) {
+      return const SizedBox(); // or a loading/shimmer widget
+    }
+
     return Card(
       elevation: 2,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
@@ -1524,8 +1668,8 @@ class _DashboardPageState extends State<DashboardPage>
                     '${_cachedStats!.scheduledDeliveries}', primaryLightColor),
                 _buildStatusItem('In Transit',
                     '${_cachedStats!.inTransitDeliveries}', primaryLightColor),
-                _buildStatusItem('Delivered', '${_cachedStats!.delivered}',
-                    primaryLightColor),
+                _buildStatusItem('Delivered',
+                    '${_cachedStats!.delivered}', primaryLightColor),
                 _buildStatusItem('Delayed',
                     '${_cachedStats!.delayedDeliveries}', primaryLightColor),
               ],

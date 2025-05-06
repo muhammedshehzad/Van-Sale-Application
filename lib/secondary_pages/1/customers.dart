@@ -137,6 +137,10 @@ class _CustomersListState extends State<CustomersList> {
   }
 
   Future<void> _loadProducts() async {
+    setState(() {
+      _isLoading = true;
+    });
+
     try {
       final client = await SessionManager.getActiveClient();
       if (client == null) {
@@ -155,34 +159,53 @@ class _CustomersListState extends State<CustomersList> {
             'default_code',
             'image_1920',
             'attribute_line_ids',
+            'product_tmpl_id', // Added for variant filtering
           ],
         },
       });
 
-      final List<Product> fetchedProducts = (result as List).map((productData) {
+      // Group products by product_tmpl_id and select the first variant
+      final Map<int, dynamic> mainVariants = {};
+      for (var productData in result as List) {
+        final templateId = productData['product_tmpl_id'] is List
+            ? productData['product_tmpl_id'][0] as int
+            : 0;
+        if (!mainVariants.containsKey(templateId)) {
+          mainVariants[templateId] = productData;
+        }
+      }
+
+      final List<Product> fetchedProducts = mainVariants.values.map((productData) {
         List<ProductAttribute> attributes = [];
-        if (productData['attribute_line_ids'] != false) {
+        if (productData['attribute_line_ids'] != false && productData['attribute_line_ids'] != null) {
           attributes = _parseAttributes(productData['attribute_line_ids']);
         }
 
+        // Log product data for debugging
+        log("Product ${productData['id']}: name=${productData['name']}, default_code=${productData['default_code']} (type: ${productData['default_code'].runtimeType}), image_1920=");
+
         return Product(
-          id: productData['id'].toString(),
-          name: productData['name'] ?? 'Unnamed Product',
+          id: (productData['id'] ?? 0).toString(),
+          name: productData['name'] as String? ?? 'Unnamed Product',
           price: (productData['list_price'] as num?)?.toDouble() ?? 0.0,
           defaultCode: productData['default_code'] is String
-              ? productData['default_code']
-              : null,
+              ? productData['default_code'] as String
+              : '', // Default to empty string
           imageUrl: productData['image_1920'] is String
-              ? productData['image_1920']
+              ? productData['image_1920'] as String
               : null,
-          vanInventory: 1,
+          vanInventory: 1, // Hardcoded as in original
           attributes: attributes,
+          variantCount: productData['product_variant_count'] as int? ?? 0,
         );
       }).toList();
 
       setState(() {
-        _products = fetchedProducts;
+        _products = fetchedProducts..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+        _isLoading = false;
       });
+
+      log("Successfully fetched ${fetchedProducts.length} main variant products");
     } catch (e) {
       log('Failed to fetch products: $e');
       ScaffoldMessenger.of(context).showSnackBar(
@@ -192,9 +215,12 @@ class _CustomersListState extends State<CustomersList> {
           duration: const Duration(seconds: 3),
         ),
       );
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
     }
   }
-
   List<ProductAttribute> _parseAttributes(dynamic attributeLineIds) {
     return [
       ProductAttribute(
@@ -285,274 +311,7 @@ class _CustomersListState extends State<CustomersList> {
     }
   }
 
-  Future<void> _createSaleOrderInOdooDirectly(BuildContext context,
-      Customer customer, String? orderNotes, String? paymentMethod) async {
-    final salesOrderProvider =
-        Provider.of<SalesOrderProvider>(context, listen: false);
-    try {
-      if (_selectedProducts.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Please select at least one product'),
-            backgroundColor: Colors.red,
-            duration: Duration(seconds: 3),
-          ),
-        );
-        return;
-      }
 
-      if (paymentMethod == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Please select a payment method'),
-            backgroundColor: Colors.red,
-            duration: Duration(seconds: 3),
-          ),
-        );
-        return;
-      }
-
-      // Validate product attributes
-      for (var product in _selectedProducts) {
-        if (product.attributes != null && product.attributes!.isNotEmpty) {
-          if (!_productAttributes.containsKey(product.id) ||
-              _productAttributes[product.id]!.isEmpty) {
-            log('Product ${product.name} requires attributes but none selected');
-            final combinations = await showAttributeSelectionDialog(
-              context,
-              product,
-              requestedQuantity: _quantities[product.id] ?? 1,
-              existingCombinations: _productAttributes[product.id],
-            );
-            if (combinations == null || combinations.isEmpty) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text('Please select attributes for ${product.name}'),
-                  backgroundColor: Colors.red,
-                  duration: const Duration(seconds: 3),
-                ),
-              );
-              return;
-            }
-            setState(() {
-              _productAttributes[product.id] = combinations;
-              _quantities[product.id] = combinations.fold<int>(
-                  0, (sum, comb) => sum + (comb['quantity'] as int));
-            });
-          }
-        }
-      }
-
-      final client = await SessionManager.getActiveClient();
-      if (client == null) {
-        throw Exception('No active Odoo session found. Please log in again.');
-      }
-
-      setState(() {
-        _isLoading = true;
-      });
-
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (context) => const Center(child: CircularProgressIndicator()),
-      );
-
-      final orderId = await _getNextOrderSequence(client);
-      final existingDraftId = await _findExistingDraftOrder(orderId);
-      final orderDate = DateTime.now();
-      final orderLines = <dynamic>[];
-      double orderTotal = 0.0;
-
-      // Build order lines
-      for (var product in _selectedProducts) {
-        final quantity = _quantities[product.id] ?? 1;
-        final combinations = _productAttributes[product.id] ?? [];
-
-        if (combinations.isNotEmpty) {
-          for (var combo in combinations) {
-            final qty = combo['quantity'] as int;
-            final attrs = combo['attributes'] as Map<String, String>;
-            double extraCost = 0.0;
-
-            if (product.attributes != null) {
-              for (var attr in product.attributes!) {
-                final value = attrs[attr.name];
-                if (value != null && attr.extraCost != null) {
-                  extraCost += attr.extraCost![value] ?? 0.0;
-                }
-              }
-            }
-
-            final lineTotal = (product.price + extraCost) * qty;
-            orderTotal += lineTotal;
-
-            orderLines.add([
-              0,
-              0,
-              {
-                'product_id': int.parse(product.id),
-                'name':
-                    '${product.name} (${attrs.entries.map((e) => '${e.key}: ${e.value}').join(', ')})',
-                'product_uom_qty': qty,
-                'price_unit': product.price + extraCost,
-              }
-            ]);
-          }
-        } else {
-          final lineTotal = product.price * quantity;
-          orderTotal += lineTotal;
-
-          orderLines.add([
-            0,
-            0,
-            {
-              'product_id': int.parse(product.id),
-              'name': product.name,
-              'product_uom_qty': quantity,
-              'price_unit': product.price,
-            }
-          ]);
-        }
-      }
-
-      final paymentTermId = await _getPaymentTermId(client, paymentMethod);
-      int saleOrderId;
-
-      // Handle draft or new order
-      if (existingDraftId != null) {
-        await client.callKw({
-          'model': 'sale.order',
-          'method': 'write',
-          'args': [
-            [existingDraftId],
-            {
-              'order_line': [
-                [5, 0, 0]
-              ], // Clear existing lines
-            },
-          ],
-          'kwargs': {},
-        });
-        await client.callKw({
-          'model': 'sale.order',
-          'method': 'write',
-          'args': [
-            [existingDraftId],
-            {
-              'partner_id': int.parse(customer.id),
-              'order_line': orderLines,
-              'state': 'sale',
-              'date_order': DateFormat('yyyy-MM-dd HH:mm:ss').format(orderDate),
-              'note': orderNotes,
-              'payment_term_id': paymentTermId,
-            },
-          ],
-          'kwargs': {},
-        });
-        saleOrderId = existingDraftId;
-        log('Draft sale order updated: $orderId (Odoo ID: $saleOrderId)');
-      } else {
-        saleOrderId = await client.callKw({
-          'model': 'sale.order',
-          'method': 'create',
-          'args': [
-            {
-              'name': orderId,
-              'partner_id': int.parse(customer.id),
-              'order_line': orderLines,
-              'state': 'sale',
-              'date_order': DateFormat('yyyy-MM-dd HH:mm:ss').format(orderDate),
-              'note': orderNotes,
-              'payment_term_id': paymentTermId,
-            }
-          ],
-          'kwargs': {},
-        });
-        log('Sale order created: $orderId (Odoo ID: $saleOrderId)');
-      }
-
-      final orderItems = _selectedProducts
-          .map((product) => OrderItem(
-                product: product,
-                quantity: _quantities[product.id] ?? 1,
-                selectedAttributes:
-                    _productAttributes[product.id]?.isNotEmpty ?? false
-                        ? _productAttributes[product.id]!.first['attributes']
-                        : null,
-              ))
-          .toList();
-
-      await salesOrderProvider.confirmOrderInCyllo(
-        orderId: orderId,
-        items: orderItems,
-      );
-
-      Navigator.pop(context); // Close loading dialog
-
-      // Navigate to confirmation page
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(
-          builder: (context) => OrderConfirmationPage(
-            orderId: orderId,
-            items: orderItems,
-            totalAmount: orderTotal,
-            customer: customer,
-            paymentMethod: paymentMethod,
-            orderNotes: orderNotes,
-            orderDate: orderDate,
-          ),
-        ),
-      );
-
-      setState(() {
-        _selectedProducts.clear();
-        _quantities.clear();
-        _totalAmount = 0.0;
-        _productAttributes.clear();
-        _draftOrderId = null;
-        _isLoading = false;
-      });
-    } catch (e, stackTrace) {
-      if (Navigator.canPop(context)) {
-        Navigator.pop(context);
-      }
-      log('Failed to create order: $e', error: e, stackTrace: stackTrace);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to create order: $e'),
-          backgroundColor: Colors.red,
-          duration: const Duration(seconds: 5),
-        ),
-      );
-    } finally {
-      setState(() {
-        _isLoading = false;
-      });
-    }
-  }
-
-  Future<String> _getNextOrderSequence(OdooClient client) async {
-    try {
-      final result = await client.callKw({
-        'model': 'ir.sequence',
-        'method': 'next_by_code',
-        'args': ['sale.order'],
-        'kwargs': {},
-      });
-
-      if (result is String && result.contains('/')) {
-        return result.split('/').last;
-      }
-
-      return result?.toString() ??
-          DateTime.now().millisecondsSinceEpoch.toString().substring(7);
-    } catch (e) {
-      final timestamp = DateTime.now().millisecondsSinceEpoch.toString();
-      return timestamp.substring(timestamp.length - 4).padLeft(4, '0');
-    }
-  }
 
   @override
   Widget build(BuildContext context) {

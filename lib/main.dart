@@ -1,20 +1,21 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:latest_van_sale_application/assets/widgets%20and%20consts/create_sale_order_dialog.dart';
+import 'package:latest_van_sale_application/authentication/login_provider.dart';
+import 'package:latest_van_sale_application/providers/data_provider.dart';
 import 'package:latest_van_sale_application/providers/invoice_details_provider.dart';
 import 'package:latest_van_sale_application/providers/invoice_provider.dart';
 import 'package:latest_van_sale_application/providers/order_picking_provider.dart';
 import 'package:latest_van_sale_application/providers/sale_order_detail_provider.dart';
 import 'package:latest_van_sale_application/providers/sale_order_provider.dart';
+import 'package:latest_van_sale_application/secondary_pages/delivey_details_page.dart';
+import 'package:latest_van_sale_application/secondary_pages/products_picking_page.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-
+import 'assets/widgets and consts/cached_data.dart';
 import 'authentication/login_page.dart';
 import 'main_page/main_page.dart';
 
-// Define primary color (replace with your actual primary color)
-
-// App theme
 final appTheme = ThemeData(
   primaryColor: primaryColor,
   colorScheme: ColorScheme.fromSwatch().copyWith(
@@ -27,8 +28,6 @@ final appTheme = ThemeData(
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  // Initialize cameras or other async dependencies if needed
-  // await initializeCameras(); // Uncomment if initializeCameras is defined
   runApp(
     MultiProvider(
       providers: [
@@ -38,6 +37,9 @@ void main() async {
         ChangeNotifierProvider(create: (_) => InvoiceProvider()),
         ChangeNotifierProvider(create: (_) => CustomersProvider()),
         ChangeNotifierProvider(create: (_) => ProductsProvider()),
+        ChangeNotifierProvider(create: (_) => LoginProvider()),
+        ChangeNotifierProvider(create: (_) => DataSyncManager()),
+        ChangeNotifierProvider(create: (_) => DataProvider()),
         ChangeNotifierProvider(
             create: (_) => SaleOrderDetailProvider(orderData: {})),
       ],
@@ -59,6 +61,9 @@ class _MyAppState extends State<MyApp> {
   String? _errorMessage;
   double _progress = 0.0;
 
+  // Create an instance of DataSyncManager
+  final DataSyncManager _syncManager = DataSyncManager();
+
   @override
   void initState() {
     super.initState();
@@ -68,10 +73,10 @@ class _MyAppState extends State<MyApp> {
   Future<void> _checkLoginStatus() async {
     final progressTracker = ProgressTracker(
       tasks: [
-        ProgressTask(name: 'Checking login', weight: 0.2),
-        ProgressTask(name: 'Loading products', weight: 0.3),
-        ProgressTask(name: 'Loading customers', weight: 0.3),
-        ProgressTask(name: 'Fetching order details', weight: 0.2),
+        ProgressTask(name: 'Checking login', weight: 0.1),
+        ProgressTask(name: 'Loading cached data', weight: 0.3),
+        ProgressTask(name: 'Checking for updates', weight: 0.1),
+        ProgressTask(name: 'Syncing data if needed', weight: 0.5),
       ],
       onProgressUpdate: (progress) {
         setState(() {
@@ -87,25 +92,19 @@ class _MyAppState extends State<MyApp> {
       progressTracker.completeTask('Checking login');
 
       if (isLoggedIn) {
-        final orderProvider =
-            Provider.of<OrderPickingProvider>(context, listen: false);
-        final salesProvider =
-            Provider.of<SalesOrderProvider>(context, listen: false);
+        // Task 2: Load cached data first (fast)
+        await _syncManager.loadCachedData(context);
+        progressTracker.completeTask('Loading cached data');
 
-        // Task 2: Load products
-        await salesProvider.loadProducts();
-        progressTracker.completeTask('Loading products');
+        // Task 3: Check if we need to sync
+        final needsSync = await _syncManager.needsSync();
+        progressTracker.completeTask('Checking for updates');
 
-        // Task 3: Load customers
-        await orderProvider.loadCustomers();
-        progressTracker.completeTask('Loading customers');
-
-        // Task 4: Fetch order details
-        final orderData = {'': 1}; // Replace with actual order data
-        final saleOrderDetailProvider =
-            SaleOrderDetailProvider(orderData: orderData);
-        await saleOrderDetailProvider.fetchOrderDetails();
-        progressTracker.completeTask('Fetching order details');
+        // Task 4: Sync data if needed
+        if (needsSync) {
+          await _syncManager.performFullSync(context);
+        }
+        progressTracker.completeTask('Syncing data if needed');
       }
 
       setState(() {
@@ -151,13 +150,25 @@ class _MyAppState extends State<MyApp> {
       );
     }
     if (_isLoggedIn) {
-      return const MainPage(); // Use your existing MainPage
+      return MainPageWrapper(syncManager: _syncManager);
     }
-    return const Login();
+    return Login();
   }
 }
 
-// ProgressTask, ProgressTracker, LoadingScreen, RadialProgressPainter, ErrorScreen classes remain unchanged
+// A wrapper for MainPage that provides access to the syncManager
+class MainPageWrapper extends StatelessWidget {
+  final DataSyncManager syncManager;
+
+  const MainPageWrapper({super.key, required this.syncManager});
+
+  @override
+  Widget build(BuildContext context) {
+    return MainPage(syncManager: syncManager);
+  }
+}
+
+// ProgressTask and ProgressTracker classes remain unchanged
 class ProgressTask {
   final String name;
   final double weight;
@@ -366,7 +377,7 @@ class ErrorScreen extends StatelessWidget {
                 // Navigate to Login page and clear the navigation stack
                 Navigator.pushAndRemoveUntil(
                   context,
-                  MaterialPageRoute(builder: (context) => const Login()),
+                  MaterialPageRoute(builder: (context) => Login()),
                   (route) => false, // Remove all previous routes
                 );
               },

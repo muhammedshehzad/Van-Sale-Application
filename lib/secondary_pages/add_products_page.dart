@@ -59,6 +59,7 @@ class _AddProductPageState extends State<AddProductPage> {
   Map<String, dynamic>? _selectedVendor;
   bool _isLoadingVendors = false;
   bool _isLoadingCategories = false;
+  bool _isLoading = false; // Tracks button click state
   List<String> _routes = [
     'Buy',
     'Manufacture',
@@ -171,6 +172,7 @@ class _AddProductPageState extends State<AddProductPage> {
     required List<String> items,
     required ValueChanged<String> onChanged,
     String? helperText,
+    String? Function(dynamic val)? validator,
   }) {
     // First, ensure the value exists in the items list
     if (!items.contains(value)) {
@@ -185,6 +187,7 @@ class _AddProductPageState extends State<AddProductPage> {
       padding: const EdgeInsets.symmetric(vertical: 8.0),
       child: DropdownButtonFormField<String>(
         value: value,
+        validator: validator,
         decoration: InputDecoration(
           labelText: label,
           helperText: helperText,
@@ -203,24 +206,6 @@ class _AddProductPageState extends State<AddProductPage> {
         },
       ),
     );
-  }
-
-  void _addSupplier() {
-    if (_supplierNameController.text.isNotEmpty &&
-        _supplierPriceController.text.isNotEmpty) {
-      setState(() {
-        _suppliers.add({
-          'name': _supplierNameController.text,
-          'price': double.parse(_supplierPriceController.text),
-          'leadTime': int.tryParse(_supplierLeadTimeController.text) ?? 0
-        });
-
-        // Clear the controllers
-        _supplierNameController.clear();
-        _supplierPriceController.clear();
-        _supplierLeadTimeController.clear();
-      });
-    }
   }
 
   void _addAttribute() {
@@ -256,8 +241,12 @@ class _AddProductPageState extends State<AddProductPage> {
   int _mapCategoryToOdooId(String category) => 1;
 
   Future<void> _addProduct() async {
+    setState(() {
+      _isLoading = true; // Show loading state
+    });
     if (_formKey.currentState!.validate()) {
       try {
+        await Future.delayed(const Duration(seconds: 2));
         final client = await SessionManager.getActiveClient();
         if (client == null) throw Exception('No active session found.');
 
@@ -477,6 +466,9 @@ class _AddProductPageState extends State<AddProductPage> {
         ),
       );
     }
+    setState(() {
+      _isLoading = false; // Reset loading state
+    });
   }
 
   String _mapTrackingToOdoo(String tracking) {
@@ -836,32 +828,46 @@ class _AddProductPageState extends State<AddProductPage> {
 
                 // General Information Section
                 _sectionHeader('General Information'),
-                _buildDropdownField(
-                  label: 'Product Type',
-                  value: _selectedProductType,
-                  items: ['product', 'consu', 'service'],
-                  onChanged: (val) =>
-                      setState(() => _selectedProductType = val),
-                  helperText: 'Storable, Consumable, or Service',
-                ),
+
+                // General Information Section
                 _buildTextField(
                   controller: _nameController,
                   label: 'Product Name',
-                  validator: (val) =>
-                      val == null || val.isEmpty ? 'Enter product name' : null,
+                  validator: (val) {
+                    if (val == null || val.isEmpty) return 'Enter product name';
+                    if (val.length < 3)
+                      return 'Product name must be at least 3 characters';
+                    return null;
+                  },
                 ),
                 _buildTextField(
                   controller: _internalReferenceController,
                   label: 'Internal Reference',
                   helperText: 'SKU or product code',
+                  validator: (val) {
+                    if (val == null || val.isEmpty)
+                      return 'Enter internal reference';
+                    if (!RegExp(r'^[a-zA-Z0-9\-]+$').hasMatch(val)) {
+                      return 'Only alphanumeric characters and hyphens allowed';
+                    }
+                    if (val.length < 4)
+                      return 'Internal reference must be at least 4 characters';
+                    return null;
+                  },
                 ),
                 _buildTextField(
                   controller: _barcodeController,
                   label: 'Barcode',
-                  validator: (val) =>
-                      (val != null && val.isNotEmpty && val.length < 8)
-                          ? 'Minimum 8 characters'
-                          : null,
+                  validator: (val) {
+                    if (val == null || val.isEmpty) return null; // Optional
+                    if (val.length < 8 || val.length > 13) {
+                      return 'Barcode must be between 8 and 13 characters';
+                    }
+                    if (!RegExp(r'^\d+$').hasMatch(val)) {
+                      return 'Barcode must contain only digits';
+                    }
+                    return null;
+                  },
                 ),
                 _buildDropdownField(
                   label: 'Responsible',
@@ -871,63 +877,30 @@ class _AddProductPageState extends State<AddProductPage> {
                   items: ['Select Responsible', ..._users],
                   onChanged: (val) => setState(() => _selectedResponsible =
                       val == 'Select Responsible' ? '' : val),
+                  validator: (val) {
+                    if (val == null || val == 'Select Responsible') {
+                      return 'Please select a responsible person';
+                    }
+                    return null;
+                  },
+                ),
+                _buildDropdownField(
+                  label: 'Product Type',
+                  value: _selectedProductType,
+                  items: ['product', 'consu', 'service'],
+                  onChanged: (val) =>
+                      setState(() => _selectedProductType = val),
+                  helperText: 'Storable, Consumable, or Service',
+                  validator: (val) {
+                    if (val == null ||
+                        !['product', 'consu', 'service'].contains(val)) {
+                      return 'Please select a valid product type';
+                    }
+                    return null;
+                  },
                 ),
 
-                // Tags
-                Row(
-                  children: [
-                    Expanded(
-                      child: _buildTextField(
-                        controller: _tagController,
-                        label: 'Add Tag',
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    ElevatedButton(
-                      onPressed: _addTag,
-                      child: const Text('Add'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: primaryColor,
-                        foregroundColor: Colors.white,
-                      ),
-                    ),
-                  ],
-                ),
-                if (_selectedTags.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 8.0),
-                    child: Wrap(
-                      spacing: 8.0,
-                      runSpacing: 4.0,
-                      children: _selectedTags
-                          .map((tag) => Chip(
-                                label: Text(tag),
-                                deleteIcon: const Icon(Icons.close, size: 16),
-                                onDeleted: () =>
-                                    setState(() => _selectedTags.remove(tag)),
-                              ))
-                          .toList(),
-                    ),
-                  ),
-
-                const SizedBox(height: 10),
-                _sectionHeader('Inventory'),
-                _buildSearchableDropdown(
-                  label: 'Category',
-                  items: _categories,
-                  onSelected: (category) => setState(
-                      () => _selectedCategory = category['id'].toString()),
-                  isLoading: _isLoadingCategories,
-                  selectedItemId: _selectedCategory,
-                ),
-                _buildCategoryAdder(),
-                // Sales & Purchase Section
-                _sectionHeader('Sales & Purchase'),
-                SwitchListTile(
-                  title: const Text('Can be Sold'),
-                  value: _canBeSold,
-                  onChanged: (val) => setState(() => _canBeSold = val),
-                ),
+// Sales & Purchase Section
                 if (_canBeSold) ...[
                   _buildTextField(
                     controller: _salePriceController,
@@ -937,9 +910,10 @@ class _AddProductPageState extends State<AddProductPage> {
                     validator: (val) {
                       if (val == null || val.isEmpty) return 'Enter sale price';
                       final parsed = double.tryParse(val);
-                      if (parsed == null || parsed < 0) {
-                        return 'Enter a valid sale price';
-                      }
+                      if (parsed == null) return 'Enter a valid sale price';
+                      if (parsed < 0.01)
+                        return 'Sale price must be at least 0.01';
+                      if (parsed > 1000000) return 'Sale price seems too high';
                       return null;
                     },
                   ),
@@ -948,32 +922,27 @@ class _AddProductPageState extends State<AddProductPage> {
                     label: 'Sales Price Extra',
                     keyboardType:
                         const TextInputType.numberWithOptions(decimal: true),
-                  ),
-                  _buildDropdownField(
-                    label: 'Sales Tax',
-                    value: _selectedSalesTax,
-                    items: _taxes,
-                    onChanged: (val) => setState(() => _selectedSalesTax = val),
-                  ),
-                  _buildDropdownField(
-                    label: 'Invoice Policy',
-                    value: _selectedInvoicePolicy,
-                    items: _invoicePolicies,
-                    onChanged: (val) =>
-                        setState(() => _selectedInvoicePolicy = val),
+                    validator: (val) {
+                      if (val == null || val.isEmpty) return null; // Optional
+                      final parsed = double.tryParse(val);
+                      if (parsed == null) return 'Enter a valid extra price';
+                      if (parsed < 0) return 'Extra price cannot be negative';
+                      return null;
+                    },
                   ),
                   _buildTextField(
                     controller: _customerLeadTimeController,
                     label: 'Customer Lead Time (days)',
                     keyboardType: TextInputType.number,
+                    validator: (val) {
+                      if (val == null || val.isEmpty) return null; // Optional
+                      final parsed = int.tryParse(val);
+                      if (parsed == null) return 'Enter a valid lead time';
+                      if (parsed < 0) return 'Lead time cannot be negative';
+                      return null;
+                    },
                   ),
                 ],
-
-                SwitchListTile(
-                  title: const Text('Can be Purchased'),
-                  value: _canBePurchased,
-                  onChanged: (val) => setState(() => _canBePurchased = val),
-                ),
                 if (_canBePurchased) ...[
                   _buildTextField(
                     controller: _costController,
@@ -983,25 +952,16 @@ class _AddProductPageState extends State<AddProductPage> {
                     validator: (val) {
                       if (val == null || val.isEmpty) return 'Enter cost price';
                       final parsed = double.tryParse(val);
-                      if (parsed == null || parsed < 0) {
-                        return 'Enter a valid cost';
-                      }
+                      if (parsed == null) return 'Enter a valid cost price';
+                      if (parsed < 0.01)
+                        return 'Cost price must be at least 0.01';
+                      if (parsed > 1000000) return 'Cost price seems too high';
                       return null;
                     },
                   ),
-                  _buildDropdownField(
-                    label: 'Purchase Tax',
-                    value: _selectedPurchaseTax,
-                    items: _taxes,
-                    onChanged: (val) =>
-                        setState(() => _selectedPurchaseTax = val),
-                  ),
                 ],
 
-                const SizedBox(height: 10),
-
-                // Inventory Section
-                _sectionHeader('Inventory'),
+// Inventory Section
                 _buildTextField(
                   controller: _quantityController,
                   label: 'Initial Quantity',
@@ -1009,9 +969,9 @@ class _AddProductPageState extends State<AddProductPage> {
                   validator: (val) {
                     if (val == null || val.isEmpty) return 'Enter quantity';
                     final parsed = int.tryParse(val);
-                    if (parsed == null || parsed < 0) {
-                      return 'Enter a valid quantity';
-                    }
+                    if (parsed == null) return 'Enter a valid quantity';
+                    if (parsed < 0) return 'Quantity cannot be negative';
+                    if (parsed > 100000) return 'Quantity seems too high';
                     return null;
                   },
                 ),
@@ -1020,6 +980,12 @@ class _AddProductPageState extends State<AddProductPage> {
                   value: _selectedUnit,
                   items: ProductItem().units,
                   onChanged: (val) => setState(() => _selectedUnit = val),
+                  validator: (val) {
+                    if (val == null || !ProductItem().units.contains(val)) {
+                      return 'Please select a valid unit of measure';
+                    }
+                    return null;
+                  },
                 ),
                 _buildDropdownField(
                   label: 'Purchase Unit of Measure',
@@ -1027,78 +993,118 @@ class _AddProductPageState extends State<AddProductPage> {
                   items: ProductItem().units,
                   onChanged: (val) =>
                       setState(() => _selectedPurchaseUnit = val),
+                  validator: (val) {
+                    if (val == null || !ProductItem().units.contains(val)) {
+                      return 'Please select a valid purchase unit';
+                    }
+                    return null;
+                  },
                 ),
                 _buildDropdownField(
                   label: 'Category',
                   value: _selectedCategory,
                   items: ProductItem().categories,
                   onChanged: (val) => setState(() => _selectedCategory = val),
-                ),
-                _buildDropdownField(
-                  label: 'Tracking',
-                  value: _selectedInventoryTracking,
-                  items: _trackingOptions,
-                  onChanged: (val) =>
-                      setState(() => _selectedInventoryTracking = val),
-                ),
-                SwitchListTile(
-                  title: const Text('Expiration Date Tracking'),
-                  value: _expirationTracking,
-                  onChanged: (val) => setState(() => _expirationTracking = val),
-                ),
-                _buildDropdownField(
-                  label: 'Routes',
-                  value: _selectedRoute,
-                  items: _routes,
-                  onChanged: (val) => setState(() => _selectedRoute = val),
+                  validator: (val) {
+                    if (val == null ||
+                        !ProductItem().categories.contains(val)) {
+                      return 'Please select a valid category';
+                    }
+                    return null;
+                  },
                 ),
                 _buildTextField(
                   controller: _minOrderQuantityController,
                   label: 'Minimum Order Quantity',
                   keyboardType: TextInputType.number,
+                  validator: (val) {
+                    if (val == null || val.isEmpty) return null; // Optional
+                    final parsed = double.tryParse(val);
+                    if (parsed == null) return 'Enter a valid quantity';
+                    if (parsed < 0)
+                      return 'Minimum order quantity cannot be negative';
+                    return null;
+                  },
                 ),
                 _buildTextField(
                   controller: _reorderMinController,
                   label: 'Reordering Min Quantity',
                   keyboardType: TextInputType.number,
+                  validator: (val) {
+                    if (val == null || val.isEmpty) return null; // Optional
+                    final parsed = double.tryParse(val);
+                    if (parsed == null) return 'Enter a valid quantity';
+                    if (parsed < 0)
+                      return 'Reordering min quantity cannot be negative';
+                    final maxQty =
+                        double.tryParse(_reorderMaxController.text) ??
+                            double.infinity;
+                    if (parsed > maxQty)
+                      return 'Min quantity cannot exceed max quantity';
+                    return null;
+                  },
                 ),
                 _buildTextField(
                   controller: _reorderMaxController,
                   label: 'Reordering Max Quantity',
                   keyboardType: TextInputType.number,
+                  validator: (val) {
+                    if (val == null || val.isEmpty) return null; // Optional
+                    final parsed = double.tryParse(val);
+                    if (parsed == null) return 'Enter a valid quantity';
+                    if (parsed < 0)
+                      return 'Reordering max quantity cannot be negative';
+                    final minQty =
+                        double.tryParse(_reorderMinController.text) ?? 0;
+                    if (parsed < minQty)
+                      return 'Max quantity cannot be less than min quantity';
+                    return null;
+                  },
                 ),
 
-                const SizedBox(height: 10),
-
-                // Extra Information
-                _sectionHeader('Extra Information'),
+// Extra Information Section
                 _buildTextField(
                   controller: _weightController,
                   label: 'Weight (kg)',
                   keyboardType:
                       const TextInputType.numberWithOptions(decimal: true),
+                  validator: (val) {
+                    if (val == null || val.isEmpty) return null; // Optional
+                    final parsed = double.tryParse(val);
+                    if (parsed == null) return 'Enter a valid weight';
+                    if (parsed < 0) return 'Weight cannot be negative';
+                    return null;
+                  },
                 ),
                 _buildTextField(
                   controller: _volumeController,
                   label: 'Volume (m³)',
                   keyboardType:
                       const TextInputType.numberWithOptions(decimal: true),
+                  validator: (val) {
+                    if (val == null || val.isEmpty) return null; // Optional
+                    final parsed = double.tryParse(val);
+                    if (parsed == null) return 'Enter a valid volume';
+                    if (parsed < 0) return 'Volume cannot be negative';
+                    return null;
+                  },
                 ),
                 _buildTextField(
                   controller: _descriptionController,
                   label: 'Description',
                   maxLines: 3,
+                  validator: (val) {
+                    if (val == null || val.isEmpty)
+                      return 'Enter a description';
+                    if (val.length < 10)
+                      return 'Description must be at least 10 characters';
+                    return null;
+                  },
                 ),
 
-                const SizedBox(height: 10),
+// Vendors Section
 
-                // Variants Section
-                _sectionHeader('Product Variants'),
-                SwitchListTile(
-                  title: const Text('Has Variants'),
-                  value: _hasVariants,
-                  onChanged: (val) => setState(() => _hasVariants = val),
-                ),
+// Product Variants Section
                 if (_hasVariants) ...[
                   Row(
                     children: [
@@ -1106,6 +1112,13 @@ class _AddProductPageState extends State<AddProductPage> {
                         child: _buildTextField(
                           controller: _attributeNameController,
                           label: 'Attribute Name',
+                          validator: (val) {
+                            if (val == null || val.isEmpty)
+                              return 'Enter attribute name';
+                            if (val.length < 2)
+                              return 'Attribute name must be at least 2 characters';
+                            return null;
+                          },
                         ),
                       ),
                       const SizedBox(width: 10),
@@ -1113,6 +1126,17 @@ class _AddProductPageState extends State<AddProductPage> {
                         child: _buildTextField(
                           controller: _attributeValuesController,
                           label: 'Values (comma separated)',
+                          validator: (val) {
+                            if (val == null || val.isEmpty)
+                              return 'Enter attribute values';
+                            final values =
+                                val.split(',').map((e) => e.trim()).toList();
+                            if (values.isEmpty ||
+                                values.any((v) => v.isEmpty)) {
+                              return 'Enter valid comma-separated values';
+                            }
+                            return null;
+                          },
                         ),
                       ),
                       IconButton(
@@ -1158,34 +1182,24 @@ class _AddProductPageState extends State<AddProductPage> {
                     onSelected: _onVendorSelected,
                     isLoading: _isLoadingVendors,
                   ),
-                  Row(
-                    children: [
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: _buildTextField(
-                          controller: _supplierPriceController,
-                          label: 'Price',
-                          keyboardType: const TextInputType.numberWithOptions(
-                              decimal: true),
-                        ),
-                      ),
-                    ],
+                  const SizedBox(width: 10),
+                  _buildTextField(
+                    controller: _supplierPriceController,
+                    label: 'Price',
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
                   ),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _buildTextField(
-                          controller: _supplierLeadTimeController,
-                          label: 'Lead Time (days)',
-                          keyboardType: TextInputType.number,
-                        ),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.add_circle),
-                        onPressed: _addSupplier,
-                        color: const Color(0xFF875A7B),
-                      ),
-                    ],
+                  _buildTextField(
+                    controller: _supplierLeadTimeController,
+                    label: 'Lead Time (days)',
+                    keyboardType: TextInputType.number,
+                    validator: (val) {
+                      if (val == null || val.isEmpty) return null; // Optional
+                      final parsed = int.tryParse(val);
+                      if (parsed == null) return 'Enter a valid lead time';
+                      if (parsed < 0) return 'Lead time cannot be negative';
+                      return null;
+                    },
                   ),
                   if (_suppliers.isNotEmpty)
                     ListView.builder(
@@ -1216,25 +1230,42 @@ class _AddProductPageState extends State<AddProductPage> {
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton.icon(
-                    icon: const Icon(
-                      Icons.check,
-                      color: Colors.white,
-                    ),
+                    icon: _isLoading
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              valueColor:
+                                  AlwaysStoppedAnimation<Color>(Colors.white),
+                            ),
+                          )
+                        : const Icon(
+                            Icons.check,
+                            color: Colors.white,
+                          ),
                     label: Text(
-                      widget.productToEdit != null
-                          ? 'Update Product'
-                          : 'Add Product',
-                      style: TextStyle(color: Colors.white),
+                      _isLoading
+                          ? 'Processing...'
+                          : widget.productToEdit != null
+                              ? 'Update Product'
+                              : 'Add Product',
+                      style: const TextStyle(color: Colors.white),
                     ),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: primaryColor,
+                      backgroundColor: _isLoading
+                          ? primaryColor.withOpacity(
+                              0.7) // Subtle color change when clicked
+                          : primaryColor,
                       padding: const EdgeInsets.symmetric(
                           horizontal: 32, vertical: 12),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12),
                       ),
                     ),
-                    onPressed: _addProduct,
+                    onPressed: _isLoading
+                        ? null
+                        : _addProduct, // Disable button while loading
                   ),
                 ),
               ],
