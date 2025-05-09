@@ -149,6 +149,7 @@ class _SaleOrderPageState extends State<SaleOrderPage> {
             paymentMethod: _paymentMethod,
             orderNotes: _orderNotesController.text.trim(),
             orderDate: orderDate,
+            shippingCost: 0,
           ),
         ),
       );

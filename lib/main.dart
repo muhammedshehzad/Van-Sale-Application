@@ -8,8 +8,6 @@ import 'package:latest_van_sale_application/providers/invoice_provider.dart';
 import 'package:latest_van_sale_application/providers/order_picking_provider.dart';
 import 'package:latest_van_sale_application/providers/sale_order_detail_provider.dart';
 import 'package:latest_van_sale_application/providers/sale_order_provider.dart';
-import 'package:latest_van_sale_application/secondary_pages/delivey_details_page.dart';
-import 'package:latest_van_sale_application/secondary_pages/products_picking_page.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'assets/widgets and consts/cached_data.dart';
@@ -61,6 +59,9 @@ class _MyAppState extends State<MyApp> {
   String? _errorMessage;
   double _progress = 0.0;
 
+  // Create a ProgressTracker instance as a class member
+  late ProgressTracker _progressTracker;
+
   // Create an instance of DataSyncManager
   final DataSyncManager _syncManager = DataSyncManager();
 
@@ -70,13 +71,20 @@ class _MyAppState extends State<MyApp> {
     _checkLoginStatus();
   }
 
+  @override
+  void dispose() {
+    _progressTracker.dispose();
+    super.dispose();
+  }
+
   Future<void> _checkLoginStatus() async {
-    final progressTracker = ProgressTracker(
+    _progressTracker = ProgressTracker(
       tasks: [
         ProgressTask(name: 'Checking login', weight: 0.1),
-        ProgressTask(name: 'Loading cached data', weight: 0.3),
+        ProgressTask(name: 'Loading cached data', weight: 0.2),
         ProgressTask(name: 'Checking for updates', weight: 0.1),
-        ProgressTask(name: 'Syncing data if needed', weight: 0.5),
+        ProgressTask(name: 'Syncing data', weight: 0.5),
+        ProgressTask(name: 'Finalizing', weight: 0.1),
       ],
       onProgressUpdate: (progress) {
         setState(() {
@@ -86,26 +94,50 @@ class _MyAppState extends State<MyApp> {
     );
 
     try {
+      // Create artificial delay for smoother progress visualization
+      await Future.delayed(const Duration(milliseconds: 300));
+
       // Task 1: Check login status
       final prefs = await SharedPreferences.getInstance();
       final isLoggedIn = prefs.getBool('isLoggedIn') ?? false;
-      progressTracker.completeTask('Checking login');
+      _progressTracker.completeTask('Checking login');
+
+      // Small delay for visual smoothness
+      await Future.delayed(const Duration(milliseconds: 200));
 
       if (isLoggedIn) {
         // Task 2: Load cached data first (fast)
         await _syncManager.loadCachedData(context);
-        progressTracker.completeTask('Loading cached data');
+        _progressTracker.completeTask('Loading cached data');
+
+        // Small delay for visual smoothness
+        await Future.delayed(const Duration(milliseconds: 200));
 
         // Task 3: Check if we need to sync
         final needsSync = await _syncManager.needsSync();
-        progressTracker.completeTask('Checking for updates');
+        _progressTracker.completeTask('Checking for updates');
+
+        // Small delay for visual smoothness
+        await Future.delayed(const Duration(milliseconds: 200));
 
         // Task 4: Sync data if needed
         if (needsSync) {
           await _syncManager.performFullSync(context);
         }
-        progressTracker.completeTask('Syncing data if needed');
+        _progressTracker.completeTask('Syncing data');
+
+        // Small delay for visual smoothness
+        await Future.delayed(const Duration(milliseconds: 300));
       }
+
+      // Always complete the finalizing task
+      _progressTracker.completeTask('Finalizing');
+
+      // Ensure we reach 100% before finishing
+      _progressTracker.completeAll();
+
+      // Give time for the progress to visually reach 100%
+      await Future.delayed(const Duration(milliseconds: 500));
 
       setState(() {
         _isLoggedIn = isLoggedIn;
@@ -168,7 +200,7 @@ class MainPageWrapper extends StatelessWidget {
   }
 }
 
-// ProgressTask and ProgressTracker classes remain unchanged
+// ProgressTask and ProgressTracker classes (unchanged from second snippet)
 class ProgressTask {
   final String name;
   final double weight;
@@ -181,15 +213,43 @@ class ProgressTracker {
   final Function(double) onProgressUpdate;
   final Map<String, bool> _completedTasks = {};
 
+  // Add a timer for smoother updates
+  Timer? _smoothingTimer;
+  double _displayedProgress = 0.0;
+  double _actualProgress = 0.0;
+  bool _isCompleting = false;
+
   ProgressTracker({required this.tasks, required this.onProgressUpdate}) {
     for (var task in tasks) {
       _completedTasks[task.name] = false;
     }
+
+    // Start a timer that slowly increases progress even between task completions
+    _smoothingTimer =
+        Timer.periodic(const Duration(milliseconds: 100), (timer) {
+      if (_isCompleting) {
+        // When completing, move faster toward 100%
+        _displayedProgress += (_actualProgress - _displayedProgress) * 0.2;
+
+        // Ensure we reach exactly 100% at the end
+        if (_actualProgress >= 0.99 && _displayedProgress > 0.95) {
+          _displayedProgress = 1.0;
+          timer.cancel();
+        }
+      } else if (_displayedProgress < _actualProgress) {
+        // Normal progression: move toward actual progress
+        _displayedProgress += (_actualProgress - _displayedProgress) * 0.1;
+      }
+
+      onProgressUpdate(_displayedProgress);
+    });
   }
 
   void completeTask(String taskName) {
-    _completedTasks[taskName] = true;
-    _updateProgress();
+    if (_completedTasks.containsKey(taskName) && !_completedTasks[taskName]!) {
+      _completedTasks[taskName] = true;
+      _updateProgress();
+    }
   }
 
   void _updateProgress() {
@@ -197,17 +257,30 @@ class ProgressTracker {
     double completedWeight = tasks.fold(0.0, (sum, task) {
       return sum + (_completedTasks[task.name]! ? task.weight : 0.0);
     });
-    double progress = totalWeight > 0 ? completedWeight / totalWeight : 0.0;
-    onProgressUpdate(progress);
+    _actualProgress = totalWeight > 0 ? completedWeight / totalWeight : 0.0;
+  }
+
+  // Call this when all tasks are actually finished
+  void completeAll() {
+    _isCompleting = true;
+    _actualProgress = 1.0;
+  }
+
+  void dispose() {
+    _smoothingTimer?.cancel();
   }
 }
 
+// LoadingScreen and RadialProgressPainter (unchanged from second snippet)
 class LoadingScreen extends StatefulWidget {
   final String message;
   final double progress;
 
-  const LoadingScreen(
-      {super.key, required this.message, required this.progress});
+  const LoadingScreen({
+    Key? key,
+    required this.message,
+    required this.progress,
+  }) : super(key: key);
 
   @override
   State<LoadingScreen> createState() => _LoadingScreenState();
@@ -350,43 +423,47 @@ class ErrorScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(Icons.error_outline, color: Colors.red, size: 60),
-            const SizedBox(height: 16),
-            const Text(
-              'Something went wrong',
-              style: TextStyle(fontSize: 20),
+      body: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(Icons.error_outline, color: Colors.red, size: 60),
+                const SizedBox(height: 16),
+                const Text(
+                  'Something went wrong',
+                  style: TextStyle(fontSize: 20),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  errorMessage,
+                  style: const TextStyle(fontSize: 16),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 16),
+                ElevatedButton(
+                  onPressed: onRetry,
+                  child: const Text('Retry'),
+                ),
+                const SizedBox(height: 8),
+                TextButton(
+                  onPressed: () {
+                    // Navigate to Login page and clear the navigation stack
+                    Navigator.pushAndRemoveUntil(
+                      context,
+                      MaterialPageRoute(builder: (context) => Login()),
+                      (route) => false, // Remove all previous routes
+                    );
+                  },
+                  child: const Text(
+                    'Go to Login',
+                    style: TextStyle(color: primaryColor),
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(height: 8),
-            Text(
-              errorMessage,
-              style: const TextStyle(fontSize: 16),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 16),
-            ElevatedButton(
-              onPressed: onRetry,
-              child: const Text('Retry'),
-            ),
-            const SizedBox(height: 8),
-            TextButton(
-              onPressed: () {
-                // Navigate to Login page and clear the navigation stack
-                Navigator.pushAndRemoveUntil(
-                  context,
-                  MaterialPageRoute(builder: (context) => Login()),
-                  (route) => false, // Remove all previous routes
-                );
-              },
-              child: const Text(
-                'Go to Login',
-                style: TextStyle(color: Colors.deepPurple),
-              ),
-            ),
-          ],
+          ),
         ),
       ),
     );

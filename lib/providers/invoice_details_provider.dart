@@ -11,7 +11,13 @@ class InvoiceDetailsProvider extends ChangeNotifier {
   bool _isLoading = false;
   String _errorMessage = '';
   NumberFormat currencyFormat = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
-
+  void resetState() {
+    _invoiceData = {};
+    _isLoading = false;
+    _errorMessage = '';
+    currencyFormat = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
+    notifyListeners();
+  }
   // Getters
   Map<String, dynamic> get invoiceData => _invoiceData;
   bool get isLoading => _isLoading;

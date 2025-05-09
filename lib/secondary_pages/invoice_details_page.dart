@@ -1,49 +1,45 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
-
 import '../assets/widgets and consts/page_transition.dart';
 import '../authentication/cyllo_session_model.dart';
 import '../providers/invoice_details_provider.dart';
 import 'payment_page.dart';
 
 class InvoiceDetailsPage extends StatefulWidget {
-  final Map<String, dynamic> invoiceData;
-
+  final String invoiceId;
   const InvoiceDetailsPage({
     Key? key,
-    required this.invoiceData,
+    required this.invoiceId,
   }) : super(key: key);
 
   @override
-  State<InvoiceDetailsPage> createState() => _InvoiceDetailsPageState();
+  State createState() => _InvoiceDetailsPageState();
 }
 
 class _InvoiceDetailsPageState extends State<InvoiceDetailsPage> {
   @override
   void initState() {
     super.initState();
+    debugPrint('InvoiceDetailsPage: Initializing with invoiceId = ${widget.invoiceId}');
+    // Reset provider state on page load to avoid showing previous invoice data
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final provider = Provider.of<InvoiceDetailsProvider>(context, listen: false);
+      // Clear previous data before fetching new data
+      provider.resetState();
 
-    debugPrint(
-        'InvoiceDetailsPage: Initializing with invoiceData = ${widget.invoiceData}');
-    final provider =
-        Provider.of<InvoiceDetailsProvider>(context, listen: false);
-    provider.setInvoiceData(widget.invoiceData);
-    // Fetch details only if line_details is missing or empty
-    if (widget.invoiceData['id'] != null &&
-        (widget.invoiceData['line_details'] == null ||
-            widget.invoiceData['line_details'].isEmpty)) {
-      provider.fetchInvoiceDetails(widget.invoiceData['id'].toString());
-    }
+      if (widget.invoiceId.isNotEmpty) {
+        provider.fetchInvoiceDetails(widget.invoiceId);
+      } else {
+        debugPrint('InvoiceDetailsPage: No invoiceId provided');
+      }
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     return Consumer<InvoiceDetailsProvider>(
       builder: (context, provider, child) {
-        if (provider.invoiceData['id'] != widget.invoiceData['id']) {
-          provider.setInvoiceData(widget.invoiceData);
-        }
         return Scaffold(
           backgroundColor: Colors.grey[100],
           appBar: AppBar(
@@ -71,12 +67,12 @@ class _InvoiceDetailsPageState extends State<InvoiceDetailsPage> {
             ],
           ),
           body: SafeArea(
-            child: provider.isLoading && provider.invoiceNumber.isEmpty
+            child: provider.isLoading || provider.invoiceNumber.isEmpty
                 ? const Center(
-                    child: CircularProgressIndicator(color: Color(0xFFA12424)))
+                child: CircularProgressIndicator(color: Color(0xFFA12424)))
                 : provider.errorMessage.isNotEmpty
-                    ? _buildErrorState(provider)
-                    : _buildContent(provider),
+                ? _buildErrorState(provider)
+                : _buildContent(provider),
           ),
         );
       },
@@ -101,8 +97,7 @@ class _InvoiceDetailsPageState extends State<InvoiceDetailsPage> {
             ElevatedButton(
               onPressed: () {
                 print('${provider.errorMessage} Retry button pressed');
-                provider.fetchInvoiceDetails(
-                    widget.invoiceData['id']?.toString() ?? '');
+                provider.fetchInvoiceDetails(widget.invoiceId);
               },
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFFA12424),
@@ -120,8 +115,7 @@ class _InvoiceDetailsPageState extends State<InvoiceDetailsPage> {
   Widget _buildContent(InvoiceDetailsProvider provider) {
     return RefreshIndicator(
       onRefresh: () async {
-        await provider
-            .fetchInvoiceDetails(widget.invoiceData['id']?.toString() ?? '');
+        await provider.fetchInvoiceDetails(widget.invoiceId);
       },
       child: SingleChildScrollView(
         padding: const EdgeInsets.all(16.0),
@@ -130,25 +124,20 @@ class _InvoiceDetailsPageState extends State<InvoiceDetailsPage> {
           children: [
             // Status Banner
             _buildStatusBanner(provider),
-
             // Invoice Header
             const SizedBox(height: 16),
             _buildInvoiceHeader(provider),
-
             // Payment Progress
             if (!provider.isFullyPaid && provider.invoiceAmount > 0) ...[
               const SizedBox(height: 20),
               _buildPaymentProgress(provider),
             ],
-
             // Invoice Lines
             const SizedBox(height: 20),
             _buildInvoiceLines(provider),
-
             // Pricing Summary
             const SizedBox(height: 20),
             _buildPricingSummary(provider),
-
             // Action Buttons
             if (_invoiceDataIsValid(provider.invoiceData) &&
                 provider.invoiceState != 'draft') ...[
@@ -172,7 +161,7 @@ class _InvoiceDetailsPageState extends State<InvoiceDetailsPage> {
                 provider.invoiceState, provider.isFullyPaid)),
             provider
                 .getInvoiceStatusColor(provider.formatInvoiceState(
-                    provider.invoiceState, provider.isFullyPaid))
+                provider.invoiceState, provider.isFullyPaid))
                 .withOpacity(0.7),
           ],
           begin: Alignment.centerLeft,
@@ -243,7 +232,7 @@ class _InvoiceDetailsPageState extends State<InvoiceDetailsPage> {
                 if (provider.invoiceOrigin.isNotEmpty)
                   Container(
                     padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                     decoration: BoxDecoration(
                       color: Colors.blue[50],
                       borderRadius: BorderRadius.circular(8),
@@ -293,9 +282,9 @@ class _InvoiceDetailsPageState extends State<InvoiceDetailsPage> {
               provider.dueDate == null
                   ? Colors.grey[600]
                   : provider.dueDate!.isBefore(DateTime.now()) &&
-                          !provider.isFullyPaid
-                      ? Colors.red[700]
-                      : null,
+                  !provider.isFullyPaid
+                  ? Colors.red[700]
+                  : null,
             ),
             _buildInfoRow(
               Icons.account_circle,
@@ -311,11 +300,6 @@ class _InvoiceDetailsPageState extends State<InvoiceDetailsPage> {
                   ? 'Standard'
                   : provider.paymentTerms,
             ),
-            // _buildInfoRow(
-            //   Icons.business,
-            //   'Company',
-            //   widget.company.isEmpty ? 'Default Company' : provider.company,
-            // ),
           ],
         ),
       ),
@@ -410,16 +394,15 @@ class _InvoiceDetailsPageState extends State<InvoiceDetailsPage> {
                 final taxAmount = total - subtotal;
                 final discount = line['discount'] as double? ?? 0.0;
                 final taxName = line['tax_ids'] is List &&
-                        line['tax_ids'].isNotEmpty &&
-                        line['tax_ids'][0] is List &&
-                        line['tax_ids'][0].length > 1
+                    line['tax_ids'].isNotEmpty &&
+                    line['tax_ids'][0] is List &&
+                    line['tax_ids'][0].length > 1
                     ? line['tax_ids'][0][1]?.toString() ?? 'None'
                     : 'None';
                 final productId =
-                    line['product_id'] is List && line['product_id'].length > 1
-                        ? line['product_id'][0].toString()
-                        : 'N/A';
-
+                line['product_id'] is List && line['product_id'].length > 1
+                    ? line['product_id'][0].toString()
+                    : 'N/A';
                 return Padding(
                   padding: const EdgeInsets.symmetric(vertical: 8.0),
                   child: Column(
@@ -589,7 +572,7 @@ class _InvoiceDetailsPageState extends State<InvoiceDetailsPage> {
                     const Text(
                       'Amount Due:',
                       style:
-                          TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+                      TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
                     ),
                     Text(
                       '${provider.currencyFormat.format(provider.amountResidual)} ${provider.currency}',
@@ -643,41 +626,41 @@ class _InvoiceDetailsPageState extends State<InvoiceDetailsPage> {
             onPressed: provider.isFullyPaid
                 ? null
                 : () async {
-                    debugPrint('Record Payment button pressed');
-                    try {
-                      final result = await Navigator.push(
-                        context,
-                        SlidingPageTransitionRL(
-                          page: PaymentPage(invoiceData: provider.invoiceData),
-                        ),
-                      );
-                      debugPrint('PaymentPage result: $result');
-                      if (result is Map<String, dynamic>) {
-                        provider.updateInvoiceData(result);
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('Payment recorded successfully'),
-                            backgroundColor: Colors.green,
-                          ),
-                        );
-                      }
-                    } catch (e) {
-                      debugPrint('Navigation error: $e');
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text('Error: $e'),
-                          backgroundColor: Colors.red,
-                        ),
-                      );
-                    }
-                  },
+              debugPrint('Record Payment button pressed');
+              try {
+                final result = await Navigator.push(
+                  context,
+                  SlidingPageTransitionRL(
+                    page: PaymentPage(invoiceData: provider.invoiceData),
+                  ),
+                );
+                debugPrint('PaymentPage result: $result');
+                if (result is Map<dynamic, dynamic>) {
+                  provider.updateInvoiceData(Map<String, dynamic>.from(result));
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Payment recorded successfully'),
+                      backgroundColor: Colors.green,
+                    ),
+                  );
+                }
+              } catch (e) {
+                debugPrint('Navigation error: $e');
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Error: $e'),
+                    backgroundColor: Colors.red,
+                  ),
+                );
+              }
+            },
           ),
         ),
       ],
     );
   }
 
-  bool _invoiceDataIsValid(Map<String, dynamic>? invoiceData) {
+  bool _invoiceDataIsValid(Map? invoiceData) {
     if (invoiceData == null || invoiceData.isEmpty) return false;
     return invoiceData.containsKey('id') && invoiceData.containsKey('state');
   }

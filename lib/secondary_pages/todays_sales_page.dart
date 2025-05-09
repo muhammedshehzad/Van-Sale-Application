@@ -201,26 +201,27 @@ class _TodaysSalesPageState extends State<TodaysSalesPage> {
               child: Padding(
                 padding: const EdgeInsets.all(16.0),
                 child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
                     // Left side: Title and Order Count
                     Expanded(
                       child: Row(
-                        mainAxisAlignment: MainAxisAlignment.start,
-                        crossAxisAlignment: CrossAxisAlignment.center,
                         children: [
-                          const Text(
-                            'Total Sales Today',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.black87,
+                          // Title with potential wrapping
+                          Flexible(
+                            child: Text(
+                              'Total Sales Today',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.black87,
+                              ),
+                              overflow: TextOverflow.ellipsis,
                             ),
                           ),
                           if (provider.todaysOrders.isNotEmpty) ...[
                             const SizedBox(width: 8),
-                            // Space between title and count
+                            // Order count badge - now properly constrained
                             Container(
                               padding: const EdgeInsets.symmetric(
                                 horizontal: 8,
@@ -239,13 +240,15 @@ class _TodaysSalesPageState extends State<TodaysSalesPage> {
                                   color: Colors.grey.shade600,
                                   fontWeight: FontWeight.w500,
                                 ),
+                                overflow: TextOverflow.ellipsis,
                               ),
                             ),
                           ],
                         ],
                       ),
                     ),
-                    // Right side: Total Amount
+                    // Right side: Total Amount - with proper spacing
+                    const SizedBox(width: 8),
                     Text(
                       provider.currencyFormat
                           .format(provider.getTotalSalesAmount()),
@@ -254,6 +257,7 @@ class _TodaysSalesPageState extends State<TodaysSalesPage> {
                         fontWeight: FontWeight.bold,
                         color: primaryColor,
                       ),
+                      overflow: TextOverflow.ellipsis,
                     ),
                   ],
                 ),

@@ -212,9 +212,9 @@ class OdooService {
     try {
       final today = DateTime.now();
       final startOfDay =
-      DateTime(today.year, today.month, today.day).toIso8601String();
+          DateTime(today.year, today.month, today.day).toIso8601String();
       final endOfDay =
-      DateTime(today.year, today.month, today.day + 1).toIso8601String();
+          DateTime(today.year, today.month, today.day + 1).toIso8601String();
       final now = DateTime.now().toIso8601String();
 
       // Scheduled Deliveries: Confirmed or assigned deliveries scheduled for today
@@ -570,32 +570,32 @@ class OdooService {
       if (salesResult is List) {
         todaySales = salesResult.length;
         totalRevenue = salesResult.fold(0.0,
-                (sum, item) => sum + (item['amount_total']?.toDouble() ?? 0.0));
+            (sum, item) => sum + (item['amount_total']?.toDouble() ?? 0.0));
       }
 
       if (visitedCustomersResult is List) {
         visitedCustomerIds = visitedCustomersResult
             .where((order) =>
-        order['partner_id'] is List && order['partner_id'].isNotEmpty)
+                order['partner_id'] is List && order['partner_id'].isNotEmpty)
             .map((order) => order['partner_id'][0] as int)
             .toSet();
       }
 
       int visitedCustomers = visitedCustomerIds.length;
       int totalCustomers =
-      totalCustomersResult is int ? totalCustomersResult : 0;
+          totalCustomersResult is int ? totalCustomersResult : 0;
       int remainingCustomers = totalCustomers - visitedCustomers;
 
       double weeklyRevenue = 0.0;
       if (weeklySalesResult is List) {
         weeklyRevenue = weeklySalesResult.fold(
           0.0,
-              (sum, item) => sum + (item['amount_total']?.toDouble() ?? 0.0),
+          (sum, item) => sum + (item['amount_total']?.toDouble() ?? 0.0),
         );
       }
 
       double weeklyTrend =
-      weeklyRevenue > 0 ? (totalRevenue / weeklyRevenue) * 100 : 0.0;
+          weeklyRevenue > 0 ? (totalRevenue / weeklyRevenue) * 100 : 0.0;
 
       return DashboardStats(
         todaySales: todaySales,
@@ -702,7 +702,7 @@ class OdooService {
       if (todaySalesResult is List) {
         todaySalesCount = todaySalesResult.length;
         todayRevenue = todaySalesResult.fold(0.0,
-                (sum, item) => sum + (item['amount_total']?.toDouble() ?? 0.0));
+            (sum, item) => sum + (item['amount_total']?.toDouble() ?? 0.0));
         salesBreakdown = todaySalesResult
             .where((item) => item is Map<String, dynamic>)
             .map((json) {
@@ -716,14 +716,14 @@ class OdooService {
       if (weeklySalesResult is List) {
         weeklyRevenue = weeklySalesResult.fold(
           0.0,
-              (sum, item) => sum + (item['amount_total']?.toDouble() ?? 0.0),
+          (sum, item) => sum + (item['amount_total']?.toDouble() ?? 0.0),
         );
       }
 
       String topSellingProduct = 'N/A';
       if (topProductResult is List && topProductResult.isNotEmpty) {
         topSellingProduct = topProductResult[0]['product_id'] is List &&
-            topProductResult[0]['product_id'].length > 1
+                topProductResult[0]['product_id'].length > 1
             ? topProductResult[0]['product_id'][1]
             : 'N/A';
       }
@@ -787,9 +787,9 @@ class OdooService {
     try {
       final today = DateTime.now();
       final startOfDay =
-      DateTime(today.year, today.month, today.day).toIso8601String();
+          DateTime(today.year, today.month, today.day).toIso8601String();
       final endOfDay =
-      DateTime(today.year, today.month, today.day + 1).toIso8601String();
+          DateTime(today.year, today.month, today.day + 1).toIso8601String();
 
       final saleOrders = await callKW(
         model: 'sale.order',
@@ -813,7 +813,7 @@ class OdooService {
       if (saleOrders is List && saleOrders.isNotEmpty) {
         final partnerIds = saleOrders
             .where((order) =>
-        order['partner_id'] is List && order['partner_id'].length > 0)
+                order['partner_id'] is List && order['partner_id'].length > 0)
             .map((order) => order['partner_id'][0])
             .toSet()
             .toList();
@@ -1171,7 +1171,7 @@ class _DashboardPageState extends State<DashboardPage>
               scrollDirection: Axis.horizontal,
               children: List.generate(
                 6,
-                    (index) => Container(
+                (index) => Container(
                   width: 80,
                   margin: const EdgeInsets.only(right: 12),
                   child: Column(
@@ -1246,8 +1246,8 @@ class _DashboardPageState extends State<DashboardPage>
     String greeting = now.hour < 12
         ? 'Good Morning'
         : now.hour < 17
-        ? 'Good Afternoon'
-        : 'Good Evening';
+            ? 'Good Afternoon'
+            : 'Good Evening';
 
     return RefreshIndicator(
       onRefresh: _handleRefresh,
@@ -1334,25 +1334,25 @@ class _DashboardPageState extends State<DashboardPage>
                     const SizedBox(height: 8),
                     _cachedStats != null
                         ? Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        _buildOverviewItem(
-                          Icons.store,
-                          'Customers',
-                          '${_cachedStats!.visitedCustomers}/${_cachedStats!.visitedCustomers + _cachedStats!.remainingCustomers}',
-                        ),
-                        _buildOverviewItem(
-                          Icons.assignment_turned_in,
-                          'Sales',
-                          '${_cachedStats!.todaySales}',
-                        ),
-                        _buildOverviewItem(
-                          Icons.attach_money,
-                          'Revenue',
-                          '\$${_cachedStats!.totalRevenue.toStringAsFixed(2)}',
-                        ),
-                      ],
-                    )
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              _buildOverviewItem(
+                                Icons.store,
+                                'Customers',
+                                '${_cachedStats!.visitedCustomers}/${_cachedStats!.visitedCustomers + _cachedStats!.remainingCustomers}',
+                              ),
+                              _buildOverviewItem(
+                                Icons.assignment_turned_in,
+                                'Sales',
+                                '${_cachedStats!.todaySales}',
+                              ),
+                              _buildOverviewItem(
+                                Icons.attach_money,
+                                'Revenue',
+                                '\$${_cachedStats!.totalRevenue.toStringAsFixed(2)}',
+                              ),
+                            ],
+                          )
                         : _buildOverviewShimmer(),
                   ],
                 ),
@@ -1361,99 +1361,99 @@ class _DashboardPageState extends State<DashboardPage>
             const SizedBox(height: 20),
             _cachedStats != null
                 ? Column(
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: GestureDetector(
-                        onTap: () {
-                          Navigator.push(
-                            context,
-                            SlidingPageTransitionRL(
-                              page: TodaysSalesPage(
-                                provider: Provider.of<SalesOrderProvider>(
-                                    context,
-                                    listen: false),
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: GestureDetector(
+                              onTap: () {
+                                Navigator.push(
+                                  context,
+                                  SlidingPageTransitionLR(
+                                    page: TodaysSalesPage(
+                                      provider: Provider.of<SalesOrderProvider>(
+                                          context,
+                                          listen: false),
+                                    ),
+                                  ),
+                                );
+                              },
+                              child: _buildStatCard(
+                                'Today\'s Sales',
+                                '${_cachedStats!.todaySales}',
+                                Icons.trending_up,
+                                Colors.green[700]!,
+                                subtitle:
+                                    '${_cachedStats!.weeklyTrend.toStringAsFixed(1)}% ${_cachedStats!.weeklyTrend >= 0 ? '▲' : '▼'} this week',
                               ),
                             ),
-                          );
-                        },
-                        child: _buildStatCard(
-                          'Today\'s Sales',
-                          '${_cachedStats!.todaySales}',
-                          Icons.trending_up,
-                          Colors.green[700]!,
-                          subtitle:
-                          '${_cachedStats!.weeklyTrend.toStringAsFixed(1)}% ${_cachedStats!.weeklyTrend >= 0 ? '▲' : '▼'} this week',
-                        ),
+                          ),
+                          const SizedBox(width: 16),
+                          Expanded(
+                            child: GestureDetector(
+                              onTap: () {
+                                Navigator.push(
+                                    context,
+                                    SlidingPageTransitionRL(
+                                        page: PendingDeliveriesPage(
+                                      showPendingOnly: true,
+                                    )));
+                              },
+                              child: _buildStatCard(
+                                'Pending Deliveries',
+                                '${_cachedStats!.pendingDeliveries}',
+                                Icons.local_shipping,
+                                Colors.orange[700]!,
+                                subtitle: 'Today',
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
-                    ),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: GestureDetector(
-                        onTap: () {
-                          Navigator.push(
-                              context,
-                              SlidingPageTransitionRL(
-                                  page: PendingDeliveriesPage(
-                                    showPendingOnly: true,
-                                  )));
-                        },
-                        child: _buildStatCard(
-                          'Pending Deliveries',
-                          '${_cachedStats!.pendingDeliveries}',
-                          Icons.local_shipping,
-                          Colors.orange[700]!,
-                          subtitle: 'Today',
-                        ),
+                      const SizedBox(height: 16),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: GestureDetector(
+                              onTap: () {
+                                Navigator.push(
+                                  context,
+                                  SlidingPageTransitionLR(
+                                      page: InvoiceListPage(
+                                    orderData: {},
+                                    provider: Provider.of<InvoiceProvider>(
+                                        context,
+                                        listen: false),
+                                    showUnpaidOnly: true,
+                                  )),
+                                );
+                              },
+                              child: _buildStatCard(
+                                'Unpaid Invoices',
+                                '${_cachedStats!.unpaidInvoices}',
+                                Icons.receipt_long,
+                                Colors.red[700]!,
+                                subtitle: 'Action needed',
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 16),
+                          Expanded(
+                            child: GestureDetector(
+                              onTap: _showRevenueDetailsDialog,
+                              child: _buildStatCard(
+                                'Total Revenue',
+                                '\$${_cachedStats!.totalRevenue.toStringAsFixed(2)}',
+                                Icons.attach_money,
+                                const Color(0xFFC13030),
+                                subtitle: 'Today',
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                Row(
-                  children: [
-                    Expanded(
-                      child: GestureDetector(
-                        onTap: () {
-                          Navigator.push(
-                            context,
-                            SlidingPageTransitionRL(
-                                page: InvoiceListPage(
-                                  orderData: {},
-                                  provider: Provider.of<InvoiceProvider>(
-                                      context,
-                                      listen: false),
-                                  showUnpaidOnly: true,
-                                )),
-                          );
-                        },
-                        child: _buildStatCard(
-                          'Unpaid Invoices',
-                          '${_cachedStats!.unpaidInvoices}',
-                          Icons.receipt_long,
-                          Colors.red[700]!,
-                          subtitle: 'Action needed',
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: GestureDetector(
-                        onTap: _showRevenueDetailsDialog,
-                        child: _buildStatCard(
-                          'Total Revenue',
-                          '\$${_cachedStats!.totalRevenue.toStringAsFixed(2)}',
-                          Icons.attach_money,
-                          const Color(0xFFC13030),
-                          subtitle: 'Today',
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            )
+                    ],
+                  )
                 : _buildStatsShimmer(),
             const SizedBox(height: 16),
             _buildDeliveryStatusCard(),
@@ -1475,7 +1475,7 @@ class _DashboardPageState extends State<DashboardPage>
                     Icons.post_add,
                     'Create Order',
                     Colors.blue[600]!,
-                        () {
+                    () {
                       showCreateOrderSheetGeneral(context);
                     },
                   ),
@@ -1483,7 +1483,7 @@ class _DashboardPageState extends State<DashboardPage>
                     Icons.sync,
                     'Sync Data',
                     Colors.teal[600]!,
-                        () async {
+                    () async {
                       await _handleRefresh();
                     },
                   ),
@@ -1491,25 +1491,25 @@ class _DashboardPageState extends State<DashboardPage>
                     Icons.qr_code_scanner,
                     'Scan Product',
                     Colors.purple[600]!,
-                        () {},
+                    () {},
                   ),
                   _buildQuickActionButton(
                     Icons.map,
                     'Route Plan',
                     Colors.green[600]!,
-                        () => loadRouteData(context),
+                    () => loadRouteData(context),
                   ),
                   _buildQuickActionButton(
                     Icons.inventory_2,
                     'Stock Check',
                     Colors.amber[600]!,
-                        () {},
+                    () {},
                   ),
                   _buildQuickActionButton(
                     Icons.receipt,
                     'Create Invoice',
                     Colors.red[600]!,
-                        () {},
+                    () {},
                   ),
                 ],
               ),
@@ -1547,60 +1547,60 @@ class _DashboardPageState extends State<DashboardPage>
             const SizedBox(height: 8),
             _cachedOrders != null && _cachedOrders!.isNotEmpty
                 ? Card(
-              elevation: 2,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: ListView.separated(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                itemCount:
-                _cachedOrders!.length > 3 ? 3 : _cachedOrders!.length,
-                separatorBuilder: (context, index) =>
-                const Divider(height: 1),
-                itemBuilder: (context, index) {
-                  final order = _cachedOrders![index];
-                  return ListTile(
-                    title: Text(order.name),
-                    subtitle: Text(
-                      '${order.customerName} • \$${order.total.toStringAsFixed(2)}',
+                    elevation: 2,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
                     ),
-                    trailing: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: order.state == "done"
-                            ? Colors.green[50]
-                            : order.state == "sale"
-                            ? Colors.blue[50]
-                            : Colors.orange[50],
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Text(
-                        order.stateFormatted,
-                        style: TextStyle(
-                          color: order.state == "done"
-                              ? Colors.green
-                              : order.state == "sale"
-                              ? Colors.blue
-                              : Colors.orange,
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
+                    child: ListView.separated(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      itemCount:
+                          _cachedOrders!.length > 3 ? 3 : _cachedOrders!.length,
+                      separatorBuilder: (context, index) =>
+                          const Divider(height: 1),
+                      itemBuilder: (context, index) {
+                        final order = _cachedOrders![index];
+                        return ListTile(
+                          title: Text(order.name),
+                          subtitle: Text(
+                            '${order.customerName} • \$${order.total.toStringAsFixed(2)}',
+                          ),
+                          trailing: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: order.state == "done"
+                                  ? Colors.green[50]
+                                  : order.state == "sale"
+                                      ? Colors.blue[50]
+                                      : Colors.orange[50],
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Text(
+                              order.stateFormatted,
+                              style: TextStyle(
+                                color: order.state == "done"
+                                    ? Colors.green
+                                    : order.state == "sale"
+                                        ? Colors.blue
+                                        : Colors.orange,
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                          onTap: () {
+                            Navigator.push(
+                                context,
+                                SlidingPageTransitionRL(
+                                    page: SaleOrderDetailPage(
+                                  orderData: order.toJson(),
+                                )));
+                          },
+                        );
+                      },
                     ),
-                    onTap: () {
-                      Navigator.push(
-                          context,
-                          SlidingPageTransitionRL(
-                              page: SaleOrderDetailPage(
-                                orderData: order.toJson(),
-                              )));
-                    },
-                  );
-                },
-              ),
-            )
+                  )
                 : _buildRecentSalesShimmer(),
           ],
         ),
@@ -1616,7 +1616,7 @@ class _DashboardPageState extends State<DashboardPage>
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: List.generate(
           3,
-              (index) => Column(
+          (index) => Column(
             children: [
               Container(
                 width: 40,
@@ -1654,7 +1654,7 @@ class _DashboardPageState extends State<DashboardPage>
           Row(
             children: List.generate(
               2,
-                  (index) => Expanded(
+              (index) => Expanded(
                 child: Container(
                   margin: const EdgeInsets.only(right: 8),
                   height: 100,
@@ -1670,7 +1670,7 @@ class _DashboardPageState extends State<DashboardPage>
           Row(
             children: List.generate(
               2,
-                  (index) => Expanded(
+              (index) => Expanded(
                 child: Container(
                   margin: const EdgeInsets.only(right: 8),
                   height: 100,
@@ -1699,7 +1699,7 @@ class _DashboardPageState extends State<DashboardPage>
         child: Column(
           children: List.generate(
             3,
-                (index) => ListTile(
+            (index) => ListTile(
               leading: Container(
                 width: 40,
                 height: 40,
@@ -1762,28 +1762,25 @@ class _DashboardPageState extends State<DashboardPage>
     return Card(
       elevation: 2,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(8),
       ),
       child: Padding(
         padding: const EdgeInsets.all(16.0),
-        child: SizedBox(
-          height: 100,
-          width: 200,
+        child: IntrinsicHeight(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
-                mainAxisSize: MainAxisSize.min,
                 children: [
                   Icon(icon, color: color, size: 20),
                   const SizedBox(width: 8),
-                  Flexible(
+                  Expanded(
                     child: Text(
                       title,
                       style: TextStyle(
-                        color: Colors.grey[600],
-                        fontWeight: FontWeight.w500,
-                      ),
+                          color: Colors.grey[600],
+                          fontWeight: FontWeight.bold,
+                          fontSize: 10),
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
@@ -1793,7 +1790,7 @@ class _DashboardPageState extends State<DashboardPage>
               Text(
                 value,
                 style: TextStyle(
-                  fontSize: 24,
+                  fontSize: 20,
                   fontWeight: FontWeight.bold,
                   color: color,
                 ),
@@ -1802,7 +1799,7 @@ class _DashboardPageState extends State<DashboardPage>
                 Text(
                   subtitle,
                   style: TextStyle(
-                    fontSize: 12,
+                    fontSize: 11,
                     color: Colors.grey[600],
                   ),
                 ),
@@ -1956,7 +1953,6 @@ class _RevenueDetailsDialogState extends State<RevenueDetailsDialog> {
                       color: Colors.white,
                     ),
                   ),
-
                 ],
               ),
             ),
@@ -2042,52 +2038,52 @@ class _RevenueDetailsDialogState extends State<RevenueDetailsDialog> {
                           SizedBox(height: 8),
                           details.salesBreakdown.isEmpty
                               ? Text(
-                            'No sales recorded today',
-                            style: TextStyle(
-                                color: Colors.grey[600], fontSize: 14),
-                          )
+                                  'No sales recorded today',
+                                  style: TextStyle(
+                                      color: Colors.grey[600], fontSize: 14),
+                                )
                               : ListView.separated(
-                            shrinkWrap: true,
-                            physics: NeverScrollableScrollPhysics(),
-                            itemCount: details.salesBreakdown.length,
-                            separatorBuilder: (context, index) =>
-                                Divider(height: 1),
-                            itemBuilder: (context, index) {
-                              final sale = details.salesBreakdown[index];
-                              return ListTile(
-                                contentPadding: EdgeInsets.zero,
-                                title: Text(
-                                  sale.customerName,
-                                  style: TextStyle(
-                                      fontWeight: FontWeight.w500),
-                                ),
-                                subtitle: Text(
-                                  'Order: ${sale.name}',
-                                  style: TextStyle(
-                                      color: Colors.grey[600],
-                                      fontSize: 12),
-                                ),
-                                trailing: Text(
-                                  '\$${sale.total.toStringAsFixed(2)}',
-                                  style: TextStyle(
-                                    color: Color(0xFFC13030),
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                                onTap: () {
-                                  Navigator.pop(context);
-                                  Navigator.push(
-                                    context,
-                                    SlidingPageTransitionRL(
-                                      page: SaleOrderDetailPage(
-                                        orderData: sale.toJson(),
+                                  shrinkWrap: true,
+                                  physics: NeverScrollableScrollPhysics(),
+                                  itemCount: details.salesBreakdown.length,
+                                  separatorBuilder: (context, index) =>
+                                      Divider(height: 1),
+                                  itemBuilder: (context, index) {
+                                    final sale = details.salesBreakdown[index];
+                                    return ListTile(
+                                      contentPadding: EdgeInsets.zero,
+                                      title: Text(
+                                        sale.customerName,
+                                        style: TextStyle(
+                                            fontWeight: FontWeight.w500),
                                       ),
-                                    ),
-                                  );
-                                },
-                              );
-                            },
-                          ),
+                                      subtitle: Text(
+                                        'Order: ${sale.name}',
+                                        style: TextStyle(
+                                            color: Colors.grey[600],
+                                            fontSize: 12),
+                                      ),
+                                      trailing: Text(
+                                        '\$${sale.total.toStringAsFixed(2)}',
+                                        style: TextStyle(
+                                          color: Color(0xFFC13030),
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                      onTap: () {
+                                        Navigator.pop(context);
+                                        Navigator.push(
+                                          context,
+                                          SlidingPageTransitionRL(
+                                            page: SaleOrderDetailPage(
+                                              orderData: sale.toJson(),
+                                            ),
+                                          ),
+                                        );
+                                      },
+                                    );
+                                  },
+                                ),
                         ],
                       ),
                     ),
@@ -2230,8 +2226,8 @@ void loadRouteData(BuildContext context) {
                                 mainAxisSize: MainAxisSize.min,
                                 children: const [
                                   CircularProgressIndicator(
-                                    valueColor:
-                                    AlwaysStoppedAnimation(Color(0xFFC13030)),
+                                    valueColor: AlwaysStoppedAnimation(
+                                        Color(0xFFC13030)),
                                   ),
                                   SizedBox(width: 16),
                                   Text(
@@ -2286,7 +2282,7 @@ void loadRouteData(BuildContext context) {
                               .toString()
                               .contains('KeyError: \'sale.route.plan\'')) {
                             errorMessage =
-                            'Route planning unavailable. Contact your administrator.';
+                                'Route planning unavailable. Contact your administrator.';
                           } else if (e is TimeoutException) {
                             errorMessage = 'Timed out. Please try again.';
                           } else if (e is Exception) {
@@ -2319,7 +2315,7 @@ void loadRouteData(BuildContext context) {
                     child: const Text(
                       'Load Route',
                       style:
-                      TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                          TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
                     ),
                   ),
                 ],

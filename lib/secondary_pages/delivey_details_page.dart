@@ -4,8 +4,10 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:latest_van_sale_application/assets/widgets%20and%20consts/page_transition.dart';
+import 'package:latest_van_sale_application/providers/order_picking_provider.dart';
 import 'package:odoo_rpc/odoo_rpc.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../../../../authentication/cyllo_session_model.dart';
@@ -77,20 +79,12 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
       List<Map<String, dynamic>> moveLines) async {
     String? errorMessage;
 
-    if (pickingDetail['state'] == 'done') {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('This delivery is already confirmed.'),
-          backgroundColor: Colors.green,
-        ),
-      );
-      return;
-    }
 
     if (_signature == null) {
       errorMessage = 'Please provide a customer signature.';
+    } else if (_deliveryPhotos.isEmpty) {
+      errorMessage = 'Please capture at least one delivery photo.';
     }
-
     for (var line in moveLines) {
       final tracking = line['tracking'] as String? ?? 'none';
       final moveLineId = line['id'] as int;
@@ -170,18 +164,27 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
       final pickingStateResult = await client.callKw({
         'model': 'stock.picking',
         'method': 'search_read',
-        'args': [[['id', '=', pickingId]], ['state', 'company_id', 'location_id', 'location_dest_id', 'origin']],
+        'args': [
+          [
+            ['id', '=', pickingId]
+          ],
+          ['state', 'company_id', 'location_id', 'location_dest_id', 'origin']
+        ],
         'kwargs': {},
       });
       debugPrint('Picking details fetched: $pickingStateResult');
 
-      if (pickingStateResult.isEmpty) throw Exception('Picking ID $pickingId not found.');
+      if (pickingStateResult.isEmpty)
+        throw Exception('Picking ID $pickingId not found.');
       final pickingData = pickingStateResult[0] as Map<String, dynamic>;
       final currentState = pickingData['state'] as String;
 
       if (currentState == 'done') {
-        final updatedDetails = await _fetchDeliveryDetails(context); // Fetch data outside setState
-        setState(() => _deliveryDetailsFuture = Future.value(updatedDetails)); // Update state synchronously
+        // Fetch updated details before updating state
+        final updatedDetails = await _fetchDeliveryDetails(context);
+        setState(() {
+          _deliveryDetailsFuture = Future.value(updatedDetails);
+        });
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Delivery is already confirmed')),
         );
@@ -194,150 +197,34 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
         await client.callKw({
           'model': 'stock.picking',
           'method': 'action_assign',
-          'args': [[pickingId]],
+          'args': [
+            [pickingId]
+          ],
           'kwargs': {},
         });
         debugPrint('Picking assigned successfully');
       } else if (currentState != 'assigned') {
-        throw Exception('Picking must be in "Confirmed" or "Assigned" state to validate. Current state: $currentState');
+        throw Exception(
+            'Picking must be in "Confirmed" or "Assigned" state to validate. Current state: $currentState');
       }
 
-      List<int> attachmentIds = [];
-      if (_signature != null) {
-        final signatureArgs = {
-          'name': 'Delivery Signature - ${DateTime.now().toIso8601String()}',
-          'datas': _signature,
-          'res_model': 'stock.picking',
-          'res_id': pickingId,
-          'mimetype': 'image/png',
-        };
-        debugPrint('Creating signature attachment for ir.attachment with args: $signatureArgs');
-        final signatureAttachment = await client.callKw({
-          'model': 'ir.attachment',
-          'method': 'create',
-          'args': [signatureArgs],
-          'kwargs': {},
-        });
-        debugPrint('Signature attachment created with ID: $signatureAttachment');
-        attachmentIds.add(signatureAttachment as int);
-      }
-
-      for (var i = 0; i < _deliveryPhotos.length; i++) {
-        final photoName = 'Delivery Photo ${i + 1} - ${DateTime.now().toIso8601String()}';
-        debugPrint('Searching for existing photo attachment with name: $photoName');
-        final photoAttachment = await client.callKw({
-          'model': 'ir.attachment',
-          'method': 'search_read',
-          'args': [[['name', '=', photoName], ['res_model', '=', 'stock.picking'], ['res_id', '=', pickingId]], ['id']],
-          'kwargs': {},
-        });
-        debugPrint('Photo attachment search result: $photoAttachment');
-
-        if (photoAttachment.isNotEmpty) {
-          final photoWriteArgs = {'datas': _deliveryPhotos[i]};
-          debugPrint('Updating existing photo attachment with ID: ${photoAttachment[0]['id']} and args: $photoWriteArgs');
-          await client.callKw({
-            'model': 'ir.attachment',
-            'method': 'write',
-            'args': [[photoAttachment[0]['id']], photoWriteArgs],
-            'kwargs': {},
-          });
-          debugPrint('Photo attachment updated');
-          attachmentIds.add(photoAttachment[0]['id'] as int);
-        } else {
-          final photoCreateArgs = {
-            'name': photoName,
-            'datas': _deliveryPhotos[i],
-            'res_model': 'stock.picking',
-            'res_id': pickingId,
-            'mimetype': 'image/jpeg',
-          };
-          debugPrint('Creating new photo attachment with args: $photoCreateArgs');
-          final newPhotoAttachment = await client.callKw({
-            'model': 'ir.attachment',
-            'method': 'create',
-            'args': [photoCreateArgs],
-            'kwargs': {},
-          });
-          debugPrint('New photo attachment created with ID: $newPhotoAttachment');
-          attachmentIds.add(newPhotoAttachment as int);
-        }
-      }
-
-      final formattedDateTime = DateFormat('yyyy-MM-dd HH:mm:ss').format(DateTime.now().toUtc());
-      final pickingWriteArgs = {
-        'note': _noteController.text.isNotEmpty ? _noteController.text : null,
-        'date_done': formattedDateTime,
-      };
-      debugPrint('Updating stock.picking with ID: $pickingId and args: $pickingWriteArgs');
-      await client.callKw({
-        'model': 'stock.picking',
-        'method': 'write',
-        'args': [[pickingId], pickingWriteArgs],
-        'kwargs': {},
-      });
-      debugPrint('stock.picking updated successfully');
-
-      if (_noteController.text.isNotEmpty || attachmentIds.isNotEmpty) {
-        final messageBody = _noteController.text.isNotEmpty
-            ? _noteController.text
-            : 'Delivery confirmed with ${_signature != null ? 'signature and ' : ''}${_deliveryPhotos.length} photo(s)';
-        final messagePostArgs = {
-          'body': messageBody,
-          'attachment_ids': attachmentIds,
-          'message_type': 'comment',
-          'subtype_id': 1,
-        };
-        debugPrint('Posting message to stock.picking with ID: $pickingId and args: $messagePostArgs');
-        await client.callKw({
-          'model': 'stock.picking',
-          'method': 'message_post',
-          'args': [[pickingId]],
-          'kwargs': messagePostArgs,
-        });
-        debugPrint('Message posted to stock.picking');
-      }
-
-      final saleOrderName = pickingData['origin'] as String?;
-      if (saleOrderName != null) {
-        debugPrint('Searching for sale.order with name: $saleOrderName');
-        final saleOrderResult = await client.callKw({
-          'model': 'sale.order',
-          'method': 'search_read',
-          'args': [[['name', '=', saleOrderName]], ['id']],
-          'kwargs': {},
-        });
-        debugPrint('Sale order search result: $saleOrderResult');
-
-        if (saleOrderResult.isNotEmpty) {
-          final saleOrderId = saleOrderResult[0]['id'] as int;
-          if (_noteController.text.isNotEmpty || attachmentIds.isNotEmpty) {
-            final saleOrderMessageBody = _noteController.text.isNotEmpty
-                ? 'Delivery Note: ${_noteController.text}'
-                : 'Delivery confirmed with ${_signature != null ? 'signature and ' : ''}${_deliveryPhotos.length} photo(s)';
-            final saleOrderMessagePostArgs = {
-              'body': saleOrderMessageBody,
-              'attachment_ids': attachmentIds,
-              'message_type': 'comment',
-              'subtype_id': 1,
-            };
-            debugPrint('Posting message to sale.order with ID: $saleOrderId and args: $saleOrderMessagePostArgs');
-            await client.callKw({
-              'model': 'sale.order',
-              'method': 'message_post',
-              'args': [[saleOrderId]],
-              'kwargs': saleOrderMessagePostArgs,
-            });
-            debugPrint('Message posted to sale.order');
-          }
-        }
-      }
-
+      // Handle stock moves and move lines (serial/lot numbers)
       debugPrint('Fetching stock.move records for picking ID: $pickingId');
       final moveRecords = await client.callKw({
         'model': 'stock.move',
         'method': 'search_read',
-        'args': [[['picking_id', '=', pickingId]], ['id', 'product_uom_qty', 'product_id', 'location_id', 'location_dest_id']],
+        'args': [
+          [
+            ['picking_id', '=', pickingId]
+          ],
+          [
+            'id',
+            'product_uom_qty',
+            'product_id',
+            'location_id',
+            'location_dest_id'
+          ]
+        ],
         'kwargs': {},
       });
       debugPrint('Stock move records: $moveRecords');
@@ -346,47 +233,83 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
       var moveLineRecords = await client.callKw({
         'model': 'stock.move.line',
         'method': 'search_read',
-        'args': [[['picking_id', '=', pickingId]], ['id', 'move_id', 'product_id', 'quantity', 'lot_id', 'lot_name', 'tracking', 'company_id', 'location_id', 'location_dest_id']],
+        'args': [
+          [
+            ['picking_id', '=', pickingId]
+          ],
+          [
+            'id',
+            'move_id',
+            'product_id',
+            'quantity',
+            'lot_id',
+            'lot_name',
+            'tracking',
+            'company_id',
+            'location_id',
+            'location_dest_id'
+          ]
+        ],
         'kwargs': {},
       });
       debugPrint('Stock move line records: $moveLineRecords');
 
       if (moveRecords.isEmpty || moveLineRecords.isEmpty) {
-        throw Exception('No stock moves or move lines found for picking ID $pickingId.');
+        throw Exception(
+            'No stock moves or move lines found for picking ID $pickingId.');
       }
 
+      // Process stock moves and move lines (serial/lot handling)
       for (var move in moveRecords) {
         final moveId = move['id'] as int;
         final demandedQty = (move['product_uom_qty'] as num?)?.toDouble() ?? 0.0;
         final productId = (move['product_id'] as List)[0] as int;
         final productName = (move['product_id'] as List)[1] as String;
-        final locationId = move['location_id'] != false ? (move['location_id'] as List)[0] as int : null;
-        final locationDestId = move['location_dest_id'] != false ? (move['location_dest_id'] as List)[0] as int : null;
+        final locationId = move['location_id'] != false
+            ? (move['location_id'] as List)[0] as int
+            : null;
+        final locationDestId = move['location_dest_id'] != false
+            ? (move['location_dest_id'] as List)[0] as int
+            : null;
 
         if (locationId == null || locationDestId == null) {
-          throw Exception('Move $moveId is missing location_id or location_dest_id.');
+          throw Exception(
+              'Move $moveId is missing location_id or location_dest_id.');
         }
 
-        final relatedMoveLines = moveLineRecords.where((line) => (line['move_id'] as List)[0] == moveId).toList();
+        final relatedMoveLines = moveLineRecords
+            .where((line) => (line['move_id'] as List)[0] == moveId)
+            .toList();
         for (var moveLine in relatedMoveLines) {
           final moveLineId = moveLine['id'] as int;
           final tracking = moveLine['tracking'] as String? ?? 'none';
-          debugPrint('Processing stock.move.line with ID: $moveLineId, tracking: $tracking');
-          final moveLineLocationId = moveLine['location_id'] != false ? (moveLine['location_id'] as List)[0] as int : null;
-          final moveLineLocationDestId = moveLine['location_dest_id'] != false ? (moveLine['location_dest_id'] as List)[0] as int : null;
+          debugPrint(
+              'Processing stock.move.line with ID: $moveLineId, tracking: $tracking');
+          final moveLineLocationId = moveLine['location_id'] != false
+              ? (moveLine['location_id'] as List)[0] as int
+              : null;
+          final moveLineLocationDestId = moveLine['location_dest_id'] != false
+              ? (moveLine['location_dest_id'] as List)[0] as int
+              : null;
 
           if (moveLineLocationId == null || moveLineLocationDestId == null) {
-            throw Exception('Move line $moveLineId is missing location_id or location_dest_id.');
+            throw Exception(
+                'Move line $moveLineId is missing location_id or location_dest_id.');
           }
 
-          final currentMoveLineQty = (moveLine['quantity'] as num?)?.toDouble() ?? 0.0;
+          final currentMoveLineQty =
+              (moveLine['quantity'] as num?)?.toDouble() ?? 0.0;
           if (currentMoveLineQty == 0.0 && demandedQty > 0.0) {
             final moveLineWriteArgs = {'quantity': demandedQty};
-            debugPrint('Updating stock.move.line with ID: $moveLineId and args: $moveLineWriteArgs');
+            debugPrint(
+                'Updating stock.move.line with ID: $moveLineId and args: $moveLineWriteArgs');
             await client.callKw({
               'model': 'stock.move.line',
               'method': 'write',
-              'args': [[moveLineId], moveLineWriteArgs],
+              'args': [
+                [moveLineId],
+                moveLineWriteArgs
+              ],
               'kwargs': {},
             });
             debugPrint('stock.move.line updated successfully');
@@ -394,8 +317,10 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
 
           if (tracking == 'serial' && demandedQty > 0) {
             final serialNumberControllers = _serialNumberControllers[moveLineId];
-            if (serialNumberControllers == null || serialNumberControllers.length != demandedQty.toInt()) {
-              throw Exception('Insufficient serial numbers provided for product $productName.');
+            if (serialNumberControllers == null ||
+                serialNumberControllers.length != demandedQty.toInt()) {
+              throw Exception(
+                  'Insufficient serial numbers provided for product $productName.');
             }
 
             if (demandedQty > 1) {
@@ -403,7 +328,9 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
               await client.callKw({
                 'model': 'stock.move.line',
                 'method': 'unlink',
-                'args': [[moveLineId]],
+                'args': [
+                  [moveLineId]
+                ],
                 'kwargs': {},
               });
               debugPrint('stock.move.line unlinked');
@@ -411,26 +338,41 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
               for (int i = 0; i < demandedQty.toInt(); i++) {
                 final serialNumber = serialNumberControllers[i].text.trim();
                 if (serialNumber.isEmpty) {
-                  throw Exception('Serial number ${i + 1} required for product $productName.');
+                  throw Exception(
+                      'Serial number ${i + 1} required for product $productName.');
                 }
 
-                debugPrint('Checking for existing serial number: $serialNumber for product ID: $productId');
+                debugPrint(
+                    'Checking for existing serial number: $serialNumber for product ID: $productId');
                 final existingSerial = await client.callKw({
                   'model': 'stock.lot',
                   'method': 'search_read',
-                  'args': [[['name', '=', serialNumber], ['product_id', '=', productId]], ['id']],
+                  'args': [
+                    [
+                      ['name', '=', serialNumber],
+                      ['product_id', '=', productId]
+                    ],
+                    ['id']
+                  ],
                   'kwargs': {},
-                  'context': {'company_id': pickingData['company_id'] != false ? (pickingData['company_id'] as List)[0] : 1},
+                  'context': {
+                    'company_id': pickingData['company_id'] != false
+                        ? (pickingData['company_id'] as List)[0]
+                        : 1
+                  },
                 });
                 debugPrint('Existing serial number search result: $existingSerial');
 
                 int? lotId;
                 if (existingSerial.isNotEmpty) {
-                  throw Exception('Serial number $serialNumber is already assigned to product $productName.');
+                  throw Exception(
+                      'Serial number $serialNumber is already assigned to product $productName.');
                 } else {
                   int companyId = moveLine['company_id'] != false
                       ? (moveLine['company_id'] as List)[0] as int
-                      : (pickingData['company_id'] != false ? (pickingData['company_id'] as List)[0] : 1);
+                      : (pickingData['company_id'] != false
+                      ? (pickingData['company_id'] as List)[0]
+                      : 1);
                   final lotCreateArgs = {
                     'name': serialNumber,
                     'product_id': productId,
@@ -456,11 +398,14 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
                   'picking_id': pickingId,
                   'company_id': moveLine['company_id'] != false
                       ? (moveLine['company_id'] as List)[0]
-                      : (pickingData['company_id'] != false ? (pickingData['company_id'] as List)[0] : 1),
+                      : (pickingData['company_id'] != false
+                      ? (pickingData['company_id'] as List)[0]
+                      : 1),
                   'location_id': moveLineLocationId,
                   'location_dest_id': moveLineLocationDestId,
                 };
-                debugPrint('Creating new stock.move.line with args: $moveLineCreateArgs');
+                debugPrint(
+                    'Creating new stock.move.line with args: $moveLineCreateArgs');
                 final newMoveLineId = await client.callKw({
                   'model': 'stock.move.line',
                   'method': 'create',
@@ -468,42 +413,45 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
                   'kwargs': {},
                 }) as int;
                 debugPrint('New stock.move.line created with ID: $newMoveLineId');
-
-                debugPrint('Verifying new stock.move.line with ID: $newMoveLineId');
-                final verificationResult = await client.callKw({
-                  'model': 'stock.move.line',
-                  'method': 'search_read',
-                  'args': [[['id', '=', newMoveLineId]], ['lot_id', 'lot_name', 'quantity']],
-                  'kwargs': {},
-                });
-                debugPrint('Verification result: $verificationResult');
-                if (verificationResult.isEmpty || verificationResult[0]['lot_id'] == false || verificationResult[0]['quantity'] != 1.0) {
-                  throw Exception('Failed to verify new move line $newMoveLineId for serial number $serialNumber');
-                }
               }
             } else {
               final serialNumber = serialNumberControllers[0].text.trim();
               if (serialNumber.isEmpty) {
-                throw Exception('Serial number required for product $productName.');
+                throw Exception(
+                    'Serial number required for product $productName.');
               }
 
-              debugPrint('Checking for existing serial number: $serialNumber for product ID: $productId');
+              debugPrint(
+                  'Checking for existing serial number: $serialNumber for product ID: $productId');
               final existingSerial = await client.callKw({
                 'model': 'stock.lot',
                 'method': 'search_read',
-                'args': [[['name', '=', serialNumber], ['product_id', '=', productId]], ['id']],
+                'args': [
+                  [
+                    ['name', '=', serialNumber],
+                    ['product_id', '=', productId]
+                  ],
+                  ['id']
+                ],
                 'kwargs': {},
-                'context': {'company_id': pickingData['company_id'] != false ? (pickingData['company_id'] as List)[0] : 1},
+                'context': {
+                  'company_id': pickingData['company_id'] != false
+                      ? (pickingData['company_id'] as List)[0]
+                      : 1
+                },
               });
               debugPrint('Existing serial number search result: $existingSerial');
 
               int? lotId;
               if (existingSerial.isNotEmpty) {
-                throw Exception('Serial number $serialNumber is already assigned to product $productName.');
+                throw Exception(
+                    'Serial number $serialNumber is already assigned to product $productName.');
               } else {
                 int companyId = moveLine['company_id'] != false
                     ? (moveLine['company_id'] as List)[0] as int
-                    : (pickingData['company_id'] != false ? (pickingData['company_id'] as List)[0] : 1);
+                    : (pickingData['company_id'] != false
+                    ? (pickingData['company_id'] as List)[0]
+                    : 1);
                 final lotCreateArgs = {
                   'name': serialNumber,
                   'product_id': productId,
@@ -525,26 +473,18 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
                 'lot_name': serialNumber,
                 'quantity': 1.0,
               };
-              debugPrint('Updating stock.move.line with ID: $moveLineId and args: $moveLineWriteArgs');
+              debugPrint(
+                  'Updating stock.move.line with ID: $moveLineId and args: $moveLineWriteArgs');
               await client.callKw({
                 'model': 'stock.move.line',
                 'method': 'write',
-                'args': [[moveLineId], moveLineWriteArgs],
+                'args': [
+                  [moveLineId],
+                  moveLineWriteArgs
+                ],
                 'kwargs': {},
               });
               debugPrint('stock.move.line updated successfully');
-
-              debugPrint('Verifying updated stock.move.line with ID: $moveLineId');
-              final verificationResult = await client.callKw({
-                'model': 'stock.move.line',
-                'method': 'search_read',
-                'args': [[['id', '=', moveLineId]], ['lot_id', 'lot_name', 'quantity']],
-                'kwargs': {},
-              });
-              debugPrint('Verification result: $verificationResult');
-              if (verificationResult.isEmpty || verificationResult[0]['lot_id'] == false || verificationResult[0]['quantity'] != 1.0) {
-                throw Exception('Failed to verify lot_id assignment for move line $moveLineId');
-              }
             }
           } else if (tracking == 'lot' && demandedQty > 0) {
             final lotNumberController = _lotNumberControllers[moveLineId];
@@ -553,13 +493,24 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
               throw Exception('Lot number required for product $productName.');
             }
 
-            debugPrint('Checking for existing lot number: $lotNumber for product ID: $productId');
+            debugPrint(
+                'Checking for existing lot number: $lotNumber for product ID: $productId');
             final existingLot = await client.callKw({
               'model': 'stock.lot',
               'method': 'search_read',
-              'args': [[['name', '=', lotNumber], ['product_id', '=', productId]], ['id']],
+              'args': [
+                [
+                  ['name', '=', lotNumber],
+                  ['product_id', '=', productId]
+                ],
+                ['id']
+              ],
               'kwargs': {},
-              'context': {'company_id': pickingData['company_id'] != false ? (pickingData['company_id'] as List)[0] : 1},
+              'context': {
+                'company_id': pickingData['company_id'] != false
+                    ? (pickingData['company_id'] as List)[0]
+                    : 1
+              },
             });
             debugPrint('Existing lot number search result: $existingLot');
 
@@ -570,7 +521,9 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
             } else {
               int companyId = moveLine['company_id'] != false
                   ? (moveLine['company_id'] as List)[0] as int
-                  : (pickingData['company_id'] != false ? (pickingData['company_id'] as List)[0] : 1);
+                  : (pickingData['company_id'] != false
+                  ? (pickingData['company_id'] as List)[0]
+                  : 1);
               final lotCreateArgs = {
                 'name': lotNumber,
                 'product_id': productId,
@@ -592,35 +545,30 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
               'lot_name': lotNumber,
               'quantity': demandedQty,
             };
-            debugPrint('Updating stock.move.line with ID: $moveLineId and args: $moveLineWriteArgs');
+            debugPrint(
+                'Updating stock.move.line with ID: $moveLineId and args: $moveLineWriteArgs');
             await client.callKw({
               'model': 'stock.move.line',
               'method': 'write',
-              'args': [[moveLineId], moveLineWriteArgs],
+              'args': [
+                [moveLineId],
+                moveLineWriteArgs
+              ],
               'kwargs': {},
             });
             debugPrint('stock.move.line updated successfully');
-
-            debugPrint('Verifying updated stock.move.line with ID: $moveLineId');
-            final verificationResult = await client.callKw({
-              'model': 'stock.move.line',
-              'method': 'search_read',
-              'args': [[['id', '=', moveLineId]], ['lot_id', 'lot_name', 'quantity']],
-              'kwargs': {},
-            });
-            debugPrint('Verification result: $verificationResult');
-            if (verificationResult.isEmpty || verificationResult[0]['lot_id'] == false || verificationResult[0]['quantity'] != demandedQty) {
-              throw Exception('Failed to verify lot_id assignment for move line $moveLineId');
-            }
           }
         }
       }
 
+      // Validate the picking
       debugPrint('Validating stock.picking with ID: $pickingId');
       final validationResult = await client.callKw({
         'model': 'stock.picking',
         'method': 'button_validate',
-        'args': [[pickingId]],
+        'args': [
+          [pickingId]
+        ],
         'kwargs': {},
       }).timeout(const Duration(seconds: 30), onTimeout: () {
         throw TimeoutException('Validation timed out after 30 seconds');
@@ -633,36 +581,211 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
         await client.callKw({
           'model': 'stock.immediate.transfer',
           'method': 'process',
-          'args': [[wizardId]],
+          'args': [
+            [wizardId]
+          ],
           'kwargs': {},
         });
         debugPrint('stock.immediate.transfer processed');
       }
 
+      // Verify the picking state
       debugPrint('Verifying picking state for stock.picking with ID: $pickingId');
       final updatedPickingStateResult = await client.callKw({
         'model': 'stock.picking',
         'method': 'search_read',
-        'args': [[['id', '=', pickingId]], ['state']],
+        'args': [
+          [
+            ['id', '=', pickingId]
+          ],
+          ['state']
+        ],
         'kwargs': {},
       });
       debugPrint('Updated picking state: $updatedPickingStateResult');
 
-      if (updatedPickingStateResult.isEmpty || updatedPickingStateResult[0]['state'] != 'done') {
+      if (updatedPickingStateResult.isEmpty ||
+          updatedPickingStateResult[0]['state'] != 'done') {
         throw Exception('Failed to validate delivery. Picking state is not "done".');
       }
 
-      final updatedDetails = await _fetchDeliveryDetails(context); // Fetch data outside setState
-      setState(() => _deliveryDetailsFuture = Future.value(updatedDetails)); // Update state synchronously
+      // Create attachments and post messages
+      List<int> attachmentIds = [];
+      if (_signature != null) {
+        final signatureArgs = {
+          'name': 'Delivery Signature - ${DateTime.now().toIso8601String()}',
+          'datas': _signature,
+          'res_model': 'stock.picking',
+          'res_id': pickingId,
+          'mimetype': 'image/png',
+        };
+        debugPrint(
+            'Creating signature attachment for ir.attachment with args: $signatureArgs');
+        final signatureAttachment = await client.callKw({
+          'model': 'ir.attachment',
+          'method': 'create',
+          'args': [signatureArgs],
+          'kwargs': {},
+        });
+        debugPrint('Signature attachment created with ID: $signatureAttachment');
+        attachmentIds.add(signatureAttachment as int);
+      }
+
+      for (var i = 0; i < _deliveryPhotos.length; i++) {
+        final photoName =
+            'Delivery Photo ${i + 1} - ${DateTime.now().toIso8601String()}';
+        debugPrint('Searching for existing photo attachment with name: $photoName');
+        final photoAttachment = await client.callKw({
+          'model': 'ir.attachment',
+          'method': 'search_read',
+          'args': [
+            [
+              ['name', '=', photoName],
+              ['res_model', '=', 'stock.picking'],
+              ['res_id', '=', pickingId]
+            ],
+            ['id']
+          ],
+          'kwargs': {},
+        });
+        debugPrint('Photo attachment search result: $photoAttachment');
+
+        if (photoAttachment.isNotEmpty) {
+          final photoWriteArgs = {'datas': _deliveryPhotos[i]};
+          debugPrint(
+              'Updating existing photo attachment with ID: ${photoAttachment[0]['id']} and args: $photoWriteArgs');
+          await client.callKw({
+            'model': 'ir.attachment',
+            'method': 'write',
+            'args': [
+              [photoAttachment[0]['id']],
+              photoWriteArgs
+            ],
+            'kwargs': {},
+          });
+          debugPrint('Photo attachment updated');
+          attachmentIds.add(photoAttachment[0]['id'] as int);
+        } else {
+          final photoCreateArgs = {
+            'name': photoName,
+            'datas': _deliveryPhotos[i],
+            'res_model': 'stock.picking',
+            'res_id': pickingId,
+            'mimetype': 'image/jpeg',
+          };
+          debugPrint('Creating new photo attachment with args: $photoCreateArgs');
+          final newPhotoAttachment = await client.callKw({
+            'model': 'ir.attachment',
+            'method': 'create',
+            'args': [photoCreateArgs],
+            'kwargs': {},
+          });
+          debugPrint('New photo attachment created with ID: $newPhotoAttachment');
+          attachmentIds.add(newPhotoAttachment as int);
+        }
+      }
+
+      final formattedDateTime =
+      DateFormat('yyyy-MM-dd HH:mm:ss').format(DateTime.now().toUtc());
+      final pickingWriteArgs = {
+        'note': _noteController.text.isNotEmpty ? _noteController.text : null,
+        'date_done': formattedDateTime,
+      };
+      debugPrint(
+          'Updating stock.picking with ID: $pickingId and args: $pickingWriteArgs');
+      await client.callKw({
+        'model': 'stock.picking',
+        'method': 'write',
+        'args': [
+          [pickingId],
+          pickingWriteArgs
+        ],
+        'kwargs': {},
+      });
+      debugPrint('stock.picking updated successfully');
+
+      if (_noteController.text.isNotEmpty || attachmentIds.isNotEmpty) {
+        final messageBody = _noteController.text.isNotEmpty
+            ? _noteController.text
+            : 'Delivery confirmed with ${_signature != null ? 'signature and ' : ''}${_deliveryPhotos.length} photo(s)';
+        final messagePostArgs = {
+          'body': messageBody,
+          'attachment_ids': attachmentIds,
+          'message_type': 'comment',
+          'subtype_id': 1,
+        };
+        debugPrint(
+            'Posting message to stock.picking with ID: $pickingId and args: $messagePostArgs');
+        await client.callKw({
+          'model': 'stock.picking',
+          'method': 'message_post',
+          'args': [
+            [pickingId]
+          ],
+          'kwargs': messagePostArgs,
+        });
+        debugPrint('Message posted to stock.picking');
+      }
+
+      final saleOrderName = pickingData['origin'] as String?;
+      if (saleOrderName != null) {
+        debugPrint('Searching for sale.order with name: $saleOrderName');
+        final saleOrderResult = await client.callKw({
+          'model': 'sale.order',
+          'method': 'search_read',
+          'args': [
+            [
+              ['name', '=', saleOrderName]
+            ],
+            ['id']
+          ],
+          'kwargs': {},
+        });
+        debugPrint('Sale order search result: $saleOrderResult');
+
+        if (saleOrderResult.isNotEmpty) {
+          final saleOrderId = saleOrderResult[0]['id'] as int;
+          if (_noteController.text.isNotEmpty || attachmentIds.isNotEmpty) {
+            final saleOrderMessageBody = _noteController.text.isNotEmpty
+                ? 'Delivery Note: ${_noteController.text}'
+                : 'Delivery confirmed with ${_signature != null ? 'signature and ' : ''}${_deliveryPhotos.length} photo(s)';
+            final saleOrderMessagePostArgs = {
+              'body': saleOrderMessageBody,
+              'attachment_ids': attachmentIds,
+              'message_type': 'comment',
+              'subtype_id': 1,
+            };
+            debugPrint(
+                'Posting message to sale.order with ID: $saleOrderId and args: $saleOrderMessagePostArgs');
+            await client.callKw({
+              'model': 'sale.order',
+              'method': 'message_post',
+              'args': [
+                [saleOrderId]
+              ],
+              'kwargs': saleOrderMessagePostArgs,
+            });
+            debugPrint('Message posted to sale.order');
+          }
+        }
+      }
+
+      // Update UI after all operations
+      final updatedDetails = await _fetchDeliveryDetails(context);
+      setState(() {
+        _deliveryDetailsFuture = Future.value(updatedDetails);
+      });
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Delivery confirmed successfully')),
       );
-      Navigator.pop(context, true);
+      // Navigator.pop(context, true);
     } catch (e) {
       debugPrint('Caught exception in _submitDelivery: $e');
       String errorMessage = 'An error occurred while confirming the delivery.';
+
       if (e is OdooException) {
-        errorMessage = e.message.contains('serial number has already been assigned')
+        errorMessage =
+        e.message.contains('serial number has already been assigned')
             ? 'The provided serial number is already assigned.'
             : e.message.contains('Not enough inventory')
             ? 'Insufficient stock for one or more products.'
@@ -672,20 +795,18 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
         debugPrint('OdooException details: ${e.toString()}');
       } else {
         debugPrint('Non-Odoo exception: ${e.toString()}');
+        errorMessage = '$e';
       }
-      debugPrint('Error: $errorMessage');
+
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(errorMessage),
-          backgroundColor: Colors.red,
-          duration: const Duration(seconds: 5),
-        ),
+        SnackBar(content: Text(errorMessage)),
       );
+
+      debugPrint('Error: $errorMessage');
     } finally {
       setState(() => _isLoading = false);
     }
-  }
-  Future<void> _captureSignature() async {
+  }  Future<void> _captureSignature() async {
     final result = await Navigator.push(
       context,
       SlidingPageTransitionRL(
@@ -697,7 +818,21 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
 
   Future<void> _capturePhoto() async {
     final status = await Permission.camera.request();
-    // Implement photo capture logic
+    if (status.isGranted) {
+      final picker = ImagePicker();
+      final pickedFile = await picker.pickImage(source: ImageSource.camera);
+      if (pickedFile != null) {
+        final bytes = await pickedFile.readAsBytes();
+        final base64Image = base64Encode(bytes);
+        setState(() {
+          _deliveryPhotos.add(base64Image);
+        });
+      }
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Camera permission is required to take photos')),
+      );
+    }
   }
 
   Widget _buildDeliveryStatusChip(String state) {
@@ -1263,29 +1398,30 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
                               SizedBox(height: 24),
 
                               // Delivery Photos Section
+                              // Replace the Delivery Photos Section in the Confirmation Tab with this code
                               Text(
-                                'Delivery Photos',
+                                'Delivery Photo',
                                 style: theme.textTheme.titleMedium
                                     ?.copyWith(fontWeight: FontWeight.w600),
                               ),
                               SizedBox(height: 12),
-                              OutlinedButton.icon(
-                                onPressed: _capturePhoto,
-                                icon: Icon(Icons.camera_alt,
-                                    color: Color(0xFFA12424)),
-                                label: Text(
-                                  'Take Photo',
-                                  style: TextStyle(color: Color(0xFFA12424)),
+                              if (_deliveryPhotos.isEmpty)
+                                OutlinedButton.icon(
+                                  onPressed: _capturePhoto,
+                                  icon: Icon(Icons.camera_alt,
+                                      color: Color(0xFFA12424)),
+                                  label: Text(
+                                    'Take Photo',
+                                    style: TextStyle(color: Color(0xFFA12424)),
+                                  ),
+                                  style: OutlinedButton.styleFrom(
+                                    side: BorderSide(color: Color(0xFFA12424)),
+                                    minimumSize: Size(double.infinity, 48),
+                                    shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(8)),
+                                  ),
                                 ),
-                                style: OutlinedButton.styleFrom(
-                                  side: BorderSide(color: Color(0xFFA12424)),
-                                  minimumSize: Size(double.infinity, 48),
-                                  shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(8)),
-                                ),
-                              ),
                               if (_deliveryPhotos.isNotEmpty) ...[
-                                SizedBox(height: 12),
                                 SizedBox(
                                   height: 120,
                                   child: ListView.builder(
@@ -1330,9 +1466,9 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
                                                     _deliveryPhotos
                                                         .removeAt(index)),
                                                 child: Container(
-                                                  padding: EdgeInsets.all(4),
+                                                  padding: EdgeInsets.all(2),
                                                   decoration: BoxDecoration(
-                                                    color: Colors.red,
+                                                    color: primaryColor,
                                                     shape: BoxShape.circle,
                                                   ),
                                                   child: Icon(Icons.close,
@@ -1486,7 +1622,7 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
 
                               // Confirm Delivery Button
                               ElevatedButton(
-                                onPressed: _isLoading
+                                onPressed: _isLoading || _deliveryPhotos.isEmpty
                                     ? null
                                     : () => _confirmDelivery(
                                         context,
@@ -1515,19 +1651,18 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
                                         mainAxisAlignment:
                                             MainAxisAlignment.center,
                                         children: [
-                                          Icon(
-                                            Icons.check_circle,
-                                            size: 24,
-                                            color: Colors.white,
-                                          ),
+                                          Icon(Icons.check_circle,
+                                              size: 24, color: Colors.white),
                                           SizedBox(width: 8),
                                           Text(
                                             'Confirm Delivery',
-                                            style: theme.textTheme.titleMedium
+                                            style: Theme.of(context)
+                                                .textTheme
+                                                .titleMedium
                                                 ?.copyWith(
-                                              color: Colors.white,
-                                              fontWeight: FontWeight.w600,
-                                            ),
+                                                  color: Colors.white,
+                                                  fontWeight: FontWeight.w600,
+                                                ),
                                           ),
                                         ],
                                       ),
@@ -2205,4 +2340,4 @@ class SignaturePainter extends CustomPainter {
   bool shouldRepaint(SignaturePainter oldDelegate) => true;
 }
 
-// TimelineWidget, SignaturePad, and SignaturePainter classes remain unchanged
+// Remove this entire section

@@ -537,6 +537,7 @@ class _CustomerDetailsPageState extends State<CustomerDetailsPage>
       _totalSpent = _saleOrders.fold(0, (sum, order) => sum + order.total);
 
       // Fetch invoices
+// Fetch invoices
       final invoicesResult = await client.callKw({
         'model': 'account.move',
         'method': 'search_read',
@@ -548,6 +549,7 @@ class _CustomerDetailsPageState extends State<CustomerDetailsPage>
         ],
         'kwargs': {
           'fields': [
+            'id', // Add this
             'name',
             'invoice_date',
             'amount_total',
@@ -562,8 +564,10 @@ class _CustomerDetailsPageState extends State<CustomerDetailsPage>
       });
 
       _invoices = (invoicesResult as List)
+          .where((invoice) => invoice['id'] != null) // Skip invoices without ID
           .map((invoice) => Invoice(
-                id: invoice['id']?.toString() ?? '0',
+                id: invoice['id'].toString(),
+                // Safe since we filtered null IDs
                 name: _safeString(invoice['name']),
                 date: invoice['invoice_date'] != false
                     ? DateTime.parse(invoice['invoice_date'].toString())
@@ -1177,97 +1181,104 @@ class _CustomerDetailsPageState extends State<CustomerDetailsPage>
                               ),
                             ),
                             const SizedBox(width: 16),
-                            Expanded(
-                              child: Row(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                mainAxisAlignment:
-                                    MainAxisAlignment.spaceBetween,
-                                children: [
-                                  Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        widget.customer.name.isNotEmpty
-                                            ? widget.customer.name
-                                            : 'Unnamed Customer',
-                                        style: const TextStyle(
-                                            fontSize: 22,
-                                            fontWeight: FontWeight.bold),
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                      const SizedBox(height: 6),
-                                      Row(
-                                        children: [
-                                          Icon(Icons.calendar_today,
-                                              size: 16,
-                                              color: Colors.grey[600]),
-                                          const SizedBox(width: 4),
-                                          Text(
-                                            'Customer since $_customerSince',
-                                            style: TextStyle(
-                                                color: Colors.grey[600],
-                                                fontSize: 14),
-                                          ),
-                                        ],
-                                      ),
-                                      const SizedBox(height: 4),
-                                      Row(
-                                        children: [
-                                          Icon(Icons.location_on,
-                                              size: 16,
-                                              color: Colors.grey[600]),
-                                          const SizedBox(width: 4),
-                                          Text(
-                                            _customerDetails['city'] != false
-                                                ? _safeString(
-                                                    _customerDetails['city'])
-                                                : 'Unknown Location',
-                                            style: TextStyle(
-                                                color: Colors.grey[600],
-                                                fontSize: 14),
-                                          ),
-                                        ],
-                                      ),
-                                    ],
-                                  ),
-                                  IconButton(
-                                    onPressed: _isLoading
-                                        ? null
-                                        : () {
-                                            if (detailedCustomer == null) {
-                                              ScaffoldMessenger.of(context)
-                                                  .showSnackBar(
-                                                const SnackBar(
-                                                  content: Text(
-                                                      'Customer data not loaded'),
-                                                  backgroundColor: Colors.red,
-                                                  duration:
-                                                      Duration(seconds: 3),
-                                                ),
-                                              );
-                                              return;
-                                            }
-                                            Navigator.push(
-                                              context,
-                                              SlidingPageTransitionRL(
-                                                page: CreateCustomerPage(
-                                                  customer: detailedCustomer!,
-                                                  onCustomerCreated:
-                                                      (updatedCustomer) {
-                                                    setState(() {
-                                                      _fetchCustomerDetails();
-                                                    });
-                                                  },
-                                                ),
-                                              ),
-                                            );
-                                          },
-                                    icon: Icon(Icons.edit, color: Colors.grey),
-                                  ),
-                                ],
-                              ),
-                            ),
+      Expanded(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    widget.customer.name.isNotEmpty
+                        ? widget.customer.name
+                        : 'Unnamed Customer',
+                    style: const TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.bold),
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
+                  ),
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      Icon(Icons.calendar_today,
+                          size: 16,
+                          color: Colors.grey[600]),
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: Text(
+                          'Customer since $_customerSince',
+                          style: TextStyle(
+                              color: Colors.grey[600],
+                              fontSize: 14),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      Icon(Icons.location_on,
+                          size: 16,
+                          color: Colors.grey[600]),
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: Text(
+                          _customerDetails['city'] != false
+                              ? _safeString(
+                              _customerDetails['city'])
+                              : 'Unknown Location',
+                          style: TextStyle(
+                              color: Colors.grey[600],
+                              fontSize: 14),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            IconButton(
+              onPressed: _isLoading
+                  ? null
+                  : () {
+                if (detailedCustomer == null) {
+                  ScaffoldMessenger.of(context)
+                      .showSnackBar(
+                    const SnackBar(
+                      content: Text(
+                          'Customer data not loaded'),
+                      backgroundColor: Colors.red,
+                      duration:
+                      Duration(seconds: 3),
+                    ),
+                  );
+                  return;
+                }
+                Navigator.push(
+                  context,
+                  SlidingPageTransitionRL(
+                    page: CreateCustomerPage(
+                      customer: detailedCustomer!,
+                      onCustomerCreated:
+                          (updatedCustomer) {
+                        setState(() {
+                          _fetchCustomerDetails();
+                        });
+                      },
+                    ),
+                  ),
+                );
+              },
+              icon: Icon(Icons.edit, color: Colors.grey),
+            ),
+          ],
+        ),
+      ),
                           ],
                         ),
                       ),
@@ -1808,116 +1819,36 @@ class _CustomerDetailsPageState extends State<CustomerDetailsPage>
     );
   }
 
-  Widget _buildNoteItem(CustomerNote note) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                note.author.isNotEmpty ? note.author : 'Unknown Author',
-                style:
-                    const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-              ),
-              Text(
-                DateFormat('MMM d, yyyy').format(note.date),
-                style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-              ),
-            ],
-          ),
-          const SizedBox(height: 4),
-          Text(
-            note.content.isNotEmpty
-                ? note.content.replaceAll(RegExp(r'<[^>]*>'), '')
-                : 'No content',
-            style: const TextStyle(fontSize: 13),
-          ),
-          const Divider(),
-        ],
-      ),
-    );
-  }
 
   Widget _buildInvoicesTab() {
     return _invoices.isEmpty
         ? const Center(
-            child: Text(
-              'No invoices available',
-              style: TextStyle(color: Colors.grey, fontStyle: FontStyle.italic),
-            ),
-          )
-        : ListView.builder(
-            padding: const EdgeInsets.all(16),
-            itemCount: _invoices.length,
-            itemBuilder: (context, index) {
-              final invoice = _invoices[index];
-              // Convert invoice object to Map<String, dynamic> for _InvoiceCard
-              final invoiceMap = {
-                'name': invoice.name.isNotEmpty ? invoice.name : 'Draft',
-                'invoice_date': invoice.date?.toIso8601String(),
-                'invoice_date_due': invoice.dueDate?.toIso8601String(),
-                'state': invoice.state,
-                'amount_total': invoice.total,
-                'amount_residual': invoice.total,
-                // Assuming amount_residual is same as total if not provided
-                'payment_state': invoice.paymentState,
-              };
-
-              return InvoiceCard(
-                invoice: invoiceMap,
-                provider: Provider.of<InvoiceProvider>(context, listen: false),
-              );
-            },
-          );
-  }
-
-  Widget _getInvoicePaymentStatusBadge(String status) {
-    late Color backgroundColor;
-    late Color textColor;
-    late String label;
-
-    switch (status) {
-      case 'not_paid':
-        backgroundColor = Colors.orange[100]!;
-        textColor = Colors.orange[800]!;
-        label = 'Not Paid';
-        break;
-      case 'partial':
-        backgroundColor = Colors.blue[100]!;
-        textColor = Colors.blue[800]!;
-        label = 'Partially Paid';
-        break;
-      case 'paid':
-        backgroundColor = Colors.green[100]!;
-        textColor = Colors.green[800]!;
-        label = 'Paid';
-        break;
-      case 'reversed':
-      case 'cancelled':
-        backgroundColor = Colors.red[100]!;
-        textColor = Colors.red[800]!;
-        label = status == 'reversed' ? 'Reversed' : 'Cancelled';
-        break;
-      default:
-        backgroundColor = Colors.grey[100]!;
-        textColor = Colors.grey[800]!;
-        label = 'Unknown';
-    }
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: backgroundColor,
-        borderRadius: BorderRadius.circular(20),
-      ),
       child: Text(
-        label,
-        style: TextStyle(
-            color: textColor, fontWeight: FontWeight.bold, fontSize: 12),
+        'No invoices available',
+        style: TextStyle(color: Colors.grey, fontStyle: FontStyle.italic),
       ),
+    )
+        : ListView.builder(
+      padding: const EdgeInsets.all(16),
+      itemCount: _invoices.length,
+      itemBuilder: (context, index) {
+        final invoice = _invoices[index];
+        final invoiceMap = {
+          'id': invoice.id,
+          'name': invoice.name,
+          'invoice_date': invoice.date?.toIso8601String(),
+          'invoice_date_due': invoice.dueDate?.toIso8601String(),
+          'state': invoice.state,
+          'amount_total': invoice.total,
+          'amount_residual': _invoices[index].paymentState == 'paid' ? 0.0 : invoice.total,
+          'payment_state': invoice.paymentState,
+        };
+
+        return InvoiceCard(
+          invoice: invoiceMap,
+          provider: Provider.of<InvoiceProvider>(context, listen: false),
+        );
+      },
     );
   }
 
@@ -2051,7 +1982,6 @@ class _CustomerDetailsPageState extends State<CustomerDetailsPage>
   }
 }
 
-// PhotoViewer Widget - Simplified and fixed
 class PhotoViewer extends StatelessWidget {
   final String? imageUrl;
 

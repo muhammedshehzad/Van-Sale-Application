@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:latest_van_sale_application/assets/widgets%20and%20consts/cached_data.dart';
+import 'package:latest_van_sale_application/authentication/login_page.dart';
 import 'package:latest_van_sale_application/main_page/main_page.dart';
 import 'package:latest_van_sale_application/providers/sale_order_provider.dart';
 import 'dart:developer';
@@ -14,16 +15,18 @@ import '../assets/widgets and consts/page_transition.dart';
 import '../secondary_pages/1/products.dart';
 
 class LogoutButton extends StatelessWidget {
-  const LogoutButton({
-    Key? key,
-  }) : super(key: key);
+  const LogoutButton({Key? key}) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
+    debugPrint('LogoutButton: Building with context $context');
     return IconButton(
       tooltip: 'Logout Button',
-      onPressed: () => _confirmLogout(context),
-      icon: Icon(
+      onPressed: () {
+        debugPrint('LogoutButton: onPressed triggered');
+        _confirmLogout(context);
+      },
+      icon: const Icon(
         Icons.login_outlined,
         color: Colors.white,
       ),
@@ -31,31 +34,42 @@ class LogoutButton extends StatelessWidget {
   }
 
   void _confirmLogout(BuildContext context) {
+    debugPrint(
+        'LogoutButton: Showing confirmation dialog with context $context');
     showDialog(
       context: context,
       barrierDismissible: true,
-      builder: (BuildContext context) {
+      builder: (BuildContext dialogContext) {
+        debugPrint(
+            'LogoutButton: Dialog built with dialogContext $dialogContext');
         return AlertDialog(
           shape:
               RoundedRectangleBorder(borderRadius: BorderRadius.circular(16.0)),
           elevation: 8.0,
-          title: const Text('Confirm Logout',
-              style: TextStyle(fontWeight: FontWeight.bold)),
+          title: const Text(
+            'Confirm Logout',
+            style: TextStyle(fontWeight: FontWeight.bold),
+          ),
           content: const Text('Are you sure you want to log out?'),
           actions: [
             TextButton(
-              onPressed: () => Navigator.of(context).pop(),
+              onPressed: () {
+                debugPrint('LogoutButton: Cancel button pressed');
+                Navigator.of(dialogContext).pop();
+              },
               child: const Text('Cancel'),
             ),
             TextButton(
               onPressed: () async {
-                Navigator.of(context).pop(); // Close dialog
-                await LogoutService.logout(context);
-                Navigator.pushNamedAndRemoveUntil(
-                  context,
-                  '/login',
-                  (Route<dynamic> route) => false,
-                );
+                debugPrint('LogoutButton: Logout button pressed');
+                Navigator.of(dialogContext).pop(); // Close dialog
+                debugPrint('LogoutButton: Confirmation dialog popped');
+                try {
+                  await LogoutService.logout(context);
+                  debugPrint('LogoutButton: LogoutService.logout completed');
+                } catch (e) {
+                  debugPrint('LogoutButton: Error in LogoutService.logout: $e');
+                }
               },
               child: const Text('Logout'),
             ),
@@ -67,56 +81,222 @@ class LogoutButton extends StatelessWidget {
 }
 
 class LogoutService {
-  // Method to handle the logout functionality
   static Future<void> logout(BuildContext context) async {
+    debugPrint('LogoutService: logout called with context $context');
+    debugPrint('LogoutService: context.mounted = ${context.mounted}');
+
+    if (!context.mounted) {
+      debugPrint('LogoutService: Context not mounted, aborting logout');
+      return;
+    }
+
+    // Store the dialog context for popping
+    BuildContext? dialogContext;
+
     try {
-      // Show loading dialog
+      // Show improved loading dialog
+      debugPrint('LogoutService: Showing loading dialog');
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) {
+          dialogContext = ctx;
+          debugPrint(
+              'LogoutService: Loading dialog built with dialogContext $dialogContext');
+          return PopScope(
+            canPop: false,
+            child: Dialog(
+              backgroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16)),
+              child: Padding(
+                padding: const EdgeInsets.all(20.0),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const SizedBox(height: 10),
+                    const CircularProgressIndicator(),
+                    const SizedBox(height: 24),
+                    Text(
+                      'Logging out...',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: Theme.of(context).primaryColor,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Please wait while we securely log you out',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: Colors.black54,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ).catchError((e) {
+        debugPrint('LogoutService: Error showing loading dialog: $e');
+        throw e;
+      });
 
+      // Faster loading experience with simulated minimum duration
+      // This ensures the loading isn't too jarring if it completes very quickly
+      Future<void> minLoadingTime =
+          Future.delayed(const Duration(milliseconds: 800));
+
+      // Start SharedPreferences clearing
+      debugPrint('LogoutService: Clearing SharedPreferences');
       final prefs = await SharedPreferences.getInstance();
-      await prefs.remove('url');
+      try {
+        await Future.wait([
+          prefs.remove('url').then(
+              (success) => debugPrint('LogoutService: Removed url: $success')),
+          prefs.remove('isLoggedIn').then((success) =>
+              debugPrint('LogoutService: Removed isLoggedIn: $success')),
+          prefs.remove('userName').then((success) =>
+              debugPrint('LogoutService: Removed userName: $success')),
+          prefs.remove('userLogin').then((success) =>
+              debugPrint('LogoutService: Removed userLogin: $success')),
+          prefs.remove('userId').then((success) =>
+              debugPrint('LogoutService: Removed userId: $success')),
+          prefs.remove('sessionId').then((success) =>
+              debugPrint('LogoutService: Removed sessionId: $success')),
+          prefs.remove('password').then((success) =>
+              debugPrint('LogoutService: Removed password: $success')),
+          prefs.remove('serverVersion').then((success) =>
+              debugPrint('LogoutService: Removed serverVersion: $success')),
+          prefs.remove('userLang').then((success) =>
+              debugPrint('LogoutService: Removed userLang: $success')),
+          prefs.remove('partnerId').then((success) =>
+              debugPrint('LogoutService: Removed partnerId: $success')),
+          prefs.remove('isSystem').then((success) =>
+              debugPrint('LogoutService: Removed isSystem: $success')),
+          prefs.remove('userTimezone').then((success) =>
+              debugPrint('LogoutService: Removed userTimezone: $success')),
+          prefs.remove('urldata').then((success) =>
+              debugPrint('LogoutService: Removed urldata: $success')),
+          prefs.remove('database').then((success) =>
+              debugPrint('LogoutService: Removed database: $success')),
+          prefs.remove('selectedDatabase').then((success) =>
+              debugPrint('LogoutService: Removed selectedDatabase: $success')),
+        ]);
+        debugPrint('LogoutService: All SharedPreferences cleared successfully');
+      } catch (e) {
+        debugPrint('LogoutService: Error clearing SharedPreferences: $e');
+        rethrow;
+      }
 
-      await prefs.remove('isLoggedIn');
-      await prefs.remove('userName');
-      await prefs.remove('userLogin');
-      await prefs.remove('userId');
-      await prefs.remove('sessionId');
-      await prefs.remove('password');
-      await prefs.remove('serverVersion');
-      await prefs.remove('userLang');
-      await prefs.remove('partnerId');
-      await prefs.remove('isSystem');
-      await prefs.remove('userTimezone');
-      await prefs.remove('urldata');
-      await prefs.remove('database');
-      await prefs.remove('selectedDatabase');
+      // Wait for minimum loading time to complete
+      await minLoadingTime;
 
       // Close the loading dialog
-      Navigator.of(context).pop();
+      if (dialogContext != null && dialogContext!.mounted) {
+        debugPrint(
+            'LogoutService: Popping loading dialog with dialogContext $dialogContext');
+        try {
+          Navigator.of(dialogContext!).pop();
+          debugPrint('LogoutService: Loading dialog popped successfully');
+        } catch (e) {
+          debugPrint('LogoutService: Error popping loading dialog: $e');
+        }
+      } else {
+        debugPrint(
+            'LogoutService: dialogContext not available or not mounted, skipping pop');
+      }
 
-      // Navigate to login page and remove all previous routes
-      Navigator.of(context).pushNamedAndRemoveUntil(
-        '/login', // Replace with your login route name
-        (Route<dynamic> route) => false, // This removes all previous routes
-      );
+      // Navigate to Login screen
+      if (context.mounted) {
+        debugPrint('LogoutService: Navigating to Login screen');
+        try {
+          await Navigator.pushAndRemoveUntil(
+            context,
+            SlidingPageTransitionLR(page: Login()),
+            (Route<dynamic> route) => false,
+          );
+          debugPrint('LogoutService: Navigation to Login completed');
+        } catch (e) {
+          debugPrint('LogoutService: Error navigating to Login: $e');
+          rethrow;
+        }
+      } else {
+        debugPrint('LogoutService: Context not mounted, skipping navigation');
+      }
 
       // Show success message
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Logged out successfully'),
-          backgroundColor: Colors.green,
-        ),
-      );
-    } catch (e) {
+      if (context.mounted) {
+        debugPrint('LogoutService: Showing success snackbar');
+        try {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Logged out successfully'),
+              backgroundColor: Colors.green,
+              behavior: SnackBarBehavior.floating,
+              margin: EdgeInsets.only(bottom: 20.0, left: 20.0, right: 20.0),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.all(Radius.circular(8.0)),
+              ),
+            ),
+          );
+          debugPrint('LogoutService: Success snackbar shown');
+        } catch (e) {
+          debugPrint('LogoutService: Error showing success snackbar: $e');
+        }
+      } else {
+        debugPrint('LogoutService: Context not mounted, skipping snackbar');
+      }
+    } catch (e, stackTrace) {
       // Close the loading dialog if there's an error
-      Navigator.of(context).pop();
-      print(e);
+      if (dialogContext != null && dialogContext!.mounted) {
+        debugPrint('LogoutService: Error occurred, popping loading dialog');
+        try {
+          Navigator.of(dialogContext!).pop();
+          debugPrint('LogoutService: Loading dialog popped in error handler');
+        } catch (popError) {
+          debugPrint(
+              'LogoutService: Error popping loading dialog in error handler: $popError');
+        }
+      }
+
       // Show error message
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error logging out: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
+      if (context.mounted) {
+        debugPrint('LogoutService: Showing error snackbar');
+        try {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Row(
+                children: [
+                  const Icon(Icons.error_outline, color: Colors.white),
+                  const SizedBox(width: 10),
+                  Expanded(child: Text('Error logging out: $e')),
+                ],
+              ),
+              backgroundColor: Colors.red,
+              behavior: SnackBarBehavior.floating,
+              margin:
+                  const EdgeInsets.only(bottom: 20.0, left: 20.0, right: 20.0),
+              shape: const RoundedRectangleBorder(
+                borderRadius: BorderRadius.all(Radius.circular(8.0)),
+              ),
+              duration: const Duration(seconds: 5),
+            ),
+          );
+          debugPrint('LogoutService: Error snackbar shown');
+        } catch (snackError) {
+          debugPrint(
+              'LogoutService: Error showing error snackbar: $snackError');
+        }
+      }
+
+      // Log the error with stack trace
+      debugPrint('LogoutService: Logout error: $e');
+      debugPrint('LogoutService: Stack trace: $stackTrace');
     }
   }
 }
@@ -346,8 +526,10 @@ class OrderPickingProvider with ChangeNotifier {
     }
   }
 
-  void showProductSelectionPage(BuildContext context, DataSyncManager syncManager) {
-    final salesProvider = Provider.of<SalesOrderProvider>(context, listen: false);
+  void showProductSelectionPage(
+      BuildContext context, DataSyncManager syncManager) {
+    final salesProvider =
+        Provider.of<SalesOrderProvider>(context, listen: false);
     salesProvider.loadProducts().then((_) {
       var availableProducts = salesProvider.products;
       print('Available products count: ${availableProducts.length}');
@@ -358,7 +540,7 @@ class OrderPickingProvider with ChangeNotifier {
       Navigator.pushAndRemoveUntil(
         context,
         SlidingPageTransitionRL(page: MainPage(syncManager: syncManager)),
-            (Route route) => false,
+        (Route route) => false,
       );
     }).catchError((e) {
       print('Error loading products for page: $e');
@@ -375,6 +557,7 @@ class OrderPickingProvider with ChangeNotifier {
       );
     });
   }
+
   Future<void> loadCustomers() async {
     _isLoadingCustomers = true;
     notifyListeners();
@@ -544,6 +727,7 @@ class OrderPickingProvider with ChangeNotifier {
     notifyListeners();
   }
 }
+
 extension OrderPickingProviderCache on OrderPickingProvider {
   // Load customers from cached data
   Future<void> setCustomersFromCache(dynamic cachedCustomers) async {

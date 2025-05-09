@@ -38,6 +38,7 @@ class MainPage extends StatefulWidget {
   @override
   State<MainPage> createState() => _MainPageState();
 }
+
 class _MainPageState extends State<MainPage> with TickerProviderStateMixin {
   late TabController _tabController;
   late AnimationController _animationController;
@@ -51,7 +52,6 @@ class _MainPageState extends State<MainPage> with TickerProviderStateMixin {
   bool _isLoadingImage = true; // Loading state for image
   late PageController _pageController;
   bool _isRefreshing = false;
-
 
   Future<void> _refreshData() async {
     if (_isRefreshing) return; // Prevent multiple concurrent refreshes
@@ -87,6 +87,7 @@ class _MainPageState extends State<MainPage> with TickerProviderStateMixin {
       });
     }
   }
+
   @override
   void initState() {
     super.initState();
@@ -166,18 +167,14 @@ class _MainPageState extends State<MainPage> with TickerProviderStateMixin {
       backgroundColor: backgroundColor,
       appBar: _buildAppBar(),
       drawer: _buildDrawer(),
-      body: RefreshIndicator(
-        onRefresh: _refreshData,
-
-        child: AnimatedBuilder(
-          animation: _scaleAnimation,
-          builder: (context, child) {
-            return Transform.scale(
-              scale: _scaleAnimation.value,
-              child: _buildBody(),
-            );
-          },
-        ),
+      body: AnimatedBuilder(
+        animation: _scaleAnimation,
+        builder: (context, child) {
+          return Transform.scale(
+            scale: _scaleAnimation.value,
+            child: _buildBody(),
+          );
+        },
       ),
       floatingActionButton: _buildFloatingActionButton(),
       floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
@@ -335,16 +332,12 @@ class _MainPageState extends State<MainPage> with TickerProviderStateMixin {
                       style: const TextStyle(
                         color: Colors.white,
                         fontSize: 14,
-                        shadows: [
-                          Shadow(color: Colors.black45, blurRadius: 2)
-                        ], // Text shadow for better readability
+                        shadows: [Shadow(color: Colors.black45, blurRadius: 2)],
                       ),
                     ),
                   ],
                 ),
               ),
-
-              // Main Navigation Section
               _buildSectionHeader("Main Navigation"),
               ListTile(
                 leading: const Icon(Icons.dashboard),
@@ -410,7 +403,7 @@ class _MainPageState extends State<MainPage> with TickerProviderStateMixin {
                   Navigator.pop(context);
                   Navigator.push(
                     context,
-                    SlidingPageTransitionRL(
+                    SlidingPageTransitionLR(
                       page: InvoiceListPage(
                         orderData: {'id': null},
                         showUnpaidOnly: false,
@@ -430,7 +423,7 @@ class _MainPageState extends State<MainPage> with TickerProviderStateMixin {
                   Navigator.pop(context);
                   Navigator.push(
                     context,
-                    SlidingPageTransitionRL(
+                    SlidingPageTransitionLR(
                       page: TodaysSalesPage(
                         provider: Provider.of<SalesOrderProvider>(context,
                             listen: false),
@@ -452,7 +445,7 @@ class _MainPageState extends State<MainPage> with TickerProviderStateMixin {
 
                   Navigator.push(
                       context,
-                      SlidingPageTransitionRL(
+                      SlidingPageTransitionLR(
                           page: PendingDeliveriesPage(
                         showPendingOnly: false,
                       )));
@@ -521,12 +514,8 @@ class _MainPageState extends State<MainPage> with TickerProviderStateMixin {
                             child: const Text('Logout',
                                 style: TextStyle(color: Colors.red)),
                             onPressed: () {
-                              Navigator.of(context).pop();
-                              Navigator.of(context).pop();
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                    content: Text('Logged out successfully')),
-                              );
+                              // Perform logout action
+                              LogoutService.logout(context);
                             },
                           ),
                         ],
@@ -671,10 +660,10 @@ class _MainPageState extends State<MainPage> with TickerProviderStateMixin {
             Row(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                _buildNavItem(0, Icons.dashboard,
+                buildNavItem(0, Icons.dashboard,
                     isSmallScreen ? null : 'Dashboard', screenWidth),
                 SizedBox(width: screenWidth * 0.02),
-                _buildNavItem(1, Icons.inventory,
+                buildNavItem(1, Icons.inventory,
                     isSmallScreen ? null : 'Products', screenWidth),
               ],
             ),
@@ -682,10 +671,10 @@ class _MainPageState extends State<MainPage> with TickerProviderStateMixin {
             Row(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                _buildNavItem(2, Icons.assignment,
+                buildNavItem(2, Icons.assignment,
                     isSmallScreen ? null : 'Orders', screenWidth),
                 SizedBox(width: screenWidth * 0.02),
-                _buildNavItem(3, Icons.people,
+                buildNavItem(3, Icons.people,
                     isSmallScreen ? null : 'Customers', screenWidth),
               ],
             ),
@@ -695,11 +684,34 @@ class _MainPageState extends State<MainPage> with TickerProviderStateMixin {
     );
   }
 
-  Widget _buildNavItem(
+  Widget buildNavItem(
       int index, IconData icon, String? label, double screenWidth) {
     final isSelected = selectedIndex == index;
-    final iconSize = screenWidth < 360 ? 20.0 : 24.0;
-    final fontSize = screenWidth < 360 ? 10.0 : 12.0;
+
+    // Scale down sizes to prevent overflow
+    final iconSize = screenWidth < 360
+        ? 20.0
+        : screenWidth < 600
+            ? 26.0
+            : 28.0;
+
+    final fontSize = screenWidth < 360
+        ? 8.0
+        : screenWidth < 600
+            ? 8.0
+            : 10.0;
+
+    // Responsive container width
+    final containerWidth = screenWidth < 360
+        ? screenWidth * 0.18
+        : screenWidth < 600
+            ? screenWidth * 0.16
+            : screenWidth * 0.14;
+
+    // Reduced padding to prevent overflow
+    final padding = screenWidth < 360
+        ? const EdgeInsets.symmetric(horizontal: 4, vertical: 3)
+        : const EdgeInsets.symmetric(horizontal: 6, vertical: 4);
 
     return InkWell(
       onTap: () {
@@ -712,10 +724,13 @@ class _MainPageState extends State<MainPage> with TickerProviderStateMixin {
       },
       borderRadius: BorderRadius.circular(8),
       child: Container(
-        width: screenWidth * 0.18,
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+        width: containerWidth,
+        padding: padding,
+        // Constrain height to prevent overflow
+        height: screenWidth < 360 ? 48.0 : 56.0,
         child: Column(
           mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Icon(
               icon,
@@ -723,7 +738,7 @@ class _MainPageState extends State<MainPage> with TickerProviderStateMixin {
               color: isSelected ? primaryColor : Colors.grey,
             ),
             if (label != null) ...[
-              const SizedBox(height: 2),
+              SizedBox(height: screenWidth < 360 ? 1 : 2),
               Text(
                 label,
                 style: TextStyle(
@@ -732,15 +747,15 @@ class _MainPageState extends State<MainPage> with TickerProviderStateMixin {
                   fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
                 ),
                 overflow: TextOverflow.ellipsis,
+                maxLines: 1,
               ),
             ],
           ],
         ),
       ),
     );
-  }
+  } // Building the main body based on selected index
 
-  // Building the main body based on selected index
   Widget _buildBody() {
     final salesProvider =
         Provider.of<SalesOrderProvider>(context, listen: false);

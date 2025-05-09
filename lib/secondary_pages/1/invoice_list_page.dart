@@ -41,9 +41,12 @@ class _InvoiceListPageState extends State<InvoiceListPage> {
   @override
   void didUpdateWidget(InvoiceListPage oldWidget) {
     super.didUpdateWidget(oldWidget);
-    final currentOrderId = widget.showUnpaidOnly ? null : widget.orderData['id']?.toString();
-    if (currentOrderId != _lastOrderId || widget.showUnpaidOnly != _lastShowUnpaidOnly) {
-      debugPrint('InvoiceListPage: Parameters changed, resetting initialLoadComplete');
+    final currentOrderId =
+        widget.showUnpaidOnly ? null : widget.orderData['id']?.toString();
+    if (currentOrderId != _lastOrderId ||
+        widget.showUnpaidOnly != _lastShowUnpaidOnly) {
+      debugPrint(
+          'InvoiceListPage: Parameters changed, resetting initialLoadComplete');
       _initialLoadComplete = false;
       _lastOrderId = currentOrderId;
       _lastShowUnpaidOnly = widget.showUnpaidOnly;
@@ -53,7 +56,9 @@ class _InvoiceListPageState extends State<InvoiceListPage> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    if (!_hasShownError && widget.orderData['id'] == null && !widget.showUnpaidOnly) {
+    if (!_hasShownError &&
+        widget.orderData['id'] == null &&
+        !widget.showUnpaidOnly) {
       debugPrint('InvoiceListPage: orderData[id] is null, showing error');
       _hasShownError = true;
       // Optionally, still fetch all invoices if this is intended behavior
@@ -82,14 +87,19 @@ class _InvoiceListPageState extends State<InvoiceListPage> {
 
   void _loadInvoices() {
     if (_isFetching) {
-      debugPrint('InvoiceListPage: Skipping fetchInvoices, already in progress');
+      debugPrint(
+          'InvoiceListPage: Skipping fetchInvoices, already in progress');
       return;
     }
 
     _isFetching = true;
-    String? orderId = widget.showUnpaidOnly ? null : widget.orderData['id']?.toString();
-    debugPrint('InvoiceListPage: Triggering fetchInvoices with orderId=$orderId, showUnpaidOnly=${widget.showUnpaidOnly}');
-    widget.provider.fetchInvoices(orderId: orderId, showUnpaidOnly: widget.showUnpaidOnly).then((_) {
+    String? orderId =
+        widget.showUnpaidOnly ? null : widget.orderData['id']?.toString();
+    debugPrint(
+        'InvoiceListPage: Triggering fetchInvoices with orderId=$orderId, showUnpaidOnly=${widget.showUnpaidOnly}');
+    widget.provider
+        .fetchInvoices(orderId: orderId, showUnpaidOnly: widget.showUnpaidOnly)
+        .then((_) {
       if (mounted) {
         setState(() {
           _initialLoadComplete = true;
@@ -114,22 +124,33 @@ class _InvoiceListPageState extends State<InvoiceListPage> {
     });
   }
 
-  List<Map<String, dynamic>> _getFilteredInvoices(List<Map<String, dynamic>> invoices) {
+  List<Map<String, dynamic>> _getFilteredInvoices(
+      List<Map<String, dynamic>> invoices) {
     if (_searchQuery.isEmpty) {
       return invoices;
     }
 
     return invoices.where((invoice) {
-      final invoiceNumber = invoice['name'] != false ? (invoice['name'] as String).toLowerCase() : 'draft';
+      final invoiceNumber = invoice['name'] != false
+          ? (invoice['name'] as String).toLowerCase()
+          : 'draft';
       final invoiceDate = invoice['invoice_date'] != false
-          ? DateFormat('yyyy-MM-dd').format(DateTime.parse(invoice['invoice_date'] as String)).toLowerCase()
+          ? DateFormat('yyyy-MM-dd')
+              .format(DateTime.parse(invoice['invoice_date'] as String))
+              .toLowerCase()
           : '';
-      final state = widget.provider.formatInvoiceState(
-        invoice['state'] as String,
-        (invoice['amount_residual'] as double? ?? invoice['amount_total'] as double) <= 0,
-      ).toLowerCase();
+      final state = widget.provider
+          .formatInvoiceState(
+            invoice['state'] as String,
+            (invoice['amount_residual'] as double? ??
+                    invoice['amount_total'] as double) <=
+                0,
+          )
+          .toLowerCase();
 
-      return invoiceNumber.contains(_searchQuery) || invoiceDate.contains(_searchQuery) || state.contains(_searchQuery);
+      return invoiceNumber.contains(_searchQuery) ||
+          invoiceDate.contains(_searchQuery) ||
+          state.contains(_searchQuery);
     }).toList();
   }
 
@@ -177,11 +198,11 @@ class _InvoiceListPageState extends State<InvoiceListPage> {
                   prefixIcon: Icon(Icons.search, color: Colors.grey[500]),
                   suffixIcon: _searchController.text.isNotEmpty
                       ? IconButton(
-                    icon: Icon(Icons.clear, color: Colors.grey[500]),
-                    onPressed: () {
-                      _searchController.clear();
-                    },
-                  )
+                          icon: Icon(Icons.clear, color: Colors.grey[500]),
+                          onPressed: () {
+                            _searchController.clear();
+                          },
+                        )
                       : null,
                   filled: true,
                   fillColor: Colors.white,
@@ -206,7 +227,7 @@ class _InvoiceListPageState extends State<InvoiceListPage> {
               builder: (context, provider, child) {
                 debugPrint(
                     'InvoiceListPage: Consumer rebuild - isLoading=${provider.isLoading}, '
-                        'error=${provider.error}, invoices.length=${provider.invoices.length}');
+                    'error=${provider.error}, invoices.length=${provider.invoices.length}');
 
                 if (!_initialLoadComplete && provider.isLoading) {
                   return _buildShimmerLoading();
@@ -309,7 +330,8 @@ class _InvoiceListPageState extends State<InvoiceListPage> {
                 ),
                 if (provider.invoices.isNotEmpty)
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                     decoration: BoxDecoration(
                       color: primaryColor.withOpacity(0.1),
                       borderRadius: BorderRadius.circular(20),
@@ -356,7 +378,8 @@ class _InvoiceListPageState extends State<InvoiceListPage> {
 
   Widget _buildEmptyState(BuildContext context, InvoiceProvider provider) {
     final orderId = widget.orderData['id']?.toString();
-    debugPrint('InvoiceListPage: Showing empty state, orderData[id]=${widget.orderData['id']}, showUnpaidOnly=${widget.showUnpaidOnly}');
+    debugPrint(
+        'InvoiceListPage: Showing empty state, orderData[id]=${widget.orderData['id']}, showUnpaidOnly=${widget.showUnpaidOnly}');
     return Card(
       elevation: 2,
       margin: const EdgeInsets.only(bottom: 16.0),
@@ -372,8 +395,8 @@ class _InvoiceListPageState extends State<InvoiceListPage> {
                 widget.showUnpaidOnly
                     ? 'No unpaid invoices found'
                     : orderId == null
-                    ? 'Invalid Order'
-                    : 'No invoices found',
+                        ? 'Invalid Order'
+                        : 'No invoices found',
                 style: TextStyle(
                   color: Colors.grey[700],
                   fontWeight: FontWeight.w500,
@@ -385,8 +408,8 @@ class _InvoiceListPageState extends State<InvoiceListPage> {
                 widget.showUnpaidOnly
                     ? 'All invoices are paid or no invoices exist.'
                     : orderId == null
-                    ? 'No valid order selected. Please select an order.'
-                    : 'There are no invoices associated with this order yet',
+                        ? 'No valid order selected. Please select an order.'
+                        : 'There are no invoices associated with this order yet',
                 style: TextStyle(
                   color: Colors.grey[600],
                   fontSize: 14,
@@ -431,7 +454,8 @@ class _InvoiceListPageState extends State<InvoiceListPage> {
   Widget _buildInvoiceList(BuildContext context, InvoiceProvider provider) {
     final filteredInvoices = _getFilteredInvoices(provider.invoices);
 
-    debugPrint('InvoiceListPage: Building invoice list with ${filteredInvoices.length} invoices');
+    debugPrint(
+        'InvoiceListPage: Building invoice list with ${filteredInvoices.length} invoices');
 
     if (filteredInvoices.isEmpty) {
       return Card(
@@ -446,7 +470,9 @@ class _InvoiceListPageState extends State<InvoiceListPage> {
                 Icon(Icons.search_off, size: 48, color: Colors.grey[400]),
                 const SizedBox(height: 16),
                 Text(
-                  widget.showUnpaidOnly ? 'No matching unpaid invoices found' : 'No matching invoices found',
+                  widget.showUnpaidOnly
+                      ? 'No matching unpaid invoices found'
+                      : 'No matching invoices found',
                   style: TextStyle(
                     color: Colors.grey[600],
                     fontWeight: FontWeight.w500,
@@ -474,7 +500,8 @@ class _InvoiceListPageState extends State<InvoiceListPage> {
       itemCount: filteredInvoices.length,
       itemBuilder: (context, index) {
         final invoice = filteredInvoices[index];
-        debugPrint('InvoiceListPage: Rendering invoice ${invoice['id']} at index $index');
+        debugPrint(
+            'InvoiceListPage: Rendering invoice ${invoice['id']} at index $index');
         return InvoiceCard(
           invoice: invoice,
           provider: provider,
@@ -496,13 +523,22 @@ class InvoiceCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final invoiceNumber = invoice['name'] != false ? invoice['name'] as String : 'Draft';
-    final invoiceDate = invoice['invoice_date'] != false ? DateTime.parse(invoice['invoice_date'] as String) : null;
-    final dueDate = invoice['invoice_date_due'] != false ? DateTime.parse(invoice['invoice_date_due'] as String) : null;
+    final invoiceNumber =
+        invoice['name'] != false ? invoice['name'] as String : 'Draft';
+    final invoiceDate = invoice['invoice_date'] != false
+        ? (invoice['invoice_date'] != null
+            ? DateTime.parse(invoice['invoice_date'].toString())
+            : null)
+        : null;
+    final dueDate = invoice['invoice_date_due'] != false
+        ? DateTime.parse(invoice['invoice_date_due'] as String)
+        : null;
     final invoiceState = invoice['state'] as String;
     final invoiceAmount = invoice['amount_total'] as double;
-    final amountResidual = invoice['amount_residual'] as double? ?? invoiceAmount;
-    final isFullyPaid = amountResidual <= 0;
+    final amountResidual = invoice['amount_residual'] != null
+        ? invoice['amount_residual'] as double
+        : 0.0;
+    final isFullyPaid = amountResidual <= 0 || invoice['state'] == 'paid';
 
     int? daysOverdue;
     if (dueDate != null && !isFullyPaid && dueDate.isBefore(DateTime.now())) {
@@ -519,7 +555,9 @@ class InvoiceCard extends StatelessWidget {
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(10),
           border: Border.all(
-            color: daysOverdue != null && daysOverdue > 0 ? Colors.red.withOpacity(0.2) : Colors.grey.withOpacity(0.1),
+            color: daysOverdue != null && daysOverdue > 0
+                ? Colors.red.withOpacity(0.2)
+                : Colors.grey.withOpacity(0.1),
             width: 1,
           ),
         ),
@@ -606,11 +644,14 @@ class InvoiceCard extends StatelessWidget {
                     ),
                   ),
                   onPressed: () {
-                    debugPrint('Navigating to InvoiceDetailsPage with invoice: $invoice');
+                    debugPrint(
+                        'Navigating to InvoiceDetailsPage with invoice: $invoice');
                     Navigator.push(
                       context,
                       SlidingPageTransitionRL(
-                        page: InvoiceDetailsPage(invoiceData: invoice),
+                        page: InvoiceDetailsPage(
+                          invoiceId: invoice['id'].toString(),
+                        ),
                       ),
                     );
                   },
@@ -632,7 +673,8 @@ class InvoiceCard extends StatelessWidget {
     );
   }
 
-  Widget _buildStatusBadge(BuildContext context, String state, bool isFullyPaid) {
+  Widget _buildStatusBadge(
+      BuildContext context, String state, bool isFullyPaid) {
     final status = provider.formatInvoiceState(state, isFullyPaid);
     final statusColor = provider.getInvoiceStatusColor(status);
     return Container(
@@ -653,13 +695,16 @@ class InvoiceCard extends StatelessWidget {
     );
   }
 
-  Widget _buildInfoRow(IconData icon, String label, String value, {bool highlight = false, required int iconSize, required int fontSize}) {
+  Widget _buildInfoRow(IconData icon, String label, String value,
+      {bool highlight = false, required int iconSize, required int fontSize}) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 8.0),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, size: iconSize.toDouble(), color: highlight ? Colors.red[700] : Colors.grey[600]),
+          Icon(icon,
+              size: iconSize.toDouble(),
+              color: highlight ? Colors.red[700] : Colors.grey[600]),
           const SizedBox(width: 8),
           Text(
             '$label: ',
@@ -686,7 +731,8 @@ class InvoiceCard extends StatelessWidget {
     );
   }
 
-  Widget _buildAmountRow(String label, String value, {Color? color, required int fontSize}) {
+  Widget _buildAmountRow(String label, String value,
+      {Color? color, required int fontSize}) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4.0),
       child: Row(

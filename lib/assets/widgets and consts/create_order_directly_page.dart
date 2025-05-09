@@ -338,6 +338,32 @@ class _CreateOrderDirectlyPageState extends State<CreateOrderDirectlyPage> {
         });
       }
 
+      // Debug: Log sale order details
+      final orderDetails = {
+        'order_id': orderId,
+        'odoo_sale_order_id': saleOrderId,
+        'customer': {
+          'id': customer.id,
+          'name': customer.name,
+        },
+        'order_date': DateFormat('yyyy-MM-dd HH:mm:ss').format(orderDate),
+        'payment_method': paymentMethod,
+        'payment_term_id': paymentTermId,
+        'order_notes': orderNotes ?? 'None',
+        'total_amount': orderTotal.toStringAsFixed(2),
+        'order_lines': orderLines.map((line) {
+          return {
+            'product_id': line[2]['product_id'],
+            'name': line[2]['name'],
+            'quantity': line[2]['product_uom_qty'],
+            'price_unit': line[2]['price_unit'].toStringAsFixed(2),
+            'line_total': (line[2]['price_unit'] * line[2]['product_uom_qty'])
+                .toStringAsFixed(2),
+          };
+        }).toList(),
+      };
+      debugPrint('Created Sale Order Details: ${jsonEncode(orderDetails)}');
+
       final orderItems = finalProducts
           .map((product) => OrderItem(
                 product: product,
@@ -351,6 +377,7 @@ class _CreateOrderDirectlyPageState extends State<CreateOrderDirectlyPage> {
         items: orderItems,
       );
 
+      // Only pop and navigate on success
       Navigator.pop(context);
 
       Navigator.pushReplacement(
@@ -363,7 +390,7 @@ class _CreateOrderDirectlyPageState extends State<CreateOrderDirectlyPage> {
             customer: customer,
             paymentMethod: paymentMethod,
             orderNotes: orderNotes,
-            orderDate: orderDate,
+            orderDate: orderDate, shippingCost: 0.0,
           ),
         ),
       );
@@ -372,14 +399,24 @@ class _CreateOrderDirectlyPageState extends State<CreateOrderDirectlyPage> {
       _notesController.clear();
       _draftOrderId = null;
     } catch (e) {
-      if (Navigator.canPop(context)) Navigator.pop(context);
+      String errorMessage = 'Failed to create order: $e';
+      if (e.toString().contains('odoo.exceptions.UserError')) {
+        if (e.toString().contains('No rule has been found to replenish')) {
+          errorMessage =
+              'Failed to create order: Procurement rules are missing for some products. Please check the product configurations in Odoo.';
+        } else {
+          errorMessage =
+              'Failed to create order: Invalid product or warehouse configuration. Please check product routes and stock rules in Odoo.';
+        }
+      }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Failed to create order: $e'),
+          content: Text(errorMessage),
           backgroundColor: Colors.red,
           duration: const Duration(seconds: 5),
         ),
       );
+      debugPrint('Failed to create order: $e');
     } finally {
       setState(() {
         _isLoading = false;

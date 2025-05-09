@@ -604,8 +604,8 @@ class _CustomerHistoryPageState extends State<CustomerHistoryPage> {
                   ),
                   _buildStatusBadge(
                     _formatStatus(order['delivery_status'] ?? 'none'),
-                    _getDeliveryStatusColor(order['delivery_status'] ?? 'none'),
-                  ),
+                    _getDeliveryStatusColor(order['delivery_status']?.toString() ?? 'none'),
+                                    ),
                 ],
               ),
               const SizedBox(height: 8),

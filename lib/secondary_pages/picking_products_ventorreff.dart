@@ -11,7 +11,8 @@ class ProductPickScreen extends StatefulWidget {
   final Map<int, double> pickedQuantities;
   final Map<int, double> pendingPickedQuantities;
   final Map<int, TextEditingController> quantityControllers;
-  final Function(int) confirmPick;
+  final Future<bool> Function(int, List<String>)
+      confirmPick; // Updated signature
   final Function(int) undoPick;
   final Function(int, int, StateSetter) suggestAlternativeLocation;
 
@@ -34,206 +35,659 @@ class ProductPickScreen extends StatefulWidget {
 }
 
 class _ProductPickScreenState extends State<ProductPickScreen> {
-  double pendingQty = 0.0;
-  List<String> lotSerialNumbers = [];
+  List<Map<String, dynamic>> alternativeLocations = [];
+  List<Map<String, dynamic>> availableLots = [];
   bool _isScanning = false;
+  bool _isLoading = true;
+  final Map<int, List<String>> pendingLotSerialNumbers = {};
+  late String trackingType;
+  List<String> lotSerialNumbers = [];
+  late TextEditingController _lotController;
+  bool _isManualLotInput = false;
+  List<TextEditingController> _serialControllers = [];
 
-  List<Widget> _buildLotSerialInputs(StateSetter setModalState) {
-    final List<Widget> widgets = [];
-    final trackingType = widget.line['tracking'] as String? ?? 'none';
-    final qtyController = widget.quantityControllers[widget.moveLineId];
-    final qty = qtyController != null
-        ? double.tryParse(qtyController.text) ?? 1.0
-        : 1.0;
-
-    lotSerialNumbers = trackingType == 'serial' ? List.filled(qty.toInt(), '') : [''];
-
-    if (trackingType == 'serial') {
-      for (int i = 0; i < qty.toInt(); i++) {
-        final controller = TextEditingController(text: lotSerialNumbers[i]);
-        widgets.add(
-          Padding(
-            padding: const EdgeInsets.only(bottom: 8.0),
-            child: Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: controller,
-                    decoration: const InputDecoration(
-                      labelText: 'Serial',
-                      border: OutlineInputBorder(borderSide: BorderSide(color: Colors.grey)),
-                      contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                    ),
-                    style: const TextStyle(fontSize: 14),
-                    onChanged: (value) {
-                      setModalState(() {
-                        lotSerialNumbers[i] = value.trim();
-                      });
-                    },
-                  ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.qr_code_scanner, size: 20),
-                  onPressed: () => _scanSerialNumber(i, setModalState, controller),
-                ),
-              ],
-            ),
-          ),
-        );
-      }
-    } else if (trackingType == 'lot') {
-      final controller = TextEditingController(text: lotSerialNumbers[0]);
-      widgets.add(
-        Row(
-          children: [
-            Expanded(
-              child: TextField(
-                controller: controller,
-                decoration: const InputDecoration(
-                  labelText: 'Lot',
-                  border: OutlineInputBorder(borderSide: BorderSide(color: Colors.grey)),
-                  contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                ),
-                style: const TextStyle(fontSize: 14),
-                onChanged: (value) {
-                  setModalState(() {
-                    lotSerialNumbers[0] = value.trim();
-                  });
-                },
-              ),
-            ),
-            IconButton(
-              icon: const Icon(Icons.qr_code_scanner, size: 20),
-              onPressed: () => _scanSerialNumber(0, setModalState, controller),
-            ),
-          ],
-        ),
-      );
-    }
-
-    return widgets;
+  @override
+  void initState() {
+    super.initState();
+    trackingType = widget.line['tracking'] as String? ?? 'none';
+    widget.line['lot_serial_numbers'] ??= [];
+    lotSerialNumbers = widget.line['lot_serial_numbers'].isNotEmpty
+        ? List.from(widget.line['lot_serial_numbers'])
+        : [''];
+    pendingLotSerialNumbers[widget.moveLineId] = List.from(lotSerialNumbers);
+    _initializeControllers();
+    _loadInitialData();
   }
 
-  Future<void> _scanSerialNumber(int index, StateSetter setModalState, TextEditingController controller) async {
+  Future<void> _loadInitialData() async {
+    setState(() => _isLoading = true);
+    try {
+      await Future.wait([
+        _fetchAlternativeLocations(),
+        _fetchAvailableLots(),
+      ]);
+    } catch (e) {
+      _showErrorSnackBar('Error loading data: $e');
+    } finally {
+      setState(() => _isLoading = false);
+    }
+  }
+
+  void _initializeControllers() {
+    _lotController = TextEditingController(
+        text: lotSerialNumbers.isNotEmpty ? lotSerialNumbers[0] : '');
+    if (trackingType == 'serial') {
+      final qtyController = widget.quantityControllers[widget.moveLineId];
+      final pendingQty =
+          widget.pendingPickedQuantities[widget.moveLineId] ?? 0.0;
+      final qty = qtyController != null
+          ? double.tryParse(qtyController.text) ?? pendingQty
+          : pendingQty;
+      if (lotSerialNumbers.length != qty.toInt()) {
+        lotSerialNumbers = List.generate(
+          qty.toInt(),
+          (i) => i < lotSerialNumbers.length ? lotSerialNumbers[i] : '',
+        );
+      }
+      _serialControllers = List.generate(
+        qty.toInt(),
+        (i) => TextEditingController(
+            text: i < lotSerialNumbers.length ? lotSerialNumbers[i] : ''),
+      );
+    }
+  }
+
+  void _updateSerialControllers(int count) {
+    if (trackingType == 'serial') {
+      setState(() {
+        final existingValues = _serialControllers.map((c) => c.text).toList();
+        for (var controller in _serialControllers) {
+          controller.dispose();
+        }
+        _serialControllers = List.generate(
+          count,
+          (i) => TextEditingController(
+              text: i < existingValues.length ? existingValues[i] : ''),
+        );
+        lotSerialNumbers = _serialControllers.map((c) => c.text).toList();
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _lotController.dispose();
+    for (var controller in _serialControllers) {
+      controller.dispose();
+    }
+    super.dispose();
+  }
+
+  void _showErrorSnackBar(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), backgroundColor: Colors.red),
+    );
+  }
+
+  Future<void> _fetchAlternativeLocations() async {
+    try {
+      final locations =
+          await DataProvider().fetchAlternativeLocations(widget.productId, 1);
+      setState(() {
+        alternativeLocations = locations;
+      });
+    } catch (e) {
+      _showErrorSnackBar('Error fetching locations: $e');
+    }
+  }
+
+  Future<void> _fetchAvailableLots() async {
+    try {
+      final lots = await DataProvider().fetchAvailableLots(widget.productId, 1);
+      debugPrint('DEBUG: lots fetched: $lots (type: ${lots.runtimeType})');
+      setState(() {
+        availableLots = lots;
+        _isManualLotInput = lots.isEmpty;
+      });
+    } catch (e) {
+      _showErrorSnackBar('Error fetching lots: $e');
+    }
+  }
+
+  Widget _buildAvailabilitySection() {
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.grey[100],
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Stock Availability',
+                style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.grey[800]),
+              ),
+              if (_isLoading)
+                SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    valueColor: AlwaysStoppedAnimation<Color>(
+                        Theme.of(context).primaryColor),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          if (!_isLoading && alternativeLocations.isEmpty)
+            Container(
+              padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+              decoration: BoxDecoration(
+                color: Colors.red.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.warning_amber_rounded,
+                      color: Colors.red[700], size: 16),
+                  const SizedBox(width: 8),
+                  const Text('No stock available in any location',
+                      style: TextStyle(color: Colors.red, fontSize: 12)),
+                ],
+              ),
+            )
+          else
+            ...alternativeLocations.map((loc) {
+              final locationName = loc['location_id'][1] as String;
+              final quantity = (loc['quantity'] as num).toDouble();
+              return Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.circle, size: 8, color: Colors.grey[400]),
+                        const SizedBox(width: 6),
+                        Text(locationName,
+                            style: TextStyle(
+                                color: Colors.grey[600], fontSize: 12)),
+                      ],
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: quantity > 0
+                            ? Colors.green.withOpacity(0.1)
+                            : Colors.grey.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(
+                        '${quantity.toStringAsFixed(2)}',
+                        style: TextStyle(
+                          color: quantity > 0
+                              ? Colors.green[700]
+                              : Colors.grey[600],
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }).toList(),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _scanSerialNumber(int index, StateSetter setModalState,
+      TextEditingController controller) async {
     if (_isScanning) return;
     setState(() => _isScanning = true);
-
     try {
       final result = await FlutterBarcodeScanner.scanBarcode(
-        '#ff0000',
-        'Cancel',
-        true,
-        ScanMode.BARCODE,
-      );
-
+          '#ff0000', 'Cancel', true, ScanMode.BARCODE);
       if (result != '-1' && result.isNotEmpty) {
         setModalState(() {
           controller.text = result;
-          lotSerialNumbers[index] = result;
+          if (trackingType == 'lot') {
+            lotSerialNumbers[0] = result;
+            _isManualLotInput = true;
+          } else if (trackingType == 'serial') {
+            lotSerialNumbers[index] = result;
+          }
         });
       }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error scanning: $e'), backgroundColor: Colors.red.withOpacity(0.7)),
-      );
+      _showErrorSnackBar('Error scanning: $e');
     } finally {
       setState(() => _isScanning = false);
     }
   }
 
+  Widget _buildLotInput(StateSetter setModalState) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Padding(
+          padding: EdgeInsets.only(top: 8.0, left: 4.0),
+          child: Text('Lot Number',
+              style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                  color: Colors.black87)),
+        ),
+        if (availableLots.isNotEmpty && !_isManualLotInput)
+          Row(
+            children: [
+              Expanded(
+                child: DropdownButtonFormField<String>(
+                  decoration: InputDecoration(
+                    isDense: true,
+                    contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 14),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(4),
+                      borderSide: BorderSide(color: Colors.grey[300]!),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(4),
+                      borderSide: BorderSide(color: Colors.grey[300]!),
+                    ),
+                  ),
+                  items: [
+                    ...availableLots.map((lot) => DropdownMenuItem(
+                          value: lot['name'],
+                          child: Text(
+                              '${lot['name']} (Stock: ${lot['quantity'].toStringAsFixed(2)})',
+                              style: const TextStyle(fontSize: 14)),
+                        )),
+                    const DropdownMenuItem(
+                      value: 'manual',
+                      child: Text('Enter Manually',
+                          style: TextStyle(
+                              fontSize: 14,
+                              fontStyle: FontStyle.italic,
+                              color: Colors.blue)),
+                    ),
+                  ],
+                  value: lotSerialNumbers[0].isEmpty ||
+                          !availableLots
+                              .any((lot) => lot['name'] == lotSerialNumbers[0])
+                      ? null
+                      : lotSerialNumbers[0],
+                  hint: const Text('Select Lot'),
+                  onChanged: (value) {
+                    setModalState(() {
+                      if (value == 'manual') {
+                        _isManualLotInput = true;
+                        lotSerialNumbers[0] = '';
+                        _lotController.text = '';
+                      } else if (value != null) {
+                        _isManualLotInput = false;
+                        lotSerialNumbers[0] = value;
+                        _lotController.text = value;
+                      }
+                    });
+                  },
+                ),
+              ),
+            ],
+          )
+        else
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _lotController,
+                  decoration: InputDecoration(
+                    isDense: true,
+                    contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 14),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(4),
+                      borderSide: BorderSide(color: Colors.grey[300]!),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(4),
+                      borderSide: BorderSide(color: Colors.grey[300]!),
+                    ),
+                    hintText: 'Enter Lot Number',
+                    errorText:
+                        trackingType == 'lot' && lotSerialNumbers[0].isEmpty
+                            ? 'Lot number is required'
+                            : null,
+                  ),
+                  style: const TextStyle(fontSize: 14),
+                  onChanged: (value) {
+                    setModalState(() {
+                      lotSerialNumbers[0] = value.trim();
+                    });
+                  },
+                ),
+              ),
+              const SizedBox(width: 8),
+              Container(
+                height: 48,
+                decoration: BoxDecoration(
+                  color: Theme.of(context).primaryColor,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: IconButton(
+                  icon: const Icon(Icons.qr_code_scanner,
+                      color: Colors.white, size: 20),
+                  onPressed: _isScanning
+                      ? null
+                      : () =>
+                          _scanSerialNumber(0, setModalState, _lotController),
+                ),
+              ),
+            ],
+          ),
+        if (_isLoading)
+          Padding(
+            padding: const EdgeInsets.only(top: 8.0),
+            child: Row(
+              children: [
+                SizedBox(
+                  width: 12,
+                  height: 12,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    valueColor: AlwaysStoppedAnimation<Color>(
+                        Theme.of(context).primaryColor),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text('Loading available lots...',
+                    style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+
+  List<Widget> _buildSerialInputs(StateSetter setModalState) {
+    final List<Widget> widgets = [];
+    widgets.add(
+      const Padding(
+        padding: EdgeInsets.only(bottom: 8.0, left: 4.0),
+        child: Text('Serial Numbers',
+            style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+                color: Colors.black87)),
+      ),
+    );
+    for (int i = 0; i < _serialControllers.length; i++) {
+      widgets.add(
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8.0),
+          child: Row(
+            children: [
+              Container(
+                width: 24,
+                height: 24,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: Theme.of(context).primaryColor.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  '${i + 1}',
+                  style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                      color: Theme.of(context).primaryColor),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: TextField(
+                  controller: _serialControllers[i],
+                  decoration: InputDecoration(
+                    isDense: true,
+                    contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 14),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(4),
+                      borderSide: BorderSide(color: Colors.grey[300]!),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(4),
+                      borderSide: BorderSide(color: Colors.grey[300]!),
+                    ),
+                    hintText: 'Enter Serial #${i + 1}',
+                  ),
+                  style: const TextStyle(fontSize: 14),
+                  onChanged: (value) {
+                    setModalState(() {
+                      lotSerialNumbers[i] = value.trim();
+                    });
+                  },
+                ),
+              ),
+              const SizedBox(width: 8),
+              Container(
+                height: 48,
+                decoration: BoxDecoration(
+                  color: Theme.of(context).primaryColor,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: IconButton(
+                  icon: const Icon(Icons.qr_code_scanner,
+                      color: Colors.white, size: 20),
+                  onPressed: _isScanning
+                      ? null
+                      : () => _scanSerialNumber(
+                          i, setModalState, _serialControllers[i]),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    return widgets;
+  }
+
   void _showEditQuantityDialog() {
+    final existingPickedQty = widget.pickedQuantities[widget.moveLineId] ?? 0.0;
+    final pendingQty = widget.pendingPickedQuantities[widget.moveLineId] ?? 0.0;
+    final orderedQty = widget.line['ordered_qty'] as double? ?? 0.0;
+    final remainingOrderedQty = orderedQty - existingPickedQty;
+
+    // Initialize controller with pending additional quantity (not total)
+    final qtyController = widget.quantityControllers[widget.moveLineId] ??
+        TextEditingController(text: pendingQty.toStringAsFixed(2));
+
+    final dialogLotSerialNumbers = List<String>.from(lotSerialNumbers);
+    final totalAvailable = widget.availableQty;
+
     showDialog(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setModalState) {
-          final qtyController = widget.quantityControllers[widget.moveLineId] ??
-              TextEditingController(
-                  text: widget.pickedQuantities[widget.moveLineId]?.toStringAsFixed(2) ?? '0.0');
-          final lotSerialWidgets = _buildLotSerialInputs(setModalState);
+          void updateQuantity(String value) {
+            final newQty = double.tryParse(value) ?? 0.0;
+            setModalState(() {
+              widget.pendingPickedQuantities[widget.moveLineId] = newQty;
+              if (trackingType == 'serial') {
+                final totalQty = existingPickedQty + newQty;
+                _updateSerialControllers(totalQty.toInt());
+              }
+            });
+          }
+
+          bool isQuantityValid() {
+            final qty = double.tryParse(qtyController.text) ?? 0.0;
+            if (qty < 0) return false; // Additional quantity cannot be negative
+            if (qty > totalAvailable) return false; // Cannot exceed available stock
+            if (qty > remainingOrderedQty) return false; // Cannot exceed remaining ordered quantity
+            return true;
+          }
+
+          bool areLotsValid() {
+            if (trackingType == 'none') return true;
+            if (trackingType == 'lot' && lotSerialNumbers[0].isEmpty)
+              return false;
+            if (trackingType == 'serial') {
+              final qty = double.tryParse(qtyController.text) ?? 0.0;
+              final totalQty = existingPickedQty + qty;
+              if (lotSerialNumbers.length != totalQty.toInt()) return false;
+              for (int i = 0; i < totalQty.toInt(); i++) {
+                if (i >= lotSerialNumbers.length || lotSerialNumbers[i].isEmpty) {
+                  return false;
+                }
+              }
+            }
+            return true;
+          }
+
+          bool isExceedingOrderedQty() {
+            final qty = double.tryParse(qtyController.text) ?? 0.0;
+            return qty > remainingOrderedQty;
+          }
 
           return AlertDialog(
-            title: const Text('Edit Quantity', style: TextStyle(fontSize: 16)),
+            title: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text('Add Quantity', style: TextStyle(fontSize: 16)),
+                Text(
+                  'Available: ${totalAvailable.toStringAsFixed(2)}',
+                  style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.grey[600],
+                      fontWeight: FontWeight.normal),
+                ),
+              ],
+            ),
             content: SingleChildScrollView(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  TextField(
-                    controller: qtyController,
-                    decoration: const InputDecoration(
-                      labelText: 'Quantity',
-                      border: OutlineInputBorder(borderSide: BorderSide(color: Colors.grey)),
-                      contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                    ),
-                    keyboardType: TextInputType.number,
-                    style: const TextStyle(fontSize: 14),
-                    onChanged: (value) {
-                      setModalState(() {
-                        widget.pendingPickedQuantities[widget.moveLineId] =
-                            double.tryParse(value) ?? 0.0;
-                      });
-                    },
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Padding(
+                        padding: EdgeInsets.only(top: 8.0, left: 4.0),
+                        child: Text('Additional Quantity',
+                            style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w500,
+                                color: Colors.black87)),
+                      ),
+                      TextField(
+                        controller: qtyController,
+                        decoration: InputDecoration(
+                          isDense: true,
+                          contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 14),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(4),
+                            borderSide: BorderSide(color: Colors.grey[300]!),
+                          ),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(4),
+                            borderSide: BorderSide(color: Colors.grey[300]!),
+                          ),
+                          hintText: 'Enter additional quantity',
+                          helperText:
+                          'Ordered: ${orderedQty.toStringAsFixed(2)} | Picked: ${existingPickedQty.toStringAsFixed(2)} | Remaining: ${remainingOrderedQty.toStringAsFixed(2)}',
+                          errorText: !isQuantityValid() &&
+                              qtyController.text.isNotEmpty
+                              ? qtyController.text.isEmpty
+                              ? 'Required'
+                              : double.tryParse(qtyController.text)! < 0
+                              ? 'Quantity cannot be negative'
+                              :
+                              double.tryParse(qtyController.text)! >
+                                  totalAvailable
+                              ? 'Exceeds available quantity'
+                              : 'Exceeds remaining ordered quantity'
+                              : null,
+                        ),
+                        keyboardType: TextInputType.number,
+                        style: const TextStyle(fontSize: 14),
+                        onChanged: updateQuantity,
+                      ),
+                      if (isExceedingOrderedQty())
+                        Padding(
+                          padding: const EdgeInsets.only(top: 8.0),
+                          child: Text(
+                            'Warning: Quantity exceeds remaining ordered amount (${remainingOrderedQty.toStringAsFixed(2)})',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.amber[800],
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                    ],
                   ),
-                  if (lotSerialWidgets.isNotEmpty) ...[
-                    const SizedBox(height: 8),
-                    ...lotSerialWidgets,
-                  ],
+                  const SizedBox(height: 16),
+                  if (trackingType == 'lot')
+                    _buildLotInput(setModalState)
+                  else if (trackingType == 'serial')
+                    ..._buildSerialInputs(setModalState),
                 ],
               ),
             ),
             actions: [
               TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Cancel', style: TextStyle(fontSize: 14)),
-              ),
-              TextButton(
                 onPressed: () {
-                  final qty = double.tryParse(qtyController.text) ?? 0.0;
-                  final trackingType = widget.line['tracking'] as String? ?? 'none';
-                  if (qty > widget.availableQty) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text('Max available: ${widget.availableQty}'),
-                        backgroundColor: Colors.red.withOpacity(0.7),
-                      ),
-                    );
-                    return;
-                  }
-                  if (qty > widget.line['ordered_qty']) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text('Max ordered: ${widget.line['ordered_qty']}'),
-                        backgroundColor: Colors.red.withOpacity(0.7),
-                      ),
-                    );
-                    return;
-                  }
-                  if (trackingType == 'serial' && lotSerialNumbers.length != qty.toInt()) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Serial number required for each unit'),
-                        backgroundColor: Colors.red,
-                      ),
-                    );
-                    return;
-                  }
-                  if (trackingType == 'lot' && lotSerialNumbers[0].isEmpty) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Lot number required'),
-                        backgroundColor: Colors.red,
-                      ),
-                    );
-                    return;
-                  }
-                  setState(() {
-                    widget.pendingPickedQuantities[widget.moveLineId] = qty;
-                    widget.quantityControllers[widget.moveLineId] = qtyController;
-                    if (lotSerialNumbers.isNotEmpty) {
-                      widget.line['lot_serial_numbers'] = lotSerialNumbers;
-                    }
-                  });
+                  lotSerialNumbers = dialogLotSerialNumbers;
                   Navigator.pop(context);
                 },
+                child: const Text('Cancel', style: TextStyle(fontSize: 14)),
+              ),
+              ElevatedButton(
+                onPressed: !isQuantityValid() || !areLotsValid()
+                    ? null
+                    : () {
+                  final qty = double.tryParse(qtyController.text) ?? 0.0;
+                  debugPrint(
+                      'DEBUG: Add Quantity Save - additional qty: $qty, lotSerialNumbers: $lotSerialNumbers');
+                  setState(() {
+                    widget.pendingPickedQuantities[widget.moveLineId] = qty;
+                    widget.quantityControllers[widget.moveLineId] =
+                        qtyController;
+                    if (trackingType != 'none') {
+                      widget.line['lot_serial_numbers'] =
+                          List.from(lotSerialNumbers);
+                      pendingLotSerialNumbers[widget.moveLineId] =
+                          List.from(lotSerialNumbers);
+                      debugPrint(
+                          'DEBUG: Add Quantity Save - Updated widget.line[lot_serial_numbers]: ${widget.line['lot_serial_numbers']}');
+                      debugPrint(
+                          'DEBUG: Add Quantity Save - Updated pendingLotSerialNumbers[${widget.moveLineId}]: ${pendingLotSerialNumbers[widget.moveLineId]}');
+                      this.lotSerialNumbers = List.from(lotSerialNumbers);
+                    }
+                  });
+                  debugPrint(
+                      'DEBUG: Add Quantity Save - After setState, widget.line[lot_serial_numbers]: ${widget.line['lot_serial_numbers']}');
+                  Navigator.pop(context);
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Theme.of(context).primaryColor,
+                  foregroundColor: Colors.white,
+                  disabledBackgroundColor: Colors.grey[300],
+                ),
                 child: const Text('Save', style: TextStyle(fontSize: 14)),
               ),
             ],
@@ -242,21 +696,21 @@ class _ProductPickScreenState extends State<ProductPickScreen> {
       ),
     );
   }
-
   void _editSourceLocation() {
-    widget.suggestAlternativeLocation(widget.productId, widget.moveLineId, (state) {
+    widget.suggestAlternativeLocation(widget.productId, widget.moveLineId,
+        (state) {
       setState(() {
-        widget.line['location_name'] = widget.line['location_name'];
-        widget.line['location_id'] = widget.line['location_id'];
+        // Assuming suggestAlternativeLocation updates widget.line directly
       });
     });
   }
 
   void _editDestinationLocation() {
-    widget.suggestAlternativeLocation(widget.productId, widget.moveLineId, (state) {
+    widget.suggestAlternativeLocation(widget.productId, widget.moveLineId,
+        (state) {
       setState(() {
-        widget.line['location_dest_name'] = widget.line['location_name'];
         widget.line['location_dest_id'] = widget.line['location_id'];
+        widget.line['location_dest_name'] = widget.line['location_name'];
       });
     });
   }
@@ -264,19 +718,50 @@ class _ProductPickScreenState extends State<ProductPickScreen> {
   void _showMoreOptions() {
     showModalBottomSheet(
       context: context,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
       builder: (context) => Column(
         mainAxisSize: MainAxisSize.min,
         children: [
+          Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Row(
+              children: [
+                const Text('Options',
+                    style:
+                        TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                const Spacer(),
+                IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: () => Navigator.pop(context)),
+              ],
+            ),
+          ),
+          const Divider(height: 1),
           ListTile(
-            leading: const Icon(Icons.info, size: 20),
-            title: const Text('Product Details', style: TextStyle(fontSize: 14)),
+            leading: Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                  color: Colors.blue.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8)),
+              child:
+                  const Icon(Icons.info_outline, size: 20, color: Colors.blue),
+            ),
+            title:
+                const Text('Product Details', style: TextStyle(fontSize: 14)),
             onTap: () {
               Navigator.pop(context);
               _showProductDetails();
             },
           ),
           ListTile(
-            leading: const Icon(Icons.refresh, size: 20),
+            leading: Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                  color: Colors.green.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8)),
+              child: const Icon(Icons.refresh, size: 20, color: Colors.green),
+            ),
             title: const Text('Refresh Stock', style: TextStyle(fontSize: 14)),
             onTap: () {
               Navigator.pop(context);
@@ -284,13 +769,20 @@ class _ProductPickScreenState extends State<ProductPickScreen> {
             },
           ),
           ListTile(
-            leading: const Icon(Icons.undo, size: 20),
+            leading: Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                  color: Colors.orange.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8)),
+              child: const Icon(Icons.undo, size: 20, color: Colors.orange),
+            ),
             title: const Text('Undo Last Pick', style: TextStyle(fontSize: 14)),
             onTap: () {
               Navigator.pop(context);
               widget.undoPick(widget.moveLineId);
               ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Pick undone'), backgroundColor: Colors.grey),
+                const SnackBar(
+                    content: Text('Pick undone'), backgroundColor: Colors.grey),
               );
             },
           ),
@@ -303,296 +795,504 @@ class _ProductPickScreenState extends State<ProductPickScreen> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text(widget.line['product_name'], style: const TextStyle(fontSize: 16)),
+        title: Text(widget.line['product_name'],
+            style: const TextStyle(fontSize: 16)),
         content: Column(
           mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Code: ${widget.line['product_code']}', style: const TextStyle(fontSize: 14)),
-            Text('Available: ${widget.availableQty.toStringAsFixed(2)}', style: const TextStyle(fontSize: 14)),
-            Text('Ordered: ${widget.line['ordered_qty'].toStringAsFixed(2)}', style: const TextStyle(fontSize: 14)),
-            Text('Picked: ${widget.line['picked_qty'].toStringAsFixed(2)}', style: const TextStyle(fontSize: 14)),
+            _buildProductDetailRow('Code', widget.line['product_code']),
+            _buildProductDetailRow(
+                'Available', widget.availableQty.toStringAsFixed(2)),
+            _buildProductDetailRow(
+                'Ordered', widget.line['ordered_qty'].toStringAsFixed(2)),
+            _buildProductDetailRow(
+                'Picked', widget.line['picked_qty'].toStringAsFixed(2)),
             if (widget.line['tracking'] != 'none')
-              Text('Tracking: ${widget.line['tracking']}', style: const TextStyle(fontSize: 14)),
+              _buildProductDetailRow('Tracking', widget.line['tracking'],
+                  capitalize: true),
+            if (widget.line['lot_serial_numbers'] != null &&
+                (widget.line['lot_serial_numbers'] as List).isNotEmpty)
+              _buildProductDetailRow(
+                  widget.line['tracking'] == 'lot' ? 'Lot' : 'Serial',
+                  (widget.line['lot_serial_numbers'] as List).join(', ')),
           ],
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Close', style: TextStyle(fontSize: 14)),
-          ),
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Close', style: TextStyle(fontSize: 14))),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildProductDetailRow(String label, String value,
+      {bool capitalize = false}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4.0),
+      child: Row(
+        children: [
+          Text('$label: ',
+              style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                  color: Colors.grey[700])),
+          Expanded(
+              child: Text(capitalize ? value.toUpperCase() : value,
+                  style: const TextStyle(fontSize: 14))),
         ],
       ),
     );
   }
 
   void _refreshStock() async {
+    setState(() => _isLoading = true);
     try {
-      final provider = DataProvider();
-      final availability = await provider.fetchStockAvailability(
-        [{'product_id': [widget.productId, widget.line['product_name']]}],
-        1,
-      );
-      setState(() {
-        widget.line['is_available'] = availability[widget.productId] != null &&
-            availability[widget.productId]! > 0;
-      });
+      await Future.wait([_fetchAlternativeLocations(), _fetchAvailableLots()]);
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Stock refreshed'), backgroundColor: Colors.grey),
+        const SnackBar(
+            content: Text('Stock information refreshed'),
+            backgroundColor: Colors.green),
       );
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error refreshing stock: $e'), backgroundColor: Colors.red.withOpacity(0.7)),
-      );
+      _showErrorSnackBar('Error refreshing stock: $e');
+    } finally {
+      setState(() => _isLoading = false);
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final primaryColor = Theme.of(context).primaryColor;
-    const backgroundColor = Colors.white;
-    const cardColor = Color(0xFFF5F5F5);
-    const textColor = Colors.black87;
+  Widget _buildPickingActions() {
+    final pickedQty = widget.pickedQuantities[widget.moveLineId] ?? 0.0;
+    final pendingQty = widget.pendingPickedQuantities[widget.moveLineId] ?? 0.0;
+    final orderedQty = widget.line['ordered_qty'] as double;
+    final totalPickedQty = pickedQty + pendingQty;
+    final isFullyPicked = totalPickedQty >= orderedQty;
+    final isPendingQtyValid =
+        pendingQty > 0 && totalPickedQty <= widget.availableQty;
 
-    return Scaffold(
-      backgroundColor: backgroundColor,
-      appBar: AppBar(
-        backgroundColor: primaryColor,
-        title: Text(
-          widget.line['reference'] ?? 'Pick',
-          style: const TextStyle(color: Colors.white, fontSize: 16),
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.more_vert, color: Colors.white, size: 20),
-            onPressed: _showMoreOptions,
+    debugPrint(
+        'DEBUG: _buildPickingActions - pickedQty: $pickedQty, pendingQty: $pendingQty, totalPickedQty: $totalPickedQty, orderedQty: $orderedQty, '
+            'isFullyPicked: $isFullyPicked, isPendingQtyValid: $isPendingQtyValid');
+
+    bool areLotsValid() {
+      debugPrint('DEBUG: areLotsValid - trackingType: $trackingType');
+      if (trackingType == 'none') {
+        debugPrint('DEBUG: areLotsValid - No tracking, returning true');
+        return true;
+      }
+
+      final lotSerialNumbers =
+          widget.line['lot_serial_numbers'] as List<dynamic>? ?? [];
+      debugPrint(
+          'DEBUG: areLotsValid - lotSerialNumbers: $lotSerialNumbers, length: ${lotSerialNumbers.length}');
+
+      if (trackingType == 'lot') {
+        if (lotSerialNumbers.isEmpty || lotSerialNumbers[0].isEmpty) {
+          debugPrint(
+              'DEBUG: areLotsValid - Lot validation failed: isEmpty: ${lotSerialNumbers.isEmpty}, '
+                  'firstIsEmpty: ${lotSerialNumbers.isNotEmpty ? lotSerialNumbers[0].isEmpty : true}');
+          _showErrorSnackBar('Lot number is required');
+          return false;
+        }
+        debugPrint(
+            'DEBUG: areLotsValid - Lot validation passed: ${lotSerialNumbers[0]}');
+      }
+
+      if (trackingType == 'serial') {
+        final requiredSerials = totalPickedQty.toInt(); // Validate total quantity
+        debugPrint(
+            'DEBUG: areLotsValid - Serial validation - requiredSerials: $requiredSerials, '
+                'lotSerialNumbers length: ${lotSerialNumbers.length}, anyEmpty: ${lotSerialNumbers.any((s) => s.isEmpty)}');
+        if (lotSerialNumbers.length != requiredSerials ||
+            lotSerialNumbers.any((s) => s.isEmpty)) {
+          debugPrint('DEBUG: areLotsValid - Serial validation failed');
+          _showErrorSnackBar('All serial numbers are required');
+          return false;
+        }
+        debugPrint('DEBUG: areLotsValid - Serial validation passed');
+      }
+
+      return true;
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: !areLotsValid() || !isPendingQtyValid
+                      ? null
+                      : () async {
+                    debugPrint(
+                        'DEBUG: Confirm Pick pressed - lot_serial_numbers: ${widget.line['lot_serial_numbers']}');
+                    final lotSerialNumbers = List<String>.from(
+                        widget.line['lot_serial_numbers'] ?? []);
+                    debugPrint(
+                        'DEBUG: Confirm Pick - Passing lot_serial_numbers: $lotSerialNumbers, totalQty: $totalPickedQty');
+                    final success = await widget.confirmPick(
+                        widget.moveLineId, lotSerialNumbers);
+                    debugPrint('DEBUG: Confirm Pick - success: $success');
+                    if (success) {
+                      setState(() {
+                        // Update pickedQuantities locally
+                        widget.pickedQuantities[widget.moveLineId] =
+                            totalPickedQty;
+                        widget.pendingPickedQuantities[widget.moveLineId] =
+                        0.0;
+                        widget.quantityControllers.remove(widget.moveLineId);
+                      });
+                      Navigator.pop(context);
+                    }
+                  },
+                  icon: const Icon(Icons.check, size: 18),
+                  label: const Text('Confirm Pick'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Theme.of(context).primaryColor,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    disabledBackgroundColor: Colors.grey[300],
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () {
+                    debugPrint('DEBUG: Edit Quantity pressed');
+                    _showEditQuantityDialog();
+                  },
+                  icon: const Icon(Icons.edit, size: 18),
+                  label: const Text('Edit Quantity'),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    side: BorderSide(color: Theme.of(context).primaryColor),
+                    foregroundColor: Theme.of(context).primaryColor,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Container(
+                height: 42,
+                width: 42,
+                decoration: BoxDecoration(
+                    border: Border.all(color: Colors.grey[300]!),
+                    borderRadius: BorderRadius.circular(4)),
+                child: IconButton(
+                  icon: const Icon(Icons.more_vert, size: 20),
+                  onPressed: () => _showMoreOptions(),
+                  color: Colors.grey[700],
+                  padding: EdgeInsets.zero,
+                ),
+              ),
+            ],
           ),
         ],
-        elevation: 0,
       ),
-      body: SafeArea(
-        child: Column(
-          children: [
-            Expanded(
-              child: ListView(
-                padding: const EdgeInsets.all(8.0),
+    );
+  }
+  @override
+  Widget build(BuildContext context) {
+    final orderedQty = widget.line['ordered_qty'] as double;
+    final pickedQty = widget.pickedQuantities[widget.moveLineId] ?? 0.0;
+    final pendingQty = widget.pendingPickedQuantities[widget.moveLineId] ?? 0.0;
+    final pendingPercentage =
+        orderedQty > 0 ? (pendingQty / orderedQty * 100) : 0.0;
+    final pickedPercentage =
+        orderedQty > 0 ? (pickedQty / orderedQty * 100) : 0.0;
+    final remainingQty = orderedQty - pickedQty - pendingQty;
+    final remainingPercentage =
+        orderedQty > 0 ? (remainingQty / orderedQty * 100) : 0.0;
+
+    return Scaffold(
+      appBar: AppBar(
+          title: const Text('Product Picking', style: TextStyle(fontSize: 16)),
+          centerTitle: true,
+          elevation: 0),
+      body: Column(
+        children: [
+          Expanded(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _buildLocationCard(
-                    title: "Source",
-                    value: widget.line['location_name'] as String,
-                    isSource: true,
-                  ),
-                  const SizedBox(height: 8),
-                  Container(
-                    decoration: BoxDecoration(
-                      color: cardColor,
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                    padding: const EdgeInsets.all(12),
-                    child: Row(
-                      children: [
-                        Container(
-                          width: 50,
-                          height: 50,
-                          decoration: BoxDecoration(
-                            color: primaryColor,
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                          child: const Icon(
-                            Icons.inventory_2,
-                            color: Colors.white,
-                            size: 24,
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
+                  Card(
+                    elevation: 2,
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8)),
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text(
-                                "[${widget.line['product_code']}] ${widget.line['product_name']}",
-                                style: const TextStyle(
-                                  color: textColor,
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w600,
+                              Icon(Icons.inventory_2,
+                                  size: 24,
+                                  color: Theme.of(context).primaryColor),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(widget.line['product_name'] as String,
+                                        style: const TextStyle(
+                                            fontSize: 16,
+                                            fontWeight: FontWeight.bold)),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                        widget.line['product_code']
+                                                ?.toString() ??
+                                            'No Product Code Available',
+                                        style: TextStyle(
+                                            fontSize: 14,
+                                            color: Colors.grey[600],
+                                            fontStyle: FontStyle.italic)),
+                                  ],
                                 ),
                               ),
-                              if (widget.line['tracking'] != 'none')
-                                Text(
-                                  '${widget.line['tracking']}',
-                                  style: TextStyle(
-                                    color: Colors.grey[600],
-                                    fontSize: 12,
-                                  ),
-                                ),
                             ],
                           ),
-                        ),
-                        IconButton(
-                          icon: Icon(Icons.edit, color: primaryColor, size: 20),
-                          onPressed: _showEditQuantityDialog,
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  _buildLocationCard(
-                    title: "Destination",
-                    value: widget.line['location_dest_name'] ?? "WH/PACKING",
-                    isDestination: true,
-                  ),
-                ],
-              ),
-            ),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-              color: cardColor,
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    "[${widget.line['picked_qty'].toStringAsFixed(2)}/${widget.line['ordered_qty'].toStringAsFixed(2)}]",
-                    style: const TextStyle(color: textColor, fontSize: 14),
-                  ),
-                  Text(
-                    "${widget.pendingPickedQuantities[widget.moveLineId]?.toStringAsFixed(2) ?? widget.pickedQuantities[widget.moveLineId]?.toStringAsFixed(2) ?? '0.00'}",
-                    style: const TextStyle(
-                      color: textColor,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.all(8),
-              child: Row(
-                children: [
-                  if (widget.pickedQuantities[widget.moveLineId] != null &&
-                      widget.pickedQuantities[widget.moveLineId]! > 0)
-                    Expanded(
-                      child: ElevatedButton(
-                        onPressed: () {
-                          widget.undoPick(widget.moveLineId);
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('Pick undone'), backgroundColor: Colors.grey),
-                          );
-                          Navigator.pop(context);
-                        },
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.grey[600],
-                          foregroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(4),
+                          const SizedBox(height: 16),
+                          Stack(
+                            children: [
+                              Container(
+                                  height: 8,
+                                  decoration: BoxDecoration(
+                                      color: Colors.grey[200],
+                                      borderRadius: BorderRadius.circular(4))),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    flex:
+                                        pickedPercentage.round().clamp(0, 100),
+                                    child: Container(
+                                      height: 8,
+                                      decoration: BoxDecoration(
+                                        color: Colors.green,
+                                        borderRadius: BorderRadius.only(
+                                            topLeft: Radius.circular(4),
+                                            bottomLeft: Radius.circular(4)),
+                                      ),
+                                    ),
+                                  ),
+                                  Expanded(
+                                    flex: pendingPercentage.round().clamp(
+                                        0, 100 - pickedPercentage.round()),
+                                    child: Container(
+                                        height: 8, color: Colors.orange),
+                                  ),
+                                  Expanded(
+                                    flex: remainingPercentage
+                                        .round()
+                                        .clamp(0, 100),
+                                    child: Container(
+                                      height: 8,
+                                      decoration: BoxDecoration(
+                                        color: Colors.grey[200],
+                                        borderRadius: BorderRadius.only(
+                                            topRight: Radius.circular(4),
+                                            bottomRight: Radius.circular(4)),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
                           ),
-                          padding: const EdgeInsets.symmetric(vertical: 12),
-                        ),
-                        child: const Text(
-                          "Undo",
-                          style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-                        ),
-                      ),
-                    ),
-                  if (widget.pickedQuantities[widget.moveLineId] != null &&
-                      widget.pickedQuantities[widget.moveLineId]! > 0)
-                    const SizedBox(width: 8),
-                  Expanded(
-                    child: ElevatedButton(
-                      onPressed: widget.availableQty <= 0 ||
-                          (widget.pendingPickedQuantities[widget.moveLineId] ?? 0.0) <= 0
-                          ? null
-                          : () {
-                        widget.confirmPick(widget.moveLineId);
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Pick confirmed'), backgroundColor: Colors.grey),
-                        );
-                        Navigator.pop(context);
-                      },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: primaryColor,
-                        foregroundColor: Colors.white,
-                        disabledBackgroundColor: Colors.grey[300],
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                      ),
-                      child: const Text(
-                        "Confirm",
-                        style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                          const SizedBox(height: 12),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              _buildQuantityIndicator('Picked',
+                                  pickedQty.toStringAsFixed(2), Colors.green),
+                              _buildQuantityIndicator('Pending',
+                                  pendingQty.toStringAsFixed(2), Colors.orange),
+                              _buildQuantityIndicator(
+                                  'Remaining',
+                                  remainingQty.toStringAsFixed(2),
+                                  Colors.grey[400]!),
+                            ],
+                          ),
+                          const SizedBox(height: 16),
+                          const Divider(),
+                          const SizedBox(height: 8),
+                          _buildLocationInfo(
+                              'Source',
+                              widget.line['location_name'] as String,
+                              () => _editSourceLocation()),
+                          const SizedBox(height: 8),
+                          _buildLocationInfo(
+                              'Destination',
+                              widget.line['location_dest_name']?.toString() ??
+                                  'Not specified',
+                              () => _editDestinationLocation()),
+                        ],
                       ),
                     ),
                   ),
+                  const SizedBox(height: 16),
+                  _buildAvailabilitySection(),
+                  if (trackingType != 'none') ...[
+                    const SizedBox(height: 16),
+                    Card(
+                      elevation: 2,
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8)),
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Icon(
+                                    trackingType == 'lot'
+                                        ? Icons.ballot
+                                        : Icons.qr_code,
+                                    size: 20,
+                                    color: Theme.of(context).primaryColor),
+                                const SizedBox(width: 8),
+                                Text(
+                                    trackingType == 'lot'
+                                        ? 'Lot Tracking'
+                                        : 'Serial Tracking',
+                                    style: const TextStyle(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.w600)),
+                              ],
+                            ),
+                            const SizedBox(height: 12),
+                            if (trackingType == 'lot' &&
+                                lotSerialNumbers.isNotEmpty &&
+                                lotSerialNumbers[0].isNotEmpty)
+                              _buildTrackingItem(lotSerialNumbers[0], 0)
+                            else if (trackingType == 'serial')
+                              ...lotSerialNumbers.asMap().entries.map(
+                                    (entry) => entry.value.isNotEmpty
+                                        ? _buildTrackingItem(
+                                            entry.value, entry.key)
+                                        : const SizedBox.shrink(),
+                                  ),
+                            if ((trackingType == 'lot' &&
+                                    (lotSerialNumbers.isEmpty ||
+                                        lotSerialNumbers[0].isEmpty)) ||
+                                (trackingType == 'serial' &&
+                                    lotSerialNumbers
+                                        .where((s) => s.isEmpty)
+                                        .isNotEmpty))
+                              Padding(
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 8.0),
+                                child: Text(
+                                  'No ${trackingType == 'lot' ? 'lot' : 'serial'} numbers assigned yet. Tap "Edit Quantity" to add them.',
+                                  style: TextStyle(
+                                      fontSize: 14,
+                                      color: Colors.grey[600],
+                                      fontStyle: FontStyle.italic),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),
-          ],
-        ),
+          ),
+          _buildPickingActions(),
+        ],
       ),
     );
   }
 
-  Widget _buildLocationCard({
-    required String title,
-    required String value,
-    bool isSource = false,
-    bool isDestination = false,
-  }) {
-    return InkWell(
-      onTap: isSource ? _editSourceLocation : (isDestination ? _editDestinationLocation : null),
-      borderRadius: BorderRadius.circular(4),
-      child: Container(
-        decoration: BoxDecoration(
-          color: Colors.grey[800],
-          borderRadius: BorderRadius.circular(4),
-          border: Border.all(
-            color: widget.availableQty <= 0 && isSource ? Colors.red.withOpacity(0.3) : Colors.transparent,
-          ),
-        ),
-        padding: const EdgeInsets.all(12),
-        child: Row(
+  Widget _buildQuantityIndicator(String label, String value, Color color) {
+    return Row(
+      children: [
+        Container(
+            width: 12,
+            height: 12,
+            decoration: BoxDecoration(
+                color: color, borderRadius: BorderRadius.circular(6))),
+        const SizedBox(width: 6),
+        Text('$label: $value',
+            style: TextStyle(fontSize: 12, color: Colors.grey[700])),
+      ],
+    );
+  }
+
+  Widget _buildLocationInfo(
+      String label, String location, VoidCallback onEdit) {
+    return Row(
+      children: [
+        Icon(label == 'Source' ? Icons.login : Icons.logout,
+            size: 18, color: Colors.grey[600]),
+        const SizedBox(width: 8),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Icon(Icons.location_on, color: Colors.grey[400], size: 16),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: TextStyle(
-                      color: Colors.grey[500],
-                      fontSize: 14,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    value,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  if (widget.availableQty <= 0 && isSource)
-                    Text(
-                      'Out of stock',
-                      style: TextStyle(
-                        color: Colors.red.withOpacity(0.7),
-                        fontSize: 12,
-                      ),
-                    ),
-                ],
-              ),
-            ),
-            if (isSource || isDestination)
-              IconButton(
-                icon: const Icon(Icons.edit, color: Colors.white, size: 20),
-                onPressed: isSource ? _editSourceLocation : _editDestinationLocation,
-              ),
+            Text(label,
+                style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+            const SizedBox(height: 2),
+            Text(location,
+                style:
+                    const TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
           ],
         ),
+        const Spacer(),
+        IconButton(
+          icon: const Icon(Icons.edit, size: 16),
+          onPressed: onEdit,
+          constraints: const BoxConstraints(),
+          padding: const EdgeInsets.all(8),
+          visualDensity: VisualDensity.compact,
+          color: Theme.of(context).primaryColor,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildTrackingItem(String number, int index) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8.0),
+      child: Row(
+        children: [
+          if (trackingType == 'serial')
+            Container(
+              width: 20,
+              height: 20,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                  color: Theme.of(context).primaryColor.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(10)),
+              child: Text('${index + 1}',
+                  style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                      color: Theme.of(context).primaryColor)),
+            ),
+          if (trackingType == 'serial') const SizedBox(width: 8),
+          Expanded(
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                  color: Colors.grey[100],
+                  borderRadius: BorderRadius.circular(4),
+                  border: Border.all(color: Colors.grey[300]!)),
+              child: Text(number, style: const TextStyle(fontSize: 14)),
+            ),
+          ),
+        ],
       ),
     );
   }

@@ -5,6 +5,7 @@ import 'package:latest_van_sale_application/secondary_pages/products_picking_pag
 import 'package:latest_van_sale_application/secondary_pages/sale_order_page.dart';
 import 'package:provider/provider.dart';
 
+import '../assets/widgets and consts/cached_data.dart';
 import '../assets/widgets and consts/order_tracking.dart';
 import '../assets/widgets and consts/page_transition.dart';
 import '../authentication/cyllo_session_model.dart';
@@ -18,10 +19,11 @@ import 'invoice_details_page.dart';
 
 class SaleOrderDetailPage extends StatefulWidget {
   final Map<String, dynamic> orderData;
-  final DataProvider? dataProvider; // Add dataProvider as a parameter
+  final DataProvider? dataProvider;
+  final DataSyncManager? syncManager;
 
   const SaleOrderDetailPage(
-      {Key? key, required this.orderData, this.dataProvider})
+      {Key? key, required this.orderData, this.dataProvider, this.syncManager})
       : super(key: key);
 
   @override
@@ -31,6 +33,9 @@ class SaleOrderDetailPage extends StatefulWidget {
 class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
+  bool showCustomerDetails = false;
+  bool showDeliveryDetails = false;
+  bool showInvoiceDetails = false;
 
   @override
   void initState() {
@@ -88,8 +93,8 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
     );
   }
 
-  Future<void> _handleBackorder(
-      BuildContext context, Map<String, dynamic> picking) async {
+  Future<void> _handleBackorder(Map<String, dynamic> picking) async {
+    if (!mounted) return;
     final client = await SessionManager.getActiveClient();
     if (client == null) return;
 
@@ -99,7 +104,6 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
     try {
       final backorderId = picking['backorder_id'];
       if (backorderId == false) {
-        // Check if there are unfulfilled quantities
         final moves = await client.callKw({
           'model': 'stock.move',
           'method': 'search_read',
@@ -116,7 +120,7 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
             (move['product_uom_qty'] as double) >
             (move['quantity'] as double? ?? 0.0));
 
-        if (hasUnfulfilled) {
+        if (hasUnfulfilled && mounted) {
           final createBackorder = await showDialog<bool>(
             context: context,
             builder: (context) => AlertDialog(
@@ -136,7 +140,7 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
             ),
           );
 
-          if (createBackorder == true) {
+          if (createBackorder == true && mounted) {
             await client.callKw({
               'model': 'stock.picking',
               'method': 'action_create_backorder',
@@ -145,24 +149,28 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
               ],
               'kwargs': {},
             });
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Backorder created successfully')),
-            );
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Backorder created successfully')),
+              );
+            }
             await provider.fetchOrderDetails();
           }
         }
       }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error handling backorder: $e')),
-      );
+      if (mounted) {
+        debugPrint('$e');
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error handling backorder: $e')),
+        );
+      }
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final dataProvider =
-        Provider.of<DataProvider>(context); // Access DataProvider
+    final dataProvider = Provider.of<DataProvider>(context);
     return ChangeNotifierProvider(
       create: (_) => SaleOrderDetailProvider(orderData: widget.orderData),
       child: Consumer<SaleOrderDetailProvider>(
@@ -252,7 +260,6 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
         throw Exception('No active client found');
       }
 
-      // Fetch stock moves for the given picking ID
       final moves = await client.callKw({
         'model': 'stock.move',
         'method': 'search_read',
@@ -260,28 +267,43 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
           [
             ['picking_id', '=', pickingId]
           ],
-          ['product_uom_qty', 'quantity'],
+          ['product_uom_qty', 'id'],
         ],
         'kwargs': {},
       });
 
-      // Calculate total ordered and picked quantities
+      final moveLines = await client.callKw({
+        'model': 'stock.move.line',
+        'method': 'search_read',
+        'args': [
+          [
+            ['picking_id', '=', pickingId]
+          ],
+          ['move_id', 'quantity'],
+        ],
+        'kwargs': {},
+      });
+
       double ordered = 0.0;
       double picked = 0.0;
 
       for (var move in moves) {
-        ordered += (move['product_uom_qty'] as double?) ?? 0.0;
-        picked += (move['quantity'] as double?) ?? 0.0;
+        ordered += (move['product_uom_qty'] as num?)?.toDouble() ?? 0.0;
       }
 
-      // Determine if the picking is fully picked
+      for (var moveLine in moveLines) {
+        picked += (moveLine['quantity'] as num?)?.toDouble() ?? 0.0;
+      }
+
       bool isFullyPicked = ordered > 0 && picked >= ordered;
+      debugPrint('Picking ID: $pickingId, Ordered: $ordered, Picked: $picked, Fully Picked: $isFullyPicked');
 
       return {
         'picked': picked,
         'ordered': ordered,
         'is_fully_picked': isFullyPicked,
       };
+
     } catch (e) {
       throw Exception('Error fetching picking progress: $e');
     }
@@ -546,6 +568,26 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                               itemCount: orderLines.length,
                               itemBuilder: (context, index) {
                                 final line = orderLines[index];
+
+                                // Print full details of the order line
+                                // debugPrint('Order Line ${line['id']}: ${{
+                                //   'product_id': line['product_id'],
+                                //   'name': line['name'],
+                                //   'product_uom_qty': line['product_uom_qty'],
+                                //   'price_unit': line['price_unit'],
+                                //   'price_subtotal': line['price_subtotal'],
+                                //   'qty_delivered': line['qty_delivered'],
+                                //   'qty_invoiced': line['qty_invoiced'],
+                                //   'discount': line['discount'],
+                                //   'display_type': line['display_type'],
+                                // }}');
+
+                                // Skip lines with no ordered quantity
+                                final quantity = line['product_uom_qty'] is num ? (line['product_uom_qty'] as num).toDouble() : 0.0;
+                                if (quantity <= 0 && line['display_type'] != 'line_section' && line['display_type'] != 'line_note') {
+                                  return const SizedBox.shrink();
+                                }
+
                                 if (line['display_type'] == 'line_section' ||
                                     line['display_type'] == 'line_note') {
                                   return Container(
@@ -565,22 +607,15 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                                   );
                                 }
 
-                                final productName = line['product_id']
-                                            is List &&
-                                        line['product_id'].length > 1
+                                final productName = line['product_id'] is List &&
+                                    line['product_id'].length > 1
                                     ? (line['product_id'] as List)[1] as String
                                     : line['name'] as String;
-                                final quantity =
-                                    line['product_uom_qty'] as double;
                                 final unitPrice = line['price_unit'] as double;
-                                final subtotal =
-                                    line['price_subtotal'] as double;
-                                final qtyDelivered =
-                                    line['qty_delivered'] as double? ?? 0.0;
-                                final qtyInvoiced =
-                                    line['qty_invoiced'] as double? ?? 0.0;
-                                final discount =
-                                    line['discount'] as double? ?? 0.0;
+                                final subtotal = line['price_subtotal'] as double;
+                                final qtyDelivered = line['qty_delivered'] as double? ?? 0.0;
+                                final qtyInvoiced = line['qty_invoiced'] as double? ?? 0.0;
+                                final discount = line['discount'] as double? ?? 0.0;
 
                                 return Card(
                                   margin: const EdgeInsets.only(bottom: 12.0),
@@ -590,38 +625,32 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                                   child: Padding(
                                     padding: const EdgeInsets.all(16.0),
                                     child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
+                                      crossAxisAlignment: CrossAxisAlignment.start,
                                       children: [
                                         Text(
                                           productName,
                                           style: const TextStyle(
-                                              fontWeight: FontWeight.w600,
-                                              fontSize: 15),
+                                              fontWeight: FontWeight.w600, fontSize: 15),
                                         ),
                                         const SizedBox(height: 8),
                                         Row(
-                                          mainAxisAlignment:
-                                              MainAxisAlignment.spaceBetween,
+                                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                           children: [
                                             Text(
                                               'Qty: ${quantity.toStringAsFixed(quantity.truncateToDouble() == quantity ? 0 : 2)}',
                                               style: TextStyle(
-                                                  color: Colors.grey[700],
-                                                  fontSize: 13),
+                                                  color: Colors.grey[700], fontSize: 13),
                                             ),
                                             Text(
                                               'Price: ${provider.currencyFormat.format(unitPrice)}',
                                               style: TextStyle(
-                                                  color: Colors.grey[700],
-                                                  fontSize: 13),
+                                                  color: Colors.grey[700], fontSize: 13),
                                             ),
                                           ],
                                         ),
                                         const SizedBox(height: 4),
                                         Row(
-                                          mainAxisAlignment:
-                                              MainAxisAlignment.spaceBetween,
+                                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                           children: [
                                             Text(
                                               'Delivered: ${qtyDelivered.toStringAsFixed(qtyDelivered.truncateToDouble() == qtyDelivered ? 0 : 2)}',
@@ -647,13 +676,11 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                                         ),
                                         if (discount > 0)
                                           Padding(
-                                            padding:
-                                                const EdgeInsets.only(top: 4),
+                                            padding: const EdgeInsets.only(top: 4),
                                             child: Text(
                                               'Discount: ${discount.toStringAsFixed(1)}%',
                                               style: TextStyle(
-                                                  color: Colors.red[700],
-                                                  fontSize: 13),
+                                                  color: Colors.red[700], fontSize: 13),
                                             ),
                                           ),
                                         const SizedBox(height: 10),
@@ -662,8 +689,7 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                                           child: Text(
                                             'Subtotal: ${provider.currencyFormat.format(subtotal)}',
                                             style: const TextStyle(
-                                                fontWeight: FontWeight.w600,
-                                                fontSize: 14),
+                                                fontWeight: FontWeight.w600, fontSize: 14),
                                           ),
                                         ),
                                       ],
@@ -759,7 +785,6 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                                 label: const Text('Start Picking',
                                     style: TextStyle(color: Colors.white)),
                                 onPressed: () async {
-                                  // Find the first incomplete picking
                                   final incompletePicking = pickings.firstWhere(
                                     (picking) =>
                                         picking['state'] != 'done' &&
@@ -777,23 +802,24 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                                         ),
                                       ),
                                     );
-                                    if (result == true) {
+                                    if (result == true && mounted) {
                                       await provider.fetchOrderDetails();
-                                      await _handleBackorder(
-                                          context, incompletePicking);
-                                      // Check if all pickings are done
-                                      final allDone = pickings
-                                          .every((p) => p['state'] == 'done');
-                                      if (allDone) {
-                                        // Navigator.push(
-                                        //   context,
-                                        //   SlidingPageTransitionRL(
-                                        //     page: DeliveryPage(
-                                        //       orderData: orderData,
-                                        //       provider: provider,
-                                        //     ),
-                                        //   ),
-                                        // );
+                                      if (mounted) {
+                                        await _handleBackorder(
+                                            incompletePicking);
+                                        final allDone = pickings
+                                            .every((p) => p['state'] == 'done');
+                                        if (allDone && mounted) {
+                                          // Navigator.push(
+                                          //   context,
+                                          //   SlidingPageTransitionRL(
+                                          //     page: DeliveryPage(
+                                          //       orderData: orderData,
+                                          //       provider: provider,
+                                          //     ),
+                                          //   ),
+                                          // );
+                                        }
                                       }
                                     }
                                   } else {
@@ -824,11 +850,9 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                                 label: const Text('Continue Sale Order',
                                     style: TextStyle(color: Colors.white)),
                                 onPressed: () async {
-                                  // Fetch product images
                                   final productImages =
                                       await _fetchProductImages(orderLines);
 
-                                  // Prepare data for SaleOrderPage
                                   final List<Product> selectedProducts =
                                       orderLines.map((line) {
                                     final productName =
@@ -864,11 +888,11 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                                   final Map<String, int> quantities = {
                                     for (var line in orderLines)
                                       (line['product_id'] is List
-                                              ? (line['product_id'] as List)[0]
-                                                  .toString()
-                                              : ''):
-                                          (line['product_uom_qty'] as double)
-                                              .toInt(),
+                                          ? (line['product_id'] as List)[0]
+                                              .toString()
+                                          : ''): (line['product_uom_qty'] ??
+                                              0.0 as double)
+                                          .toInt(),
                                   };
 
                                   final double totalAmount =
@@ -876,7 +900,6 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                                   final String orderId =
                                       orderData['name'] as String;
 
-                                  // Extract customer details from orderData
                                   final customerId =
                                       orderData['partner_id'] is List
                                           ? (orderData['partner_id'] as List)[0]
@@ -1005,7 +1028,6 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                                     child: FutureBuilder<Map<String, dynamic>>(
                                       future: getPickingProgress(
                                           picking['id'] as int),
-                                      // Single FutureBuilder
                                       builder: (context, snapshot) {
                                         if (snapshot.connectionState ==
                                             ConnectionState.waiting) {
@@ -1429,18 +1451,29 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                                                               ),
                                                             );
                                                             if (result ==
-                                                                true) {
+                                                                    true &&
+                                                                mounted) {
                                                               await provider
                                                                   .fetchOrderDetails();
-                                                              await _handleBackorder(
-                                                                  context,
-                                                                  picking);
-                                                              final allDone = pickings
-                                                                  .every((p) =>
-                                                                      p['state'] ==
-                                                                      'done');
-                                                              if (allDone) {
-                                                                // Navigator code commented out in original
+                                                              if (mounted) {
+                                                                await _handleBackorder(
+                                                                    picking);
+                                                                final allDone =
+                                                                    pickings.every((p) =>
+                                                                        p['state'] ==
+                                                                        'done');
+                                                                if (allDone &&
+                                                                    mounted) {
+                                                                  // Navigator.push(
+                                                                  //   context,
+                                                                  //   SlidingPageTransitionRL(
+                                                                  //     page: DeliveryPage(
+                                                                  //       orderData: orderData,
+                                                                  //       provider: provider,
+                                                                  //     ),
+                                                                  //   ),
+                                                                  // );
+                                                                }
                                                               }
                                                             }
                                                           },
@@ -1573,22 +1606,15 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                                 final invoiceNumber = invoice['name'] != false
                                     ? invoice['name'] as String
                                     : 'Draft';
-                                final invoiceDate =
-                                    invoice['invoice_date'] != false
-                                        ? DateTime.parse(
-                                            invoice['invoice_date'] as String)
-                                        : null;
-                                final dueDate = invoice['invoice_date_due'] !=
-                                        false
-                                    ? DateTime.parse(
-                                        invoice['invoice_date_due'] as String)
+                                final invoiceDate = invoice['invoice_date'] != false
+                                    ? DateTime.parse(invoice['invoice_date'] as String)
+                                    : null;
+                                final dueDate = invoice['invoice_date_due'] != false
+                                    ? DateTime.parse(invoice['invoice_date_due'] as String)
                                     : null;
                                 final invoiceState = invoice['state'] as String;
-                                final invoiceAmount =
-                                    invoice['amount_total'] as double;
-                                final amountResidual =
-                                    invoice['amount_residual'] as double? ??
-                                        invoiceAmount;
+                                final invoiceAmount = invoice['amount_total'] as double;
+                                final amountResidual = invoice['amount_residual'] as double? ?? invoiceAmount;
                                 final isFullyPaid = amountResidual <= 0;
 
                                 return Card(
@@ -1600,12 +1626,10 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                                   child: Padding(
                                     padding: const EdgeInsets.all(16.0),
                                     child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
+                                      crossAxisAlignment: CrossAxisAlignment.start,
                                       children: [
                                         Row(
-                                          mainAxisAlignment:
-                                              MainAxisAlignment.spaceBetween,
+                                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                           children: [
                                             Text(
                                               invoiceNumber,
@@ -1615,42 +1639,30 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                                               ),
                                             ),
                                             Container(
-                                              padding:
-                                                  const EdgeInsets.symmetric(
+                                              padding: const EdgeInsets.symmetric(
                                                 horizontal: 8,
                                                 vertical: 4,
                                               ),
                                               decoration: BoxDecoration(
                                                 color: provider
                                                     .getInvoiceStatusColor(
-                                                        provider
-                                                            .formatInvoiceState(
-                                                                invoiceState,
-                                                                isFullyPaid))
+                                                    provider.formatInvoiceState(invoiceState, isFullyPaid))
                                                     .withOpacity(0.1),
-                                                borderRadius:
-                                                    BorderRadius.circular(8),
+                                                borderRadius: BorderRadius.circular(8),
                                                 border: Border.all(
-                                                  color: provider
-                                                      .getInvoiceStatusColor(
-                                                    provider.formatInvoiceState(
-                                                        invoiceState,
-                                                        isFullyPaid),
+                                                  color: provider.getInvoiceStatusColor(
+                                                    provider.formatInvoiceState(invoiceState, isFullyPaid),
                                                   ),
                                                   width: 1,
                                                 ),
                                               ),
                                               child: Text(
-                                                provider.formatInvoiceState(
-                                                    invoiceState, isFullyPaid),
+                                                provider.formatInvoiceState(invoiceState, isFullyPaid),
                                                 style: TextStyle(
                                                   fontSize: 12,
                                                   fontWeight: FontWeight.bold,
-                                                  color: provider
-                                                      .getInvoiceStatusColor(
-                                                    provider.formatInvoiceState(
-                                                        invoiceState,
-                                                        isFullyPaid),
+                                                  color: provider.getInvoiceStatusColor(
+                                                    provider.formatInvoiceState(invoiceState, isFullyPaid),
                                                   ),
                                                 ),
                                               ),
@@ -1662,22 +1674,19 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                                           _buildInfoRow(
                                             Icons.calendar_today,
                                             'Invoice Date',
-                                            DateFormat('yyyy-MM-dd')
-                                                .format(invoiceDate),
+                                            DateFormat('yyyy-MM-dd').format(invoiceDate),
                                           ),
                                         if (dueDate != null)
                                           _buildInfoRow(
                                             Icons.event,
                                             'Due Date',
-                                            DateFormat('yyyy-MM-dd')
-                                                .format(dueDate),
+                                            DateFormat('yyyy-MM-dd').format(dueDate),
                                           ),
                                         const SizedBox(height: 8),
                                         const Divider(),
                                         const SizedBox(height: 8),
                                         Row(
-                                          mainAxisAlignment:
-                                              MainAxisAlignment.spaceBetween,
+                                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                           children: [
                                             const Text(
                                               'Total Amount:',
@@ -1687,8 +1696,7 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                                               ),
                                             ),
                                             Text(
-                                              provider.currencyFormat
-                                                  .format(invoiceAmount),
+                                              provider.currencyFormat.format(invoiceAmount),
                                               style: const TextStyle(
                                                 fontSize: 16,
                                                 fontWeight: FontWeight.bold,
@@ -1699,8 +1707,7 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                                         if (!isFullyPaid) ...[
                                           const SizedBox(height: 8),
                                           Row(
-                                            mainAxisAlignment:
-                                                MainAxisAlignment.spaceBetween,
+                                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                             children: [
                                               const Text(
                                                 'Amount Due:',
@@ -1710,8 +1717,7 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                                                 ),
                                               ),
                                               Text(
-                                                provider.currencyFormat
-                                                    .format(amountResidual),
+                                                provider.currencyFormat.format(amountResidual),
                                                 style: TextStyle(
                                                   fontSize: 14,
                                                   fontWeight: FontWeight.bold,
@@ -1725,12 +1731,10 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                                         SizedBox(
                                           width: double.infinity,
                                           child: ElevatedButton.icon(
-                                            icon: const Icon(Icons.visibility,
-                                                color: Colors.white),
+                                            icon: const Icon(Icons.visibility, color: Colors.white),
                                             label: const Text(
                                               'View Invoice',
-                                              style: TextStyle(
-                                                  color: Colors.white),
+                                              style: TextStyle(color: Colors.white),
                                             ),
                                             onPressed: () {
                                               debugPrint(
@@ -1740,16 +1744,15 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                                                 context,
                                                 SlidingPageTransitionRL(
                                                   page: InvoiceDetailsPage(
-                                                      invoiceData: invoice),
+                                                    invoiceId: invoice['id'].toString(),
+                                                  ),
                                                 ),
                                               );
                                             },
                                             style: ElevatedButton.styleFrom(
-                                              backgroundColor: Theme.of(context)
-                                                  .primaryColor,
+                                              backgroundColor: Theme.of(context).primaryColor,
                                               shape: RoundedRectangleBorder(
-                                                borderRadius:
-                                                    BorderRadius.circular(8),
+                                                borderRadius: BorderRadius.circular(8),
                                               ),
                                             ),
                                           ),
@@ -1823,7 +1826,7 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                                   try {
                                     await provider.cancelSaleOrder(
                                         provider.orderDetails!['id'] as int);
-                                    Navigator.pop(context); // Close the dialog
+                                    Navigator.pop(context);
                                     ScaffoldMessenger.of(context).showSnackBar(
                                       const SnackBar(
                                           content: Text(
@@ -1831,7 +1834,7 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                                     );
                                     Navigator.pop(context);
                                   } catch (e) {
-                                    Navigator.pop(context); // Close the dialog
+                                    Navigator.pop(context);
                                     ScaffoldMessenger.of(context).showSnackBar(
                                       SnackBar(
                                           content: Text(
