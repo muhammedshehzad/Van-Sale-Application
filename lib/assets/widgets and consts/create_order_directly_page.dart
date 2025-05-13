@@ -368,7 +368,8 @@ class _CreateOrderDirectlyPageState extends State<CreateOrderDirectlyPage> {
           .map((product) => OrderItem(
                 product: product,
                 quantity: updatedQuantities[product.id] ?? 1,
-                selectedAttributes: _productSelectedAttributes[product.id],
+                selectedAttributes: _productSelectedAttributes[product.id], fixedSubtotal:
+        product.price * (updatedQuantities[product.id] ?? 1),
               ))
           .toList();
 

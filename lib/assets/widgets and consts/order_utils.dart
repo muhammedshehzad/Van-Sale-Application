@@ -106,6 +106,7 @@ class _CreateOrderPageState extends State<CreateOrderPage> {
       _isInitialized = true;
     });
   }
+
   void _clearSelections() {
     setState(() {
       _selectedProducts.clear();
@@ -778,21 +779,24 @@ class _CreateOrderPageState extends State<CreateOrderPage> {
             const SizedBox(height: 24),
             const Text('Delivery Details',
                 style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 8),
+            const SizedBox(height: 12),
             _buildDeliveryDatePicker(),
+            _buildShippingMethodSelector(provider.shippingMethods
+                .map((sm) => ShippingMethod(
+                      id: sm.id,
+                      name: sm.name,
+                      cost: sm.cost,
+                    ))
+                .toList()),
             const SizedBox(height: 16),
-            _buildShippingMethodSelector(provider.shippingMethods.map((sm) => ShippingMethod(
-              id: sm.id,
-              name: sm.name,
-              cost: sm.cost,
-            )).toList()),
-            const SizedBox(height: 16),
-            _buildDeliveryAddressSelector(provider.deliveryAddresses.map((addr) => DeliveryAddress(
-              id: addr.id,
-              name: addr.name,
-              street: addr.street,
-              city: addr.city,
-            )).toList()),
+            _buildDeliveryAddressSelector(provider.deliveryAddresses
+                .map((addr) => DeliveryAddress(
+                      id: addr.id,
+                      name: addr.name,
+                      street: addr.street,
+                      city: addr.city,
+                    ))
+                .toList()),
             const SizedBox(height: 24),
             const Text('Order Notes',
                 style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
@@ -807,21 +811,6 @@ class _CreateOrderPageState extends State<CreateOrderPage> {
               ),
               onChanged: (value) {
                 _orderNotes = value;
-              },
-            ),
-            const SizedBox(height: 24),
-            const Text('Customer Reference',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 8),
-            TextField(
-              controller: _customerReferenceController,
-              decoration: InputDecoration(
-                hintText: 'Enter customer reference (optional)',
-                border:
-                    OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-              ),
-              onChanged: (value) {
-                _customerReference = value;
               },
             ),
             const SizedBox(height: 24),

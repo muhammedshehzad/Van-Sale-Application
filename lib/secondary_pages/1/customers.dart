@@ -47,15 +47,23 @@ class _CustomersListState extends State<CustomersList> {
   void initState() {
     super.initState();
     _searchController.addListener(_filterCustomers);
+    // Set initial loading state
+    setState(() {
+      _isLoading = true; // Use local flag to force shimmer on first load
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final orderPickingProvider =
           Provider.of<OrderPickingProvider>(context, listen: false);
-      // Only load customers if not already loaded
       if (orderPickingProvider.customers.isEmpty) {
-        orderPickingProvider.loadCustomers();
+        orderPickingProvider.loadCustomers().then((_) {
+          setState(() {
+            _isLoading = false;
+            _filteredCustomers = List.from(orderPickingProvider.customers);
+          });
+        });
       } else {
-        // Data already exists, skip shimmer
         setState(() {
+          _isLoading = false;
           _isInitialLoad = false;
           _filteredCustomers = List.from(orderPickingProvider.customers);
         });
@@ -609,29 +617,31 @@ class _CustomersListState extends State<CustomersList> {
   Widget buildCustomersList() {
     return Consumer<OrderPickingProvider>(
       builder: (context, orderPickingProvider, child) {
-        // Update filtered customers only if search query is empty and filtered list is empty
-        if (_filteredCustomers.isEmpty && _searchController.text.isEmpty) {
+        // Show shimmer if local _isLoading is true or provider is loading with no customers
+        final bool showShimmer = _isLoading ||
+            (orderPickingProvider.isLoadingCustomers &&
+                orderPickingProvider.customers.isEmpty);
+
+        // Update filtered customers only when not loading and data is available
+        if (!showShimmer &&
+            _searchController.text.isEmpty &&
+            orderPickingProvider.customers.isNotEmpty &&
+            _filteredCustomers.isEmpty) {
           _filteredCustomers = List.from(orderPickingProvider.customers);
         }
 
-        // Show shimmer only if it's the initial load and customers are not yet loaded
-        if (_isInitialLoad &&
-            orderPickingProvider.isLoadingCustomers &&
-            orderPickingProvider.customers.isEmpty) {
+        if (showShimmer) {
           return _buildCustomersListShimmer();
-        }
-
-        // Once data is loaded, mark initial load as complete
-        if (orderPickingProvider.customers.isNotEmpty) {
-          _isInitialLoad = false;
         }
 
         return RefreshIndicator(
           onRefresh: () async {
-            final orderPickingProvider =
-                Provider.of<OrderPickingProvider>(context, listen: false);
+            setState(() {
+              _isLoading = true;
+            });
             await orderPickingProvider.loadCustomers();
             setState(() {
+              _isLoading = false;
               _filteredCustomers = List.from(orderPickingProvider.customers);
             });
             _searchController.clear();
@@ -639,12 +649,12 @@ class _CustomersListState extends State<CustomersList> {
           child: Column(
             children: [
               Padding(
-                padding: EdgeInsets.all(16.0),
+                padding: const EdgeInsets.all(16.0),
                 child: TextField(
                   controller: _searchController,
                   decoration: InputDecoration(
                     hintText: 'Search customers...',
-                    hintStyle: TextStyle(color: Colors.grey),
+                    hintStyle: const TextStyle(color: Colors.grey),
                     prefixIcon: const Icon(Icons.search, color: Colors.grey),
                     suffixIcon: _searchController.text.isNotEmpty
                         ? IconButton(
@@ -673,7 +683,9 @@ class _CustomersListState extends State<CustomersList> {
               ),
               Expanded(
                 child: _filteredCustomers.isEmpty &&
-                        !orderPickingProvider.isLoadingCustomers
+                        !orderPickingProvider.isLoadingCustomers &&
+                        !_isLoading &&
+                        orderPickingProvider.customers.isEmpty
                     ? Center(
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
@@ -692,7 +704,7 @@ class _CustomersListState extends State<CustomersList> {
                                 Navigator.push(
                                     context,
                                     SlidingPageTransitionRL(
-                                        page: CreateCustomerPage()));
+                                        page: const CreateCustomerPage()));
                               },
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: primaryColor,
@@ -745,7 +757,7 @@ class _CustomersListState extends State<CustomersList> {
                                                       fit: BoxFit.cover,
                                                       placeholder:
                                                           (context, url) =>
-                                                              Center(
+                                                              const Center(
                                                         child:
                                                             CircularProgressIndicator(
                                                           strokeWidth: 2,
@@ -758,7 +770,7 @@ class _CustomersListState extends State<CustomersList> {
                                                         customer.name
                                                             .substring(0, 2)
                                                             .toUpperCase(),
-                                                        style: TextStyle(
+                                                        style: const TextStyle(
                                                           fontSize: 22,
                                                           fontWeight:
                                                               FontWeight.bold,
@@ -781,7 +793,7 @@ class _CustomersListState extends State<CustomersList> {
                                                         customer.name
                                                             .substring(0, 2)
                                                             .toUpperCase(),
-                                                        style: TextStyle(
+                                                        style: const TextStyle(
                                                           fontSize: 22,
                                                           fontWeight:
                                                               FontWeight.bold,
@@ -794,7 +806,7 @@ class _CustomersListState extends State<CustomersList> {
                                               customer.name
                                                   .substring(0, 2)
                                                   .toUpperCase(),
-                                              style: TextStyle(
+                                              style: const TextStyle(
                                                 fontSize: 22,
                                                 fontWeight: FontWeight.bold,
                                                 color: primaryColor,

@@ -2,11 +2,14 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_barcode_scanner/flutter_barcode_scanner.dart';
 import 'package:intl/intl.dart';
 import 'package:latest_van_sale_application/main_page/main_page.dart';
 import 'package:latest_van_sale_application/secondary_pages/1/sale_orders.dart';
+import 'package:latest_van_sale_application/secondary_pages/invoice_creation_page.dart';
 import 'package:latest_van_sale_application/secondary_pages/sale_order_details_page.dart';
 import 'package:odoo_rpc/odoo_rpc.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:shimmer/shimmer.dart';
@@ -19,6 +22,8 @@ import '../../providers/invoice_provider.dart';
 import '../../providers/order_picking_provider.dart';
 import '../../providers/sale_order_provider.dart';
 import '../pending_deliveries.dart';
+import '../product_details_page.dart';
+import '../stock_check_page.dart';
 import '../todays_sales_page.dart';
 import 'invoice_list_page.dart';
 
@@ -1224,6 +1229,269 @@ class _DashboardPageState extends State<DashboardPage>
     );
   }
 
+// Inside _DashboardPageState class
+
+// Helper function to show a loading dialog
+  void _showLoadingDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return Dialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(20.0),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(
+                  valueColor: AlwaysStoppedAnimation(Color(0xFFC13030)),
+                ),
+                const SizedBox(width: 16),
+                const Text(
+                  'Searching for product...',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+// Helper function to show an error dialog
+  void _showErrorDialog({
+    required BuildContext context,
+    required String message,
+    VoidCallback? onRetry,
+  }) {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          title: const Text(
+            'Error',
+            style: TextStyle(
+              fontWeight: FontWeight.bold,
+              color: Colors.red,
+            ),
+          ),
+          content: Text(
+            message,
+            style: const TextStyle(fontSize: 16),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text(
+                'Close',
+                style: TextStyle(color: Color(0xFFC13030)),
+              ),
+            ),
+            if (onRetry != null)
+              TextButton(
+                onPressed: () {
+                  Navigator.of(context).pop();
+                  onRetry();
+                },
+                child: const Text(
+                  'Retry',
+                  style: TextStyle(
+                    color: Color(0xFFC13030),
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+
+// Updated _scanProductBarcode function
+  Future<void> _scanProductBarcode() async {
+    try {
+      // Request camera permission
+      final permissionStatus = await Permission.camera.request();
+      if (permissionStatus != PermissionStatus.granted) {
+        if (context.mounted) {
+          _showErrorDialog(
+            context: context,
+            message: 'Camera permission is required to scan barcodes.',
+            onRetry: _scanProductBarcode, // Allow retry
+          );
+        }
+        return;
+      }
+
+      // Scan barcode
+      String barcode = await FlutterBarcodeScanner.scanBarcode(
+        '#ff6666', // Line color
+        'Cancel', // Cancel button text
+        true, // Show flash icon
+        ScanMode.BARCODE, // Scan mode
+      );
+
+      if (!context.mounted) return;
+
+      if (barcode == '-1') {
+        // Scan cancelled
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Barcode scan cancelled'),
+            behavior: SnackBarBehavior.floating,
+            duration: Duration(seconds: 2),
+          ),
+        );
+        return;
+      }
+
+      if (barcode.isEmpty) {
+        // No barcode scanned
+        _showErrorDialog(
+          context: context,
+          message: 'No barcode detected. Please try again.',
+          onRetry: _scanProductBarcode,
+        );
+        return;
+      }
+
+      // Show loading dialog
+      _showLoadingDialog(context);
+
+      // Initialize Odoo client
+      bool initialized = await _odooService.initFromStorage();
+      if (!initialized) {
+        if (context.mounted) {
+          Navigator.of(context).pop(); // Close loading dialog
+          _showErrorDialog(
+            context: context,
+            message:
+                'Failed to connect to Odoo service. Please check your connection.',
+            onRetry: _scanProductBarcode,
+          );
+        }
+        return;
+      }
+
+      // Query Odoo for product with matching barcode
+      final productResult = await _odooService.callKW(
+        model: 'product.product',
+        method: 'search_read',
+        args: [
+          [
+            ['barcode', '=', barcode]
+          ]
+        ],
+        kwargs: {
+          'fields': ['id'],
+          'limit': 1,
+        },
+      );
+
+      if (!context.mounted) return;
+
+      // Close loading dialog
+      Navigator.of(context).pop();
+
+      if (productResult is List && productResult.isNotEmpty) {
+        final productId = productResult[0]['id'].toString();
+        // Navigate to ProductDetailsPage
+        Navigator.push(
+          context,
+          SlidingPageTransitionRL(
+            page: ProductDetailsPage(
+              productId: productId,
+            ),
+          ),
+        );
+        // Show success SnackBar
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Product found! Loading details...'),
+            backgroundColor: Colors.green,
+            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      } else {
+        // No product found
+        _showErrorDialog(
+          context: context,
+          message: 'No product found with barcode: $barcode',
+          onRetry: _scanProductBarcode,
+        );
+      }
+    } catch (e) {
+      debugPrint('Error scanning barcode: $e');
+      if (context.mounted) {
+        // Close loading dialog if open
+        Navigator.of(context).pop();
+        String errorMessage;
+        if (e.toString().contains('OdooException')) {
+          errorMessage =
+              'Failed to query Odoo server. Please check your connection.';
+        } else if (e is FormatException) {
+          errorMessage = 'Invalid barcode format. Please try again.';
+        } else {
+          errorMessage = 'An unexpected error occurred: $e';
+        }
+        _showErrorDialog(
+          context: context,
+          message: errorMessage,
+          onRetry: _scanProductBarcode,
+        );
+      }
+    }
+  }
+
+// Ensure _buildQuickActionButton is defined (already in your code)
+  Widget _buildQuickActionButton(
+      IconData icon, String label, Color color, VoidCallback onTap) {
+    return Container(
+      width: 80,
+      margin: const EdgeInsets.only(right: 12),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(10),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: color.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(icon, color: color, size: 24),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.grey[800],
+                fontWeight: FontWeight.w500,
+              ),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+// In the Quick Actions ListView, update the Scan Product button
+// Replace the existing _buildQuickActionButton call for Scan Product
   void showCreateOrderSheetGeneral(BuildContext context) {
     showDialog(
       context: context,
@@ -1472,11 +1740,45 @@ class _DashboardPageState extends State<DashboardPage>
                 scrollDirection: Axis.horizontal,
                 children: [
                   _buildQuickActionButton(
+                    Icons.map,
+                    'Route Plan',
+                    Colors.green[600]!,
+                    () => loadRouteData(context),
+                  ),
+                  _buildQuickActionButton(
+                    Icons.qr_code_scanner,
+                    'Scan Product',
+                    Colors.purple[600]!,
+                    _scanProductBarcode,
+                  ),
+                  _buildQuickActionButton(
+                    Icons.inventory_2,
+                    'Stock Check',
+                    Colors.amber[600]!,
+                    () {
+                      Navigator.push(context,
+                          SlidingPageTransitionRL(page: StockCheckPage()));
+                    },
+                  ),
+                  _buildQuickActionButton(
                     Icons.post_add,
                     'Create Order',
                     Colors.blue[600]!,
                     () {
                       showCreateOrderSheetGeneral(context);
+                    },
+                  ),
+                  _buildQuickActionButton(
+                    Icons.receipt,
+                    'Create Invoice',
+                    Colors.red[600]!,
+                    () {
+                      Navigator.push(
+                          context,
+                          SlidingPageTransitionRL(
+                              page: InvoiceCreationPage(
+                            saleOrderData: {},
+                          )));
                     },
                   ),
                   _buildQuickActionButton(
@@ -1486,30 +1788,6 @@ class _DashboardPageState extends State<DashboardPage>
                     () async {
                       await _handleRefresh();
                     },
-                  ),
-                  _buildQuickActionButton(
-                    Icons.qr_code_scanner,
-                    'Scan Product',
-                    Colors.purple[600]!,
-                    () {},
-                  ),
-                  _buildQuickActionButton(
-                    Icons.map,
-                    'Route Plan',
-                    Colors.green[600]!,
-                    () => loadRouteData(context),
-                  ),
-                  _buildQuickActionButton(
-                    Icons.inventory_2,
-                    'Stock Check',
-                    Colors.amber[600]!,
-                    () {},
-                  ),
-                  _buildQuickActionButton(
-                    Icons.receipt,
-                    'Create Invoice',
-                    Colors.red[600]!,
-                    () {},
                   ),
                 ],
               ),
@@ -1855,41 +2133,6 @@ class _DashboardPageState extends State<DashboardPage>
                 fontSize: 16, fontWeight: FontWeight.bold, color: color)),
         Text(label, style: TextStyle(fontSize: 12, color: Colors.grey[600])),
       ],
-    );
-  }
-
-  Widget _buildQuickActionButton(
-      IconData icon, String label, Color color, VoidCallback onTap) {
-    return Container(
-      width: 80,
-      margin: const EdgeInsets.only(right: 12),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(10),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: color.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Icon(icon, color: color, size: 24),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 12,
-                color: Colors.grey[800],
-                fontWeight: FontWeight.w500,
-              ),
-              textAlign: TextAlign.center,
-            ),
-          ],
-        ),
-      ),
     );
   }
 }

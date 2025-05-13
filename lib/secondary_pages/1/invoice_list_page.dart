@@ -139,12 +139,17 @@ class _InvoiceListPageState extends State<InvoiceListPage> {
               .format(DateTime.parse(invoice['invoice_date'] as String))
               .toLowerCase()
           : '';
+      final invoiceAmount = invoice['amount_total'] as double;
+      final amountResidual = invoice['amount_residual'] != null
+          ? invoice['amount_residual'] as double
+          : invoiceAmount;
+      final isFullyPaid = amountResidual <= 0 || invoice['state'] == 'paid';
       final state = widget.provider
           .formatInvoiceState(
             invoice['state'] as String,
-            (invoice['amount_residual'] as double? ??
-                    invoice['amount_total'] as double) <=
-                0,
+            isFullyPaid,
+            amountResidual,
+            invoiceAmount,
           )
           .toLowerCase();
 
@@ -237,6 +242,11 @@ class _InvoiceListPageState extends State<InvoiceListPage> {
                   return _buildErrorState(provider);
                 }
 
+                // Show loading indicator when provider is actively loading
+                if (provider.isLoading) {
+                  return _buildShimmerLoading();
+                }
+
                 return _buildContentArea(provider);
               },
             ),
@@ -253,7 +263,7 @@ class _InvoiceListPageState extends State<InvoiceListPage> {
         baseColor: Colors.grey[300]!,
         highlightColor: Colors.grey[100]!,
         child: ListView.builder(
-          itemCount: 3,
+          itemCount: 4,
           itemBuilder: (_, __) => Padding(
             padding: const EdgeInsets.only(bottom: 16.0),
             child: Container(
@@ -537,8 +547,13 @@ class InvoiceCard extends StatelessWidget {
     final invoiceAmount = invoice['amount_total'] as double;
     final amountResidual = invoice['amount_residual'] != null
         ? invoice['amount_residual'] as double
-        : 0.0;
+        : invoiceAmount; // Default to invoiceAmount if null
     final isFullyPaid = amountResidual <= 0 || invoice['state'] == 'paid';
+
+    // Debug print to verify state
+    debugPrint(
+        'InvoiceCard: $invoiceNumber, state=$invoiceState, isFullyPaid=$isFullyPaid, '
+        'amountResidual=$amountResidual, invoiceAmount=$invoiceAmount');
 
     int? daysOverdue;
     if (dueDate != null && !isFullyPaid && dueDate.isBefore(DateTime.now())) {
@@ -579,7 +594,8 @@ class InvoiceCard extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(width: 8),
-                  _buildStatusBadge(context, invoiceState, isFullyPaid),
+                  _buildStatusBadge(context, invoiceState, isFullyPaid,
+                      amountResidual, invoiceAmount),
                 ],
               ),
               const SizedBox(height: 10),
@@ -673,9 +689,10 @@ class InvoiceCard extends StatelessWidget {
     );
   }
 
-  Widget _buildStatusBadge(
-      BuildContext context, String state, bool isFullyPaid) {
-    final status = provider.formatInvoiceState(state, isFullyPaid);
+  Widget _buildStatusBadge(BuildContext context, String state, bool isFullyPaid,
+      double amountResidual, double invoiceAmount) {
+    final status = provider.formatInvoiceState(
+        state, isFullyPaid, amountResidual, invoiceAmount);
     final statusColor = provider.getInvoiceStatusColor(status);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),

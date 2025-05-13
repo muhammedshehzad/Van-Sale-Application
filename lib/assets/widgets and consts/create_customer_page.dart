@@ -758,7 +758,7 @@ class _CreateCustomerPageState extends State<CreateCustomerPage> {
               icon: Icons.local_post_office,
               validator: (value) {
                 if (value != null && value.isNotEmpty) {
-                  if (!RegExp(r'^\d{5}(-\d{4})?$').hasMatch(value)) {
+                  if (!RegExp(r'^\d{6}(-\d{4})?$').hasMatch(value)) {
                     return 'Please enter a valid ZIP code';
                   }
                 }

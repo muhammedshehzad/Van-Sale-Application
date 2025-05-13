@@ -15,6 +15,7 @@ import '../providers/order_picking_provider.dart';
 import '../providers/sale_order_detail_provider.dart';
 import '../providers/sale_order_provider.dart';
 import 'delivey_details_page.dart';
+import 'invoice_creation_page.dart';
 import 'invoice_details_page.dart';
 
 class SaleOrderDetailPage extends StatefulWidget {
@@ -296,14 +297,14 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
       }
 
       bool isFullyPicked = ordered > 0 && picked >= ordered;
-      debugPrint('Picking ID: $pickingId, Ordered: $ordered, Picked: $picked, Fully Picked: $isFullyPicked');
+      debugPrint(
+          'Picking ID: $pickingId, Ordered: $ordered, Picked: $picked, Fully Picked: $isFullyPicked');
 
       return {
         'picked': picked,
         'ordered': ordered,
         'is_fully_picked': isFullyPicked,
       };
-
     } catch (e) {
       throw Exception('Error fetching picking progress: $e');
     }
@@ -583,8 +584,13 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                                 // }}');
 
                                 // Skip lines with no ordered quantity
-                                final quantity = line['product_uom_qty'] is num ? (line['product_uom_qty'] as num).toDouble() : 0.0;
-                                if (quantity <= 0 && line['display_type'] != 'line_section' && line['display_type'] != 'line_note') {
+                                final quantity = line['product_uom_qty'] is num
+                                    ? (line['product_uom_qty'] as num)
+                                        .toDouble()
+                                    : 0.0;
+                                if (quantity <= 0 &&
+                                    line['display_type'] != 'line_section' &&
+                                    line['display_type'] != 'line_note') {
                                   return const SizedBox.shrink();
                                 }
 
@@ -607,15 +613,20 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                                   );
                                 }
 
-                                final productName = line['product_id'] is List &&
-                                    line['product_id'].length > 1
+                                final productName = line['product_id']
+                                            is List &&
+                                        line['product_id'].length > 1
                                     ? (line['product_id'] as List)[1] as String
                                     : line['name'] as String;
                                 final unitPrice = line['price_unit'] as double;
-                                final subtotal = line['price_subtotal'] as double;
-                                final qtyDelivered = line['qty_delivered'] as double? ?? 0.0;
-                                final qtyInvoiced = line['qty_invoiced'] as double? ?? 0.0;
-                                final discount = line['discount'] as double? ?? 0.0;
+                                final subtotal =
+                                    line['price_subtotal'] as double;
+                                final qtyDelivered =
+                                    line['qty_delivered'] as double? ?? 0.0;
+                                final qtyInvoiced =
+                                    line['qty_invoiced'] as double? ?? 0.0;
+                                final discount =
+                                    line['discount'] as double? ?? 0.0;
 
                                 return Card(
                                   margin: const EdgeInsets.only(bottom: 12.0),
@@ -625,32 +636,38 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                                   child: Padding(
                                     padding: const EdgeInsets.all(16.0),
                                     child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
                                       children: [
                                         Text(
                                           productName,
                                           style: const TextStyle(
-                                              fontWeight: FontWeight.w600, fontSize: 15),
+                                              fontWeight: FontWeight.w600,
+                                              fontSize: 15),
                                         ),
                                         const SizedBox(height: 8),
                                         Row(
-                                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.spaceBetween,
                                           children: [
                                             Text(
                                               'Qty: ${quantity.toStringAsFixed(quantity.truncateToDouble() == quantity ? 0 : 2)}',
                                               style: TextStyle(
-                                                  color: Colors.grey[700], fontSize: 13),
+                                                  color: Colors.grey[700],
+                                                  fontSize: 13),
                                             ),
                                             Text(
                                               'Price: ${provider.currencyFormat.format(unitPrice)}',
                                               style: TextStyle(
-                                                  color: Colors.grey[700], fontSize: 13),
+                                                  color: Colors.grey[700],
+                                                  fontSize: 13),
                                             ),
                                           ],
                                         ),
                                         const SizedBox(height: 4),
                                         Row(
-                                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.spaceBetween,
                                           children: [
                                             Text(
                                               'Delivered: ${qtyDelivered.toStringAsFixed(qtyDelivered.truncateToDouble() == qtyDelivered ? 0 : 2)}',
@@ -676,11 +693,13 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                                         ),
                                         if (discount > 0)
                                           Padding(
-                                            padding: const EdgeInsets.only(top: 4),
+                                            padding:
+                                                const EdgeInsets.only(top: 4),
                                             child: Text(
                                               'Discount: ${discount.toStringAsFixed(1)}%',
                                               style: TextStyle(
-                                                  color: Colors.red[700], fontSize: 13),
+                                                  color: Colors.red[700],
+                                                  fontSize: 13),
                                             ),
                                           ),
                                         const SizedBox(height: 10),
@@ -689,7 +708,8 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                                           child: Text(
                                             'Subtotal: ${provider.currencyFormat.format(subtotal)}',
                                             style: const TextStyle(
-                                                fontWeight: FontWeight.w600, fontSize: 14),
+                                                fontWeight: FontWeight.w600,
+                                                fontSize: 14),
                                           ),
                                         ),
                                       ],
@@ -774,72 +794,72 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                             ),
                           ),
                           const SizedBox(height: 10),
-                          if (hasPendingDeliveries &&
-                              currentState != 'done') ...[
-                            const SizedBox(height: 16),
-                            SizedBox(
-                              width: double.infinity,
-                              child: ElevatedButton.icon(
-                                icon: const Icon(Icons.local_shipping,
-                                    color: Colors.white),
-                                label: const Text('Start Picking',
-                                    style: TextStyle(color: Colors.white)),
-                                onPressed: () async {
-                                  final incompletePicking = pickings.firstWhere(
-                                    (picking) =>
-                                        picking['state'] != 'done' &&
-                                        picking['state'] != 'cancel',
-                                    orElse: () => {},
-                                  );
-                                  if (incompletePicking.isNotEmpty) {
-                                    final result = await Navigator.push(
-                                      context,
-                                      SlidingPageTransitionRL(
-                                        page: PickingPage(
-                                          picking: incompletePicking,
-                                          warehouseId: warehouseId,
-                                          provider: dataProvider,
-                                        ),
-                                      ),
-                                    );
-                                    if (result == true && mounted) {
-                                      await provider.fetchOrderDetails();
-                                      if (mounted) {
-                                        await _handleBackorder(
-                                            incompletePicking);
-                                        final allDone = pickings
-                                            .every((p) => p['state'] == 'done');
-                                        if (allDone && mounted) {
-                                          // Navigator.push(
-                                          //   context,
-                                          //   SlidingPageTransitionRL(
-                                          //     page: DeliveryPage(
-                                          //       orderData: orderData,
-                                          //       provider: provider,
-                                          //     ),
-                                          //   ),
-                                          // );
-                                        }
-                                      }
-                                    }
-                                  } else {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(
-                                          content: Text(
-                                              'No pickings available to process')),
-                                    );
-                                  }
-                                },
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: primaryColor,
-                                  shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(8)),
-                                  padding:
-                                      const EdgeInsets.symmetric(vertical: 16),
-                                ),
-                              ),
-                            ),
-                          ],
+                          // if (hasPendingDeliveries &&
+                          //     currentState != 'done') ...[
+                          //   const SizedBox(height: 16),
+                          //   SizedBox(
+                          //     width: double.infinity,
+                          //     child: ElevatedButton.icon(
+                          //       icon: const Icon(Icons.local_shipping,
+                          //           color: Colors.white),
+                          //       label: const Text('Start Picking',
+                          //           style: TextStyle(color: Colors.white)),
+                          //       onPressed: () async {
+                          //         final incompletePicking = pickings.firstWhere(
+                          //           (picking) =>
+                          //               picking['state'] != 'done' &&
+                          //               picking['state'] != 'cancel',
+                          //           orElse: () => {},
+                          //         );
+                          //         if (incompletePicking.isNotEmpty) {
+                          //           final result = await Navigator.push(
+                          //             context,
+                          //             SlidingPageTransitionRL(
+                          //               page: PickingPage(
+                          //                 picking: incompletePicking,
+                          //                 warehouseId: warehouseId,
+                          //                 provider: dataProvider,
+                          //               ),
+                          //             ),
+                          //           );
+                          //           if (result == true && mounted) {
+                          //             await provider.fetchOrderDetails();
+                          //             if (mounted) {
+                          //               await _handleBackorder(
+                          //                   incompletePicking);
+                          //               final allDone = pickings
+                          //                   .every((p) => p['state'] == 'done');
+                          //               if (allDone && mounted) {
+                          //                 // Navigator.push(
+                          //                 //   context,
+                          //                 //   SlidingPageTransitionRL(
+                          //                 //     page: DeliveryPage(
+                          //                 //       orderData: orderData,
+                          //                 //       provider: provider,
+                          //                 //     ),
+                          //                 //   ),
+                          //                 // );
+                          //               }
+                          //             }
+                          //           }
+                          //         } else {
+                          //           ScaffoldMessenger.of(context).showSnackBar(
+                          //             const SnackBar(
+                          //                 content: Text(
+                          //                     'No pickings available to process')),
+                          //           );
+                          //         }
+                          //       },
+                          //       style: ElevatedButton.styleFrom(
+                          //         backgroundColor: primaryColor,
+                          //         shape: RoundedRectangleBorder(
+                          //             borderRadius: BorderRadius.circular(8)),
+                          //         padding:
+                          //             const EdgeInsets.symmetric(vertical: 16),
+                          //       ),
+                          //     ),
+                          //   ),
+                          // ],
                           if (orderData['state'] == 'draft') ...[
                             const SizedBox(height: 16),
                             SizedBox(
@@ -959,15 +979,19 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                       await provider.fetchOrderDetails();
                     },
                     child: SingleChildScrollView(
+                      physics: const AlwaysScrollableScrollPhysics(),
                       padding: const EdgeInsets.all(16.0),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text('Delivery Orders',
-                              style: TextStyle(
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.grey[800])),
+                          Text(
+                            'Delivery Orders',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.grey[800],
+                            ),
+                          ),
                           const SizedBox(height: 12),
                           if (pickings.isEmpty)
                             Card(
@@ -977,14 +1001,18 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                                 child: Center(
                                   child: Column(
                                     children: [
-                                      Icon(Icons.local_shipping_outlined,
-                                          size: 48, color: Colors.grey[400]),
+                                      Icon(
+                                        Icons.local_shipping_outlined,
+                                        size: 48,
+                                        color: Colors.grey[400],
+                                      ),
                                       const SizedBox(height: 16),
                                       Text(
                                         'No delivery orders found',
                                         style: TextStyle(
-                                            color: Colors.grey[600],
-                                            fontStyle: FontStyle.italic),
+                                          color: Colors.grey[600],
+                                          fontStyle: FontStyle.italic,
+                                        ),
                                       ),
                                     ],
                                   ),
@@ -992,507 +1020,519 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                               ),
                             )
                           else
-                            ListView.builder(
-                              shrinkWrap: true,
-                              physics: const NeverScrollableScrollPhysics(),
-                              itemCount: pickings.length,
-                              itemBuilder: (context, index) {
-                                final picking = pickings[index];
-                                final pickingName = picking['name'] as String;
-                                final pickingState = picking['state'] as String;
-                                final scheduledDate =
-                                    picking['scheduled_date'] != false
-                                        ? DateTime.parse(
-                                            picking['scheduled_date'] as String)
-                                        : null;
-                                final pickingType = picking['picking_type_id']
-                                            is List &&
-                                        picking['picking_type_id'].length > 1
-                                    ? (picking['picking_type_id'] as List)[1]
-                                        as String
-                                    : 'Delivery Order';
-                                final dateCompleted =
-                                    picking['date_done'] != false
-                                        ? DateTime.parse(
-                                            picking['date_done'] as String)
-                                        : null;
-                                final backorderId =
-                                    picking['backorder_id'] != false;
-
-                                return Card(
-                                  elevation: 2,
-                                  shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(12)),
-                                  child: Padding(
-                                    padding: const EdgeInsets.all(16.0),
-                                    child: FutureBuilder<Map<String, dynamic>>(
-                                      future: getPickingProgress(
-                                          picking['id'] as int),
-                                      builder: (context, snapshot) {
-                                        if (snapshot.connectionState ==
-                                            ConnectionState.waiting) {
-                                          return const Center(
-                                            child: CircularProgressIndicator(
-                                                strokeWidth: 2.5),
-                                          );
-                                        }
-
-                                        if (snapshot.hasError) {
-                                          return Center(
-                                            child: Text(
-                                              'Error loading progress',
-                                              style: TextStyle(
-                                                  color: Colors.red,
-                                                  fontSize: 14),
-                                            ),
-                                          );
-                                        }
-
-                                        final picked =
-                                            snapshot.data?['picked'] ?? 0.0;
-                                        final ordered =
-                                            snapshot.data?['ordered'] ?? 1.0;
-                                        final isFullyPicked =
-                                            snapshot.data?['is_fully_picked'] ??
-                                                false;
-                                        final progress =
-                                            (picked / ordered).clamp(0.0, 1.0);
-
-                                        return Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: [
-                                            Row(
-                                              mainAxisAlignment:
-                                                  MainAxisAlignment
-                                                      .spaceBetween,
+                            FutureBuilder<List<Map<String, dynamic>>>(
+                              future: Future.wait(
+                                pickings.map((p) async {
+                                  final progress =
+                                      await getPickingProgress(p['id'] as int);
+                                  return {'id': p['id'], ...progress};
+                                }),
+                              ),
+                              builder: (context, snapshot) {
+                                if (snapshot.connectionState ==
+                                    ConnectionState.waiting) {
+                                  return Column(
+                                    children: List.generate(
+                                      pickings.length > 3 ? 3 : pickings.length,
+                                      (index) => Padding(
+                                        padding:
+                                            const EdgeInsets.only(bottom: 12.0),
+                                        child: Card(
+                                          elevation: 2,
+                                          shape: RoundedRectangleBorder(
+                                            borderRadius:
+                                                BorderRadius.circular(12),
+                                          ),
+                                          child: Padding(
+                                            padding: const EdgeInsets.all(16.0),
+                                            child: Column(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.start,
                                               children: [
-                                                Expanded(
-                                                  child: Text(
-                                                    pickingName,
-                                                    style: const TextStyle(
-                                                      fontWeight:
-                                                          FontWeight.bold,
-                                                      fontSize: 16,
-                                                    ),
-                                                    maxLines: 1,
-                                                    overflow:
-                                                        TextOverflow.ellipsis,
-                                                  ),
+                                                Container(
+                                                  width: double.infinity,
+                                                  height: 20,
+                                                  color: Colors.grey[300],
                                                 ),
-                                                Row(
-                                                  children: [
-                                                    Container(
-                                                      padding: const EdgeInsets
-                                                          .symmetric(
-                                                          horizontal: 8,
-                                                          vertical: 4),
-                                                      decoration: BoxDecoration(
-                                                        color: provider
-                                                            .getPickingStatusColor(
-                                                                pickingState)
-                                                            .withOpacity(0.1),
-                                                        borderRadius:
-                                                            BorderRadius
-                                                                .circular(8),
-                                                        border: Border.all(
-                                                          color: provider
-                                                              .getPickingStatusColor(
-                                                                  pickingState),
-                                                          width: 1,
-                                                        ),
+                                                const SizedBox(height: 12),
+                                                Container(
+                                                  width: 150,
+                                                  height: 16,
+                                                  color: Colors.grey[300],
+                                                ),
+                                                const SizedBox(height: 8),
+                                                Container(
+                                                  width: 100,
+                                                  height: 16,
+                                                  color: Colors.grey[300],
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  );
+                                }
+
+                                if (snapshot.hasError) {
+                                  return Center(
+                                    child: Text(
+                                      'Error loading progress',
+                                      style: TextStyle(
+                                          color: Colors.red, fontSize: 14),
+                                    ),
+                                  );
+                                }
+
+                                final progressData = snapshot.data ?? [];
+
+                                return ListView.builder(
+                                  shrinkWrap: true,
+                                  physics: const NeverScrollableScrollPhysics(),
+                                  itemCount: pickings.length,
+                                  itemBuilder: (context, index) {
+                                    final picking = pickings[index];
+                                    final pickingName =
+                                        picking['name'] as String;
+                                    final pickingState =
+                                        picking['state'] as String;
+                                    final scheduledDate =
+                                        picking['scheduled_date'] != false
+                                            ? DateTime.parse(
+                                                picking['scheduled_date']
+                                                    as String)
+                                            : null;
+                                    final pickingType =
+                                        picking['picking_type_id'] is List &&
+                                                picking['picking_type_id']
+                                                        .length >
+                                                    1
+                                            ? (picking['picking_type_id']
+                                                as List)[1] as String
+                                            : 'Delivery Order';
+                                    final dateCompleted =
+                                        picking['date_done'] != false
+                                            ? DateTime.parse(
+                                                picking['date_done'] as String)
+                                            : null;
+                                    final backorderId =
+                                        picking['backorder_id'] != false;
+
+                                    final progressInfo =
+                                        progressData.firstWhere(
+                                      (p) => p['id'] == picking['id'],
+                                      orElse: () => {
+                                        'picked': 0.0,
+                                        'ordered': 1.0,
+                                        'is_fully_picked': false,
+                                      },
+                                    );
+                                    final picked =
+                                        progressInfo['picked'] ?? 0.0;
+                                    final ordered =
+                                        progressInfo['ordered'] ?? 1.0;
+                                    final isFullyPicked =
+                                        progressInfo['is_fully_picked'] ??
+                                            false;
+                                    final progress =
+                                        (picked / ordered).clamp(0.0, 1.0);
+
+                                    return AnimatedOpacity(
+                                      opacity: 1.0,
+                                      duration:
+                                          const Duration(milliseconds: 300),
+                                      child: Card(
+                                        elevation: 2,
+                                        shape: RoundedRectangleBorder(
+                                            borderRadius:
+                                                BorderRadius.circular(12)),
+                                        child: Padding(
+                                          padding: const EdgeInsets.all(16.0),
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              Row(
+                                                mainAxisAlignment:
+                                                    MainAxisAlignment
+                                                        .spaceBetween,
+                                                children: [
+                                                  Expanded(
+                                                    child: Text(
+                                                      pickingName,
+                                                      style: const TextStyle(
+                                                        fontWeight:
+                                                            FontWeight.bold,
+                                                        fontSize: 16,
                                                       ),
-                                                      child: Text(
-                                                        provider
-                                                            .formatPickingState(
-                                                                pickingState),
-                                                        style: TextStyle(
-                                                          fontSize: 12,
-                                                          fontWeight:
-                                                              FontWeight.bold,
-                                                          color: provider
-                                                              .getPickingStatusColor(
-                                                                  pickingState),
-                                                        ),
-                                                      ),
+                                                      maxLines: 1,
+                                                      overflow:
+                                                          TextOverflow.ellipsis,
                                                     ),
-                                                    if (isFullyPicked &&
-                                                        pickingState != 'done')
-                                                      Padding(
+                                                  ),
+                                                  Row(
+                                                    children: [
+                                                      Container(
                                                         padding:
                                                             const EdgeInsets
-                                                                .only(left: 8),
-                                                        child: Container(
+                                                                .symmetric(
+                                                          horizontal: 8,
+                                                          vertical: 4,
+                                                        ),
+                                                        decoration:
+                                                            BoxDecoration(
+                                                          color: provider
+                                                              .getPickingStatusColor(
+                                                                  pickingState)
+                                                              .withOpacity(0.1),
+                                                          borderRadius:
+                                                              BorderRadius
+                                                                  .circular(8),
+                                                          border: Border.all(
+                                                            color: provider
+                                                                .getPickingStatusColor(
+                                                                    pickingState),
+                                                            width: 1,
+                                                          ),
+                                                        ),
+                                                        child: Text(
+                                                          provider
+                                                              .formatPickingState(
+                                                                  pickingState),
+                                                          style: TextStyle(
+                                                            fontSize: 12,
+                                                            fontWeight:
+                                                                FontWeight.bold,
+                                                            color: provider
+                                                                .getPickingStatusColor(
+                                                                    pickingState),
+                                                          ),
+                                                        ),
+                                                      ),
+                                                      if (isFullyPicked &&
+                                                          pickingState !=
+                                                              'done')
+                                                        Padding(
                                                           padding:
                                                               const EdgeInsets
-                                                                  .symmetric(
-                                                                  horizontal: 8,
-                                                                  vertical: 4),
-                                                          decoration:
-                                                              BoxDecoration(
-                                                            color: Colors.green
-                                                                .withOpacity(
-                                                                    0.1),
-                                                            borderRadius:
-                                                                BorderRadius
-                                                                    .circular(
-                                                                        8),
-                                                            border: Border.all(
+                                                                  .only(
+                                                                  left: 8),
+                                                          child: Container(
+                                                            padding:
+                                                                const EdgeInsets
+                                                                    .symmetric(
+                                                              horizontal: 8,
+                                                              vertical: 4,
+                                                            ),
+                                                            decoration:
+                                                                BoxDecoration(
+                                                              color: Colors
+                                                                  .green
+                                                                  .withOpacity(
+                                                                      0.1),
+                                                              borderRadius:
+                                                                  BorderRadius
+                                                                      .circular(
+                                                                          8),
+                                                              border:
+                                                                  Border.all(
                                                                 color: Colors
                                                                     .green,
-                                                                width: 1),
-                                                          ),
-                                                          child: const Text(
-                                                            'Fully Picked',
-                                                            style: TextStyle(
-                                                              color:
-                                                                  Colors.green,
-                                                              fontSize: 12,
-                                                              fontWeight:
-                                                                  FontWeight
-                                                                      .bold,
+                                                                width: 1,
+                                                              ),
+                                                            ),
+                                                            child: const Text(
+                                                              'Fully Picked',
+                                                              style: TextStyle(
+                                                                color: Colors
+                                                                    .green,
+                                                                fontSize: 12,
+                                                                fontWeight:
+                                                                    FontWeight
+                                                                        .bold,
+                                                              ),
                                                             ),
                                                           ),
                                                         ),
-                                                      ),
-                                                  ],
-                                                ),
-                                              ],
-                                            ),
-                                            const SizedBox(height: 12),
-                                            Row(
-                                              children: [
-                                                Icon(Icons.inventory_2_outlined,
-                                                    size: 16,
-                                                    color: Colors.grey[700]),
-                                                const SizedBox(width: 8),
-                                                Text(
-                                                  pickingType,
-                                                  style: TextStyle(
-                                                      fontSize: 14,
-                                                      color: Colors.grey[700]),
-                                                ),
-                                              ],
-                                            ),
-                                            if (backorderId)
-                                              Padding(
-                                                padding: const EdgeInsets.only(
-                                                    top: 8),
-                                                child: Container(
-                                                  padding: const EdgeInsets
-                                                      .symmetric(
-                                                      horizontal: 10,
-                                                      vertical: 6),
-                                                  decoration: BoxDecoration(
-                                                    color: Colors.amber
-                                                        .withOpacity(0.1),
-                                                    borderRadius:
-                                                        BorderRadius.circular(
-                                                            8),
-                                                  ),
-                                                  child: Row(
-                                                    mainAxisSize:
-                                                        MainAxisSize.min,
-                                                    children: [
-                                                      const Icon(
-                                                          Icons.info_outline,
-                                                          size: 16,
-                                                          color: Colors.amber),
-                                                      const SizedBox(width: 6),
-                                                      Text(
-                                                        'Backorder',
-                                                        style: TextStyle(
-                                                          fontSize: 13,
-                                                          fontWeight:
-                                                              FontWeight.w500,
-                                                          color:
-                                                              Colors.amber[800],
-                                                        ),
-                                                      ),
                                                     ],
                                                   ),
-                                                ),
+                                                ],
                                               ),
-                                            if (scheduledDate != null ||
-                                                dateCompleted != null)
-                                              Padding(
-                                                padding: const EdgeInsets.only(
-                                                    top: 12),
-                                                child: Container(
-                                                  padding:
-                                                      const EdgeInsets.all(10),
-                                                  decoration: BoxDecoration(
-                                                    color: Colors.grey[50],
-                                                    borderRadius:
-                                                        BorderRadius.circular(
-                                                            8),
+                                              const SizedBox(height: 12),
+                                              Row(
+                                                children: [
+                                                  Icon(
+                                                    Icons.inventory_2_outlined,
+                                                    size: 16,
+                                                    color: Colors.grey[700],
                                                   ),
+                                                  const SizedBox(width: 8),
+                                                  Text(
+                                                    pickingType,
+                                                    style: TextStyle(
+                                                      fontSize: 14,
+                                                      color: Colors.grey[700],
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                              if (backorderId)
+                                                Padding(
+                                                  padding:
+                                                      const EdgeInsets.only(
+                                                          top: 8),
+                                                  child: Container(
+                                                    padding: const EdgeInsets
+                                                        .symmetric(
+                                                      horizontal: 10,
+                                                      vertical: 6,
+                                                    ),
+                                                    decoration: BoxDecoration(
+                                                      color: Colors.amber
+                                                          .withOpacity(0.1),
+                                                      borderRadius:
+                                                          BorderRadius.circular(
+                                                              8),
+                                                    ),
+                                                    child: Row(
+                                                      mainAxisSize:
+                                                          MainAxisSize.min,
+                                                      children: [
+                                                        const Icon(
+                                                          Icons.info_outline,
+                                                          size: 16,
+                                                          color: Colors.amber,
+                                                        ),
+                                                        const SizedBox(
+                                                            width: 6),
+                                                        Text(
+                                                          'Backorder',
+                                                          style: TextStyle(
+                                                            fontSize: 13,
+                                                            fontWeight:
+                                                                FontWeight.w500,
+                                                            color: Colors
+                                                                .amber[800],
+                                                          ),
+                                                        ),
+                                                      ],
+                                                    ),
+                                                  ),
+                                                ),
+                                              if (scheduledDate != null ||
+                                                  dateCompleted != null)
+                                                Padding(
+                                                  padding:
+                                                      const EdgeInsets.only(
+                                                          top: 12),
+                                                  child: Container(
+                                                    padding:
+                                                        const EdgeInsets.all(
+                                                            10),
+                                                    decoration: BoxDecoration(
+                                                      color: Colors.grey[50],
+                                                      borderRadius:
+                                                          BorderRadius.circular(
+                                                              8),
+                                                    ),
+                                                    child: Column(
+                                                      crossAxisAlignment:
+                                                          CrossAxisAlignment
+                                                              .start,
+                                                      children: [
+                                                        if (scheduledDate !=
+                                                            null)
+                                                          Row(
+                                                            children: [
+                                                              Icon(
+                                                                Icons
+                                                                    .calendar_today,
+                                                                size: 14,
+                                                                color: Colors
+                                                                    .grey[700],
+                                                              ),
+                                                              const SizedBox(
+                                                                  width: 8),
+                                                              Text(
+                                                                'Scheduled: ${DateFormat('yyyy-MM-dd HH:mm').format(scheduledDate)}',
+                                                                style:
+                                                                    TextStyle(
+                                                                  fontSize: 13,
+                                                                  color: Colors
+                                                                          .grey[
+                                                                      800],
+                                                                ),
+                                                              ),
+                                                            ],
+                                                          ),
+                                                        if (scheduledDate !=
+                                                                null &&
+                                                            dateCompleted !=
+                                                                null)
+                                                          const SizedBox(
+                                                              height: 6),
+                                                        if (dateCompleted !=
+                                                            null)
+                                                          Row(
+                                                            children: [
+                                                              Icon(
+                                                                Icons
+                                                                    .check_circle_outline,
+                                                                size: 14,
+                                                                color: Colors
+                                                                    .green[700],
+                                                              ),
+                                                              const SizedBox(
+                                                                  width: 8),
+                                                              Text(
+                                                                'Completed: ${DateFormat('yyyy-MM-dd HH:mm').format(dateCompleted)}',
+                                                                style:
+                                                                    TextStyle(
+                                                                  fontSize: 13,
+                                                                  color: Colors
+                                                                          .grey[
+                                                                      800],
+                                                                ),
+                                                              ),
+                                                            ],
+                                                          ),
+                                                      ],
+                                                    ),
+                                                  ),
+                                                ),
+                                              if (pickingState != 'cancel' &&
+                                                  pickingState != 'done')
+                                                Padding(
+                                                  padding:
+                                                      const EdgeInsets.only(
+                                                          top: 16),
                                                   child: Column(
                                                     crossAxisAlignment:
                                                         CrossAxisAlignment
                                                             .start,
                                                     children: [
-                                                      if (scheduledDate != null)
-                                                        Row(
-                                                          children: [
-                                                            Icon(
-                                                                Icons
-                                                                    .calendar_today,
-                                                                size: 14,
-                                                                color: Colors
-                                                                    .grey[700]),
-                                                            const SizedBox(
-                                                                width: 8),
-                                                            Text(
-                                                              'Scheduled: ${DateFormat('yyyy-MM-dd HH:mm').format(scheduledDate)}',
-                                                              style: TextStyle(
-                                                                  fontSize: 13,
-                                                                  color: Colors
-                                                                          .grey[
-                                                                      800]),
+                                                      Row(
+                                                        mainAxisAlignment:
+                                                            MainAxisAlignment
+                                                                .spaceBetween,
+                                                        children: [
+                                                          Text(
+                                                            'Picking Progress',
+                                                            style: TextStyle(
+                                                              fontWeight:
+                                                                  FontWeight
+                                                                      .w600,
+                                                              fontSize: 14,
+                                                              color: Colors
+                                                                  .grey[800],
                                                             ),
-                                                          ],
-                                                        ),
-                                                      if (scheduledDate !=
-                                                              null &&
-                                                          dateCompleted != null)
-                                                        const SizedBox(
-                                                            height: 6),
-                                                      if (dateCompleted != null)
-                                                        Row(
-                                                          children: [
-                                                            Icon(
-                                                                Icons
-                                                                    .check_circle_outline,
-                                                                size: 14,
-                                                                color: Colors
-                                                                        .green[
-                                                                    700]),
-                                                            const SizedBox(
-                                                                width: 8),
-                                                            Text(
-                                                              'Completed: ${DateFormat('yyyy-MM-dd HH:mm').format(dateCompleted)}',
-                                                              style: TextStyle(
-                                                                  fontSize: 13,
-                                                                  color: Colors
-                                                                          .grey[
-                                                                      800]),
+                                                          ),
+                                                          Container(
+                                                            padding:
+                                                                const EdgeInsets
+                                                                    .symmetric(
+                                                              horizontal: 8,
+                                                              vertical: 4,
                                                             ),
-                                                          ],
+                                                            decoration:
+                                                                BoxDecoration(
+                                                              color: progress ==
+                                                                      1.0
+                                                                  ? Colors.green
+                                                                      .withOpacity(
+                                                                          0.1)
+                                                                  : Colors.blue
+                                                                      .withOpacity(
+                                                                          0.1),
+                                                              borderRadius:
+                                                                  BorderRadius
+                                                                      .circular(
+                                                                          8),
+                                                              border:
+                                                                  Border.all(
+                                                                color: progress ==
+                                                                        1.0
+                                                                    ? Colors
+                                                                        .green
+                                                                    : Colors
+                                                                        .blue,
+                                                                width: 1,
+                                                              ),
+                                                            ),
+                                                            child: Text(
+                                                              '${(progress * 100).toInt()}% Complete',
+                                                              style: TextStyle(
+                                                                fontSize: 12,
+                                                                fontWeight:
+                                                                    FontWeight
+                                                                        .bold,
+                                                                color: progress ==
+                                                                        1.0
+                                                                    ? Colors
+                                                                        .green
+                                                                    : Colors
+                                                                        .blue,
+                                                              ),
+                                                            ),
+                                                          ),
+                                                        ],
+                                                      ),
+                                                      const SizedBox(height: 8),
+                                                      Text(
+                                                        'Picked: ${picked.toStringAsFixed(0)} / ${ordered.toStringAsFixed(0)} items',
+                                                        style: TextStyle(
+                                                          fontSize: 13,
+                                                          color:
+                                                              Colors.grey[700],
                                                         ),
+                                                      ),
                                                     ],
                                                   ),
                                                 ),
-                                              ),
-                                            if (pickingState != 'cancel' &&
-                                                pickingState != 'done')
-                                              Padding(
-                                                padding: const EdgeInsets.only(
-                                                    top: 16),
-                                                child: Column(
-                                                  crossAxisAlignment:
-                                                      CrossAxisAlignment.start,
-                                                  children: [
-                                                    Row(
-                                                      mainAxisAlignment:
-                                                          MainAxisAlignment
-                                                              .spaceBetween,
-                                                      children: [
-                                                        Text(
-                                                          'Picking Progress',
-                                                          style: TextStyle(
-                                                            fontWeight:
-                                                                FontWeight.w600,
-                                                            fontSize: 14,
-                                                            color: Colors
-                                                                .grey[800],
-                                                          ),
-                                                        ),
-                                                        Container(
-                                                          padding:
-                                                              const EdgeInsets
-                                                                  .symmetric(
-                                                                  horizontal: 8,
-                                                                  vertical: 4),
-                                                          decoration:
-                                                              BoxDecoration(
-                                                            color: progress ==
-                                                                    1.0
-                                                                ? Colors.green
-                                                                    .withOpacity(
-                                                                        0.1)
-                                                                : Colors.blue
-                                                                    .withOpacity(
-                                                                        0.1),
-                                                            borderRadius:
-                                                                BorderRadius
-                                                                    .circular(
-                                                                        8),
-                                                            border: Border.all(
-                                                              color: progress ==
-                                                                      1.0
-                                                                  ? Colors.green
-                                                                  : Colors.blue,
-                                                              width: 1,
-                                                            ),
-                                                          ),
-                                                          child: Text(
-                                                            '${(progress * 100).toInt()}% Complete',
-                                                            style: TextStyle(
-                                                              fontSize: 12,
-                                                              fontWeight:
-                                                                  FontWeight
-                                                                      .bold,
-                                                              color: progress ==
-                                                                      1.0
-                                                                  ? Colors.green
-                                                                  : Colors.blue,
-                                                            ),
-                                                          ),
-                                                        ),
-                                                      ],
-                                                    ),
-                                                    const SizedBox(height: 8),
-                                                    Text(
-                                                      'Picked: ${picked.toStringAsFixed(0)} / ${ordered.toStringAsFixed(0)} items',
-                                                      style: TextStyle(
-                                                          fontSize: 13,
-                                                          color:
-                                                              Colors.grey[700]),
-                                                    ),
-                                                  ],
-                                                ),
-                                              ),
-                                            if (pickingState != 'cancel')
-                                              Padding(
-                                                padding: const EdgeInsets.only(
-                                                    top: 16),
-                                                child: Row(
-                                                  children: [
-                                                    Expanded(
-                                                      child:
-                                                          ElevatedButton.icon(
-                                                        icon: const Icon(
-                                                          Icons.visibility,
-                                                          size: 18,
-                                                          color: Colors.white,
-                                                        ),
-                                                        label: const Text(
-                                                            'View Details'),
-                                                        onPressed: () {
-                                                          Navigator.push(
-                                                            context,
-                                                            SlidingPageTransitionRL(
-                                                              page:
-                                                                  DeliveryDetailsPage(
-                                                                pickingData:
-                                                                    picking,
-                                                                provider:
-                                                                    provider,
-                                                              ),
-                                                            ),
-                                                          );
-                                                        },
-                                                        style: ElevatedButton
-                                                            .styleFrom(
-                                                          backgroundColor:
-                                                              primaryColor,
-                                                          foregroundColor:
-                                                              Colors.white,
-                                                          elevation: 0,
-                                                          padding:
-                                                              const EdgeInsets
-                                                                  .symmetric(
-                                                                  vertical: 12),
-                                                          shape:
-                                                              RoundedRectangleBorder(
-                                                            borderRadius:
-                                                                BorderRadius
-                                                                    .circular(
-                                                                        8),
-                                                          ),
-                                                        ),
-                                                      ),
-                                                    ),
-                                                    if (pickingState !=
-                                                        'done') ...[
-                                                      const SizedBox(width: 12),
+                                              if (pickingState != 'cancel')
+                                                Padding(
+                                                  padding:
+                                                      const EdgeInsets.only(
+                                                          top: 16),
+                                                  child: Row(
+                                                    children: [
                                                       Expanded(
                                                         child:
                                                             ElevatedButton.icon(
-                                                          icon: Icon(
-                                                            isFullyPicked
-                                                                ? Icons.edit
-                                                                : Icons
-                                                                    .check_circle,
+                                                          icon: const Icon(
+                                                            Icons.visibility,
                                                             size: 18,
                                                             color: Colors.white,
                                                           ),
-                                                          label: Text(
-                                                            isFullyPicked
-                                                                ? 'Edit Picking'
-                                                                : 'Pick Products',
-                                                          ),
-                                                          onPressed: () async {
-                                                            final result =
-                                                                await Navigator
-                                                                    .push(
+                                                          label: const Text(
+                                                              'View Details'),
+                                                          onPressed: () {
+                                                            Navigator.push(
                                                               context,
                                                               SlidingPageTransitionRL(
                                                                 page:
-                                                                    PickingPage(
-                                                                  picking:
+                                                                    DeliveryDetailsPage(
+                                                                  pickingData:
                                                                       picking,
-                                                                  warehouseId:
-                                                                      warehouseId,
                                                                   provider:
-                                                                      dataProvider,
+                                                                      provider,
                                                                 ),
                                                               ),
                                                             );
-                                                            if (result ==
-                                                                    true &&
-                                                                mounted) {
-                                                              await provider
-                                                                  .fetchOrderDetails();
-                                                              if (mounted) {
-                                                                await _handleBackorder(
-                                                                    picking);
-                                                                final allDone =
-                                                                    pickings.every((p) =>
-                                                                        p['state'] ==
-                                                                        'done');
-                                                                if (allDone &&
-                                                                    mounted) {
-                                                                  // Navigator.push(
-                                                                  //   context,
-                                                                  //   SlidingPageTransitionRL(
-                                                                  //     page: DeliveryPage(
-                                                                  //       orderData: orderData,
-                                                                  //       provider: provider,
-                                                                  //     ),
-                                                                  //   ),
-                                                                  // );
-                                                                }
-                                                              }
-                                                            }
                                                           },
                                                           style: ElevatedButton
                                                               .styleFrom(
                                                             backgroundColor:
-                                                                isFullyPicked
-                                                                    ? Colors
-                                                                        .orange
-                                                                    : Colors
-                                                                        .green,
+                                                                primaryColor,
                                                             foregroundColor:
                                                                 Colors.white,
                                                             elevation: 0,
                                                             padding:
                                                                 const EdgeInsets
                                                                     .symmetric(
-                                                                    vertical:
-                                                                        12),
+                                                              vertical: 12,
+                                                            ),
                                                             shape:
                                                                 RoundedRectangleBorder(
                                                               borderRadius:
@@ -1503,15 +1543,109 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                                                           ),
                                                         ),
                                                       ),
+                                                      if (pickingState !=
+                                                          'done') ...[
+                                                        const SizedBox(
+                                                            width: 12),
+                                                        Expanded(
+                                                          child: ElevatedButton
+                                                              .icon(
+                                                            icon: Icon(
+                                                              isFullyPicked
+                                                                  ? Icons.edit
+                                                                  : Icons
+                                                                      .check_circle,
+                                                              size: 18,
+                                                              color:
+                                                                  Colors.white,
+                                                            ),
+                                                            label: Text(
+                                                              isFullyPicked
+                                                                  ? 'Edit Picking'
+                                                                  : 'Pick Products',
+                                                            ),
+                                                            onPressed:
+                                                                () async {
+                                                              final result =
+                                                                  await Navigator
+                                                                      .push(
+                                                                context,
+                                                                SlidingPageTransitionRL(
+                                                                  page:
+                                                                      PickingPage(
+                                                                    picking:
+                                                                        picking,
+                                                                    warehouseId:
+                                                                        warehouseId,
+                                                                    provider:
+                                                                        dataProvider,
+                                                                  ),
+                                                                ),
+                                                              );
+                                                              if (result ==
+                                                                      true &&
+                                                                  mounted) {
+                                                                await provider
+                                                                    .fetchOrderDetails();
+                                                                if (mounted) {
+                                                                  await _handleBackorder(
+                                                                      picking);
+                                                                  final allDone =
+                                                                      pickings.every((p) =>
+                                                                          p['state'] ==
+                                                                          'done');
+                                                                  if (allDone &&
+                                                                      mounted) {
+                                                                    // Navigator.push(
+                                                                    //   context,
+                                                                    //   SlidingPageTransitionRL(
+                                                                    //     page: DeliveryPage(
+                                                                    //       orderData: orderData,
+                                                                    //       provider: provider,
+                                                                    //     ),
+                                                                    //   ),
+                                                                    // );
+                                                                  }
+                                                                }
+                                                              }
+                                                            },
+                                                            style:
+                                                                ElevatedButton
+                                                                    .styleFrom(
+                                                              backgroundColor:
+                                                                  isFullyPicked
+                                                                      ? Colors
+                                                                          .orange
+                                                                      : Colors
+                                                                          .green,
+                                                              foregroundColor:
+                                                                  Colors.white,
+                                                              elevation: 0,
+                                                              padding:
+                                                                  const EdgeInsets
+                                                                      .symmetric(
+                                                                vertical: 12,
+                                                              ),
+                                                              shape:
+                                                                  RoundedRectangleBorder(
+                                                                borderRadius:
+                                                                    BorderRadius
+                                                                        .circular(
+                                                                            8),
+                                                              ),
+                                                            ),
+                                                          ),
+                                                        ),
+                                                      ],
                                                     ],
-                                                  ],
+                                                  ),
                                                 ),
-                                              ),
-                                          ],
-                                        );
-                                      },
-                                    ),
-                                  ),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                    );
+                                  },
                                 );
                               },
                             ),
@@ -1524,249 +1658,338 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                       await provider.fetchOrderDetails();
                     },
                     child: SingleChildScrollView(
+                      physics: const AlwaysScrollableScrollPhysics(),
                       padding: const EdgeInsets.all(16.0),
                       child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Invoices',
-                            style: TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.grey[800],
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Invoices',
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.grey[800],
+                              ),
                             ),
-                          ),
-                          const SizedBox(height: 12),
-                          if (invoices.isEmpty)
-                            Card(
-                              elevation: 1,
-                              child: Padding(
-                                padding: const EdgeInsets.all(16.0),
-                                child: Center(
-                                  child: Column(
-                                    children: [
-                                      Icon(Icons.receipt,
-                                          size: 48, color: Colors.grey[400]),
-                                      const SizedBox(height: 16),
-                                      Text(
-                                        'No invoices found',
-                                        style: TextStyle(
-                                          color: Colors.grey[600],
-                                          fontStyle: FontStyle.italic,
+                            const SizedBox(height: 12),
+                            if (invoices.isEmpty)
+                              Card(
+                                elevation: 1,
+                                child: Padding(
+                                  padding: const EdgeInsets.all(16.0),
+                                  child: Center(
+                                    child: Column(
+                                      children: [
+                                        Icon(Icons.receipt,
+                                            size: 48, color: Colors.grey[400]),
+                                        const SizedBox(height: 16),
+                                        Text(
+                                          'No invoices found',
+                                          style: TextStyle(
+                                            color: Colors.grey[600],
+                                            fontStyle: FontStyle.italic,
+                                          ),
                                         ),
-                                      ),
-                                      const SizedBox(height: 16),
-                                      !invoices.isEmpty
-                                          ? const CircularProgressIndicator()
-                                          : SizedBox(
-                                              width: double.infinity,
-                                              child: ElevatedButton.icon(
-                                                icon: const Icon(Icons.add,
-                                                    color: Colors.white),
-                                                label: const Text(
-                                                  'Create Draft Invoice',
-                                                  style: TextStyle(
+                                        const SizedBox(height: 16),
+                                        !invoices.isEmpty
+                                            ? const CircularProgressIndicator()
+                                            : SizedBox(
+                                                width: double.infinity,
+                                                child: ElevatedButton.icon(
+                                                  icon: const Icon(Icons.add,
                                                       color: Colors.white),
-                                                ),
-                                                onPressed: () async {
-                                                  await provider
-                                                      .createDraftInvoice(
-                                                          orderData['id']);
-                                                  ScaffoldMessenger.of(context)
-                                                      .showSnackBar(
-                                                    SnackBar(
-                                                        content: Text(
-                                                            'Draft invoice created')),
-                                                  );
-                                                },
-                                                style: ElevatedButton.styleFrom(
-                                                  backgroundColor:
-                                                      Theme.of(context)
-                                                          .primaryColor,
-                                                  shape: RoundedRectangleBorder(
-                                                    borderRadius:
-                                                        BorderRadius.circular(
-                                                            8),
+                                                  label: const Text(
+                                                    'Create Draft Invoice',
+                                                    style: TextStyle(
+                                                        color: Colors.white),
+                                                  ),
+                                                  onPressed: () async {
+                                                    Navigator.push(
+                                                      context,
+                                                      SlidingPageTransitionRL(
+                                                        page:
+                                                            InvoiceCreationPage(
+                                                                saleOrderData:
+                                                                    orderData),
+                                                      ),
+                                                    );
+                                                  },
+                                                  style:
+                                                      ElevatedButton.styleFrom(
+                                                    backgroundColor:
+                                                        Theme.of(context)
+                                                            .primaryColor,
+                                                    shape:
+                                                        RoundedRectangleBorder(
+                                                      borderRadius:
+                                                          BorderRadius.circular(
+                                                              8),
+                                                    ),
                                                   ),
                                                 ),
                                               ),
-                                            ),
-                                    ],
+                                      ],
+                                    ),
                                   ),
                                 ),
-                              ),
-                            )
-                          else
-                            ListView.builder(
-                              shrinkWrap: true,
-                              physics: const NeverScrollableScrollPhysics(),
-                              itemCount: invoices.length,
-                              itemBuilder: (context, index) {
-                                final invoice = invoices[index];
-                                final invoiceNumber = invoice['name'] != false
-                                    ? invoice['name'] as String
-                                    : 'Draft';
-                                final invoiceDate = invoice['invoice_date'] != false
-                                    ? DateTime.parse(invoice['invoice_date'] as String)
-                                    : null;
-                                final dueDate = invoice['invoice_date_due'] != false
-                                    ? DateTime.parse(invoice['invoice_date_due'] as String)
-                                    : null;
-                                final invoiceState = invoice['state'] as String;
-                                final invoiceAmount = invoice['amount_total'] as double;
-                                final amountResidual = invoice['amount_residual'] as double? ?? invoiceAmount;
-                                final isFullyPaid = amountResidual <= 0;
+                              )
+                            else
+                              Column(
+                                children: [
+                                  ListView.builder(
+                                    shrinkWrap: true,
+                                    physics:
+                                        const NeverScrollableScrollPhysics(),
+                                    itemCount: invoices.length,
+                                    itemBuilder: (context, index) {
+                                      final invoice = invoices[index];
+                                      final invoiceNumber =
+                                          invoice['name'] != false
+                                              ? invoice['name'] as String
+                                              : 'Draft';
+                                      final invoiceDate =
+                                          invoice['invoice_date'] != false
+                                              ? DateTime.parse(
+                                                  invoice['invoice_date']
+                                                      as String)
+                                              : null;
+                                      final dueDate =
+                                          invoice['invoice_date_due'] != false
+                                              ? DateTime.parse(
+                                                  invoice['invoice_date_due']
+                                                      as String)
+                                              : null;
+                                      final invoiceState =
+                                          invoice['state'] as String;
+                                      final invoiceAmount =
+                                          invoice['amount_total'] as double;
+                                      final amountResidual =
+                                          invoice['amount_residual']
+                                                  as double? ??
+                                              invoiceAmount;
+                                      final isFullyPaid = amountResidual <= 0;
 
-                                return Card(
-                                  elevation: 2,
-                                  margin: const EdgeInsets.only(bottom: 12),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                  child: Padding(
-                                    padding: const EdgeInsets.all(16.0),
-                                    child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        Row(
-                                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                          children: [
-                                            Text(
-                                              invoiceNumber,
-                                              style: const TextStyle(
-                                                fontWeight: FontWeight.bold,
-                                                fontSize: 16,
-                                              ),
-                                            ),
-                                            Container(
-                                              padding: const EdgeInsets.symmetric(
-                                                horizontal: 8,
-                                                vertical: 4,
-                                              ),
-                                              decoration: BoxDecoration(
-                                                color: provider
-                                                    .getInvoiceStatusColor(
-                                                    provider.formatInvoiceState(invoiceState, isFullyPaid))
-                                                    .withOpacity(0.1),
-                                                borderRadius: BorderRadius.circular(8),
-                                                border: Border.all(
-                                                  color: provider.getInvoiceStatusColor(
-                                                    provider.formatInvoiceState(invoiceState, isFullyPaid),
-                                                  ),
-                                                  width: 1,
-                                                ),
-                                              ),
-                                              child: Text(
-                                                provider.formatInvoiceState(invoiceState, isFullyPaid),
-                                                style: TextStyle(
-                                                  fontSize: 12,
-                                                  fontWeight: FontWeight.bold,
-                                                  color: provider.getInvoiceStatusColor(
-                                                    provider.formatInvoiceState(invoiceState, isFullyPaid),
-                                                  ),
-                                                ),
-                                              ),
-                                            ),
-                                          ],
+                                      // Debug print to verify state
+                                      debugPrint(
+                                          'Invoice $invoiceNumber: isFullyPaid=$isFullyPaid, amountResidual=$amountResidual, invoiceAmount=$invoiceAmount, state=$invoiceState');
+
+                                      return Card(
+                                        elevation: 2,
+                                        margin:
+                                            const EdgeInsets.only(bottom: 12),
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius:
+                                              BorderRadius.circular(12),
                                         ),
-                                        const SizedBox(height: 12),
-                                        if (invoiceDate != null)
-                                          _buildInfoRow(
-                                            Icons.calendar_today,
-                                            'Invoice Date',
-                                            DateFormat('yyyy-MM-dd').format(invoiceDate),
-                                          ),
-                                        if (dueDate != null)
-                                          _buildInfoRow(
-                                            Icons.event,
-                                            'Due Date',
-                                            DateFormat('yyyy-MM-dd').format(dueDate),
-                                          ),
-                                        const SizedBox(height: 8),
-                                        const Divider(),
-                                        const SizedBox(height: 8),
-                                        Row(
-                                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                          children: [
-                                            const Text(
-                                              'Total Amount:',
-                                              style: TextStyle(
-                                                fontSize: 14,
-                                                fontWeight: FontWeight.w500,
-                                              ),
-                                            ),
-                                            Text(
-                                              provider.currencyFormat.format(invoiceAmount),
-                                              style: const TextStyle(
-                                                fontSize: 16,
-                                                fontWeight: FontWeight.bold,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                        if (!isFullyPaid) ...[
-                                          const SizedBox(height: 8),
-                                          Row(
-                                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                        child: Padding(
+                                          padding: const EdgeInsets.all(16.0),
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
                                             children: [
-                                              const Text(
-                                                'Amount Due:',
-                                                style: TextStyle(
-                                                  fontSize: 14,
-                                                  fontWeight: FontWeight.w500,
-                                                ),
+                                              Row(
+                                                mainAxisAlignment:
+                                                    MainAxisAlignment
+                                                        .spaceBetween,
+                                                children: [
+                                                  Text(
+                                                    invoiceNumber,
+                                                    style: const TextStyle(
+                                                      fontWeight:
+                                                          FontWeight.bold,
+                                                      fontSize: 16,
+                                                    ),
+                                                  ),
+                                                  Container(
+                                                    padding: const EdgeInsets
+                                                        .symmetric(
+                                                        horizontal: 8,
+                                                        vertical: 4),
+                                                    decoration: BoxDecoration(
+                                                      color: provider
+                                                          .getInvoiceStatusColor(
+                                                              provider.formatInvoiceState(
+                                                                  invoiceState,
+                                                                  isFullyPaid,
+                                                                  amountResidual,
+                                                                  invoiceAmount))
+                                                          .withOpacity(0.1),
+                                                      borderRadius:
+                                                          BorderRadius.circular(
+                                                              8),
+                                                      border: Border.all(
+                                                        color: provider.getInvoiceStatusColor(
+                                                            provider.formatInvoiceState(
+                                                                invoiceState,
+                                                                isFullyPaid,
+                                                                amountResidual,
+                                                                invoiceAmount)),
+                                                        width: 1,
+                                                      ),
+                                                    ),
+                                                    child: Text(
+                                                      provider
+                                                          .formatInvoiceState(
+                                                              invoiceState,
+                                                              isFullyPaid,
+                                                              amountResidual,
+                                                              invoiceAmount),
+                                                      style: TextStyle(
+                                                        fontSize: 12,
+                                                        fontWeight:
+                                                            FontWeight.bold,
+                                                        color: provider.getInvoiceStatusColor(
+                                                            provider.formatInvoiceState(
+                                                                invoiceState,
+                                                                isFullyPaid,
+                                                                amountResidual,
+                                                                invoiceAmount)),
+                                                      ),
+                                                    ),
+                                                  ),
+                                                ],
                                               ),
-                                              Text(
-                                                provider.currencyFormat.format(amountResidual),
-                                                style: TextStyle(
-                                                  fontSize: 14,
-                                                  fontWeight: FontWeight.bold,
-                                                  color: Colors.red[700],
+                                              // Rest of the UI remains unchanged
+                                              if (invoiceDate != null)
+                                                _buildInfoRow(
+                                                  Icons.calendar_today,
+                                                  'Invoice Date',
+                                                  DateFormat('yyyy-MM-dd')
+                                                      .format(invoiceDate),
+                                                ),
+                                              if (dueDate != null)
+                                                _buildInfoRow(
+                                                  Icons.event,
+                                                  'Due Date',
+                                                  DateFormat('yyyy-MM-dd')
+                                                      .format(dueDate),
+                                                ),
+                                              const SizedBox(height: 8),
+                                              const Divider(),
+                                              const SizedBox(height: 8),
+                                              Row(
+                                                mainAxisAlignment:
+                                                    MainAxisAlignment
+                                                        .spaceBetween,
+                                                children: [
+                                                  const Text(
+                                                    'Total Amount:',
+                                                    style: TextStyle(
+                                                      fontSize: 14,
+                                                      fontWeight:
+                                                          FontWeight.w500,
+                                                    ),
+                                                  ),
+                                                  Text(
+                                                    provider.currencyFormat
+                                                        .format(invoiceAmount),
+                                                    style: const TextStyle(
+                                                      fontSize: 16,
+                                                      fontWeight:
+                                                          FontWeight.bold,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                              if (!isFullyPaid) ...[
+                                                const SizedBox(height: 8),
+                                                Row(
+                                                  mainAxisAlignment:
+                                                      MainAxisAlignment
+                                                          .spaceBetween,
+                                                  children: [
+                                                    const Text(
+                                                      'Amount Due:',
+                                                      style: TextStyle(
+                                                        fontSize: 14,
+                                                        fontWeight:
+                                                            FontWeight.w500,
+                                                      ),
+                                                    ),
+                                                    Text(
+                                                      provider.currencyFormat
+                                                          .format(
+                                                              amountResidual),
+                                                      style: TextStyle(
+                                                        fontSize: 14,
+                                                        fontWeight:
+                                                            FontWeight.bold,
+                                                        color: Colors.red[700],
+                                                      ),
+                                                    ),
+                                                  ],
+                                                ),
+                                              ],
+                                              const SizedBox(height: 12),
+                                              SizedBox(
+                                                width: double.infinity,
+                                                child: ElevatedButton.icon(
+                                                  icon: const Icon(
+                                                      Icons.visibility,
+                                                      color: Colors.white),
+                                                  label: const Text(
+                                                    'View Invoice',
+                                                    style: TextStyle(
+                                                        color: Colors.white),
+                                                  ),
+                                                  onPressed: () {
+                                                    debugPrint(
+                                                        'Navigating to InvoiceDetailsPage with invoice: $invoice');
+                                                    Navigator.push(
+                                                      context,
+                                                      SlidingPageTransitionRL(
+                                                        page:
+                                                            InvoiceDetailsPage(
+                                                          invoiceId:
+                                                              invoice['id']
+                                                                  .toString(),
+                                                        ),
+                                                      ),
+                                                    );
+                                                  },
+                                                  style:
+                                                      ElevatedButton.styleFrom(
+                                                    backgroundColor:
+                                                        Theme.of(context)
+                                                            .primaryColor,
+                                                    shape:
+                                                        RoundedRectangleBorder(
+                                                      borderRadius:
+                                                          BorderRadius.circular(
+                                                              8),
+                                                    ),
+                                                  ),
                                                 ),
                                               ),
                                             ],
                                           ),
-                                        ],
-                                        const SizedBox(height: 12),
-                                        SizedBox(
-                                          width: double.infinity,
-                                          child: ElevatedButton.icon(
-                                            icon: const Icon(Icons.visibility, color: Colors.white),
-                                            label: const Text(
-                                              'View Invoice',
-                                              style: TextStyle(color: Colors.white),
-                                            ),
-                                            onPressed: () {
-                                              debugPrint(
-                                                  'Navigating to InvoiceDetailsPage with invoice from sale order details page: $invoice');
-
-                                              Navigator.push(
-                                                context,
-                                                SlidingPageTransitionRL(
-                                                  page: InvoiceDetailsPage(
-                                                    invoiceId: invoice['id'].toString(),
-                                                  ),
-                                                ),
-                                              );
-                                            },
-                                            style: ElevatedButton.styleFrom(
-                                              backgroundColor: Theme.of(context).primaryColor,
-                                              shape: RoundedRectangleBorder(
-                                                borderRadius: BorderRadius.circular(8),
-                                              ),
-                                            ),
-                                          ),
                                         ),
-                                      ],
-                                    ),
+                                      );
+                                    },
                                   ),
-                                );
-                              },
-                            ),
-                        ],
-                      ),
+                                  IconButton(
+                                    icon: Text(
+                                      'Create Another Invoice',
+                                      style: TextStyle(
+                                          color: primaryColor,
+                                          fontSize: 15,
+                                          fontWeight: FontWeight.bold),
+                                    ),
+                                    onPressed: () {
+                                      Navigator.push(
+                                        context,
+                                        SlidingPageTransitionRL(
+                                          page: InvoiceCreationPage(
+                                              saleOrderData: orderData),
+                                        ),
+                                      );
+                                    },
+                                  )
+                                ],
+                              ),
+                          ]),
                     ),
-                  )
+                  ),
                 ],
               ),
             ),

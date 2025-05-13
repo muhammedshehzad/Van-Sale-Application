@@ -131,13 +131,14 @@ class _SaleOrderPageState extends State<SaleOrderPage> {
           product: product,
           quantity: quantity,
           selectedAttributes: selectedAttributes,
+          fixedSubtotal: product.price * quantity,
         );
       }).toList();
 
-      // Log successful order
+
       log('Order $_invoiceNumber created: ${items.length} products, total: $totalAmount, payment: $_paymentMethod');
 
-      // Navigate to OrderConfirmationPage with actual data
+
       Navigator.push(
         context,
         MaterialPageRoute(
@@ -161,7 +162,7 @@ class _SaleOrderPageState extends State<SaleOrderPage> {
         ),
       );
     }
-  } // Calculate current discounts and savings
+  }
 
   Map<String, dynamic> _calculateSavings() {
     double originalTotal = 0;

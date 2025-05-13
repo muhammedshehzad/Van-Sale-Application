@@ -224,33 +224,33 @@ class InvoiceProvider extends ChangeNotifier {
     }
   }
 
-  String formatInvoiceState(String state, bool isPaid) {
-    if (isPaid && state != 'draft' && state != 'cancel') {
-      return 'PAID';
+  String formatInvoiceState(String state, bool isFullyPaid, double amountResidual, double invoiceAmount) {
+    if (isFullyPaid) {
+      return 'Paid';
+    } else if (state.toLowerCase() == 'posted' && amountResidual > 0 && amountResidual < invoiceAmount) {
+      return 'Partially Paid';
+    } else if (state.toLowerCase() == 'posted' && amountResidual == invoiceAmount) {
+      return 'Posted';
+    } else if (state.toLowerCase() == 'draft') {
+      return 'Draft';
+    } else if (state.toLowerCase() == 'open') {
+      return 'Due';
+    } else {
+      return state;
     }
-    switch (state.toLowerCase()) {
-      case 'draft':
-        return 'DRAFT';
-      case 'posted':
-        return 'POSTED';
-      case 'cancel':
-        return 'CANCELLED';
-      default:
-        return state.toUpperCase();
-    }
-  }
-
-  Color getInvoiceStatusColor(String status) {
-    if (status.contains('PAID') || status.contains('Fully Invoiced')) {
+  }  Color getInvoiceStatusColor(String status) {
+    final lowerStatus = status.toLowerCase();
+    if (lowerStatus.contains('paid') || lowerStatus.contains('fully invoiced')) {
       return Colors.green;
-    } else if (status.contains('Partially')) {
+    } else if (lowerStatus.contains('partially paid')) {
       return Colors.amber;
-    } else if (status.contains('DRAFT')) {
+    } else if (lowerStatus.contains('posted')) {
+      return Colors.blue;
+    } else if (lowerStatus.contains('draft')) {
       return Colors.grey;
-    } else if (status.contains('Due') || status.contains('POSTED')) {
+    } else if (lowerStatus.contains('due')) {
       return Colors.orange;
     } else {
       return Colors.grey[700]!;
     }
-  }
-}
+  }}

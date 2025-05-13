@@ -8,6 +8,7 @@ import 'payment_page.dart';
 
 class InvoiceDetailsPage extends StatefulWidget {
   final String invoiceId;
+
   const InvoiceDetailsPage({
     Key? key,
     required this.invoiceId,
@@ -21,10 +22,12 @@ class _InvoiceDetailsPageState extends State<InvoiceDetailsPage> {
   @override
   void initState() {
     super.initState();
-    debugPrint('InvoiceDetailsPage: Initializing with invoiceId = ${widget.invoiceId}');
+    debugPrint(
+        'InvoiceDetailsPage: Initializing with invoiceId = ${widget.invoiceId}');
     // Reset provider state on page load to avoid showing previous invoice data
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      final provider = Provider.of<InvoiceDetailsProvider>(context, listen: false);
+      final provider =
+      Provider.of<InvoiceDetailsProvider>(context, listen: false);
       // Clear previous data before fetching new data
       provider.resetState();
 
@@ -58,11 +61,11 @@ class _InvoiceDetailsPageState extends State<InvoiceDetailsPage> {
             backgroundColor: const Color(0xFFA12424),
             actions: [
               IconButton(
-                icon: const Icon(Icons.print, color: Colors.white),
+                icon: const Icon(Icons.share, color: Colors.white),
                 onPressed: provider.isLoading
                     ? null
                     : () => provider.generateAndSharePdf(context),
-                tooltip: 'Print PDF',
+                tooltip: 'Share PDF',
               ),
             ],
           ),
@@ -83,30 +86,32 @@ class _InvoiceDetailsPageState extends State<InvoiceDetailsPage> {
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(16.0),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.error_outline, size: 48, color: Colors.red[300]),
-            const SizedBox(height: 16),
-            Text(
-              provider.errorMessage,
-              style: TextStyle(color: Colors.red[700], fontSize: 16),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 24),
-            ElevatedButton(
-              onPressed: () {
-                print('${provider.errorMessage} Retry button pressed');
-                provider.fetchInvoiceDetails(widget.invoiceId);
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFFA12424),
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(8)),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.error_outline, size: 48, color: Colors.red[300]),
+              const SizedBox(height: 16),
+              Text(
+                provider.errorMessage,
+                style: TextStyle(color: Colors.red[700], fontSize: 16),
+                textAlign: TextAlign.center,
               ),
-              child: const Text('Retry', style: TextStyle(color: Colors.white)),
-            ),
-          ],
+              const SizedBox(height: 24),
+              ElevatedButton(
+                onPressed: () {
+                  print('${provider.errorMessage} Retry button pressed');
+                  provider.fetchInvoiceDetails(widget.invoiceId);
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFFA12424),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8)),
+                ),
+                child: const Text('Retry', style: TextStyle(color: Colors.white)),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -139,8 +144,7 @@ class _InvoiceDetailsPageState extends State<InvoiceDetailsPage> {
             const SizedBox(height: 20),
             _buildPricingSummary(provider),
             // Action Buttons
-            if (_invoiceDataIsValid(provider.invoiceData) &&
-                provider.invoiceState != 'draft') ...[
+            if (_invoiceDataIsValid(provider.invoiceData)) ...[
               const SizedBox(height: 24),
               _buildActionButtons(provider),
             ],
@@ -593,73 +597,112 @@ class _InvoiceDetailsPageState extends State<InvoiceDetailsPage> {
   }
 
   Widget _buildActionButtons(InvoiceDetailsProvider provider) {
-    return Row(
-      children: [
-        Expanded(
-          child: ElevatedButton.icon(
-            icon: const Icon(Icons.download_rounded, color: Colors.white),
-            label: const Text('Download PDF'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.blue[800],
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(vertical: 12),
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8)),
+    return Center(
+      child: Container(
+        constraints: const BoxConstraints(maxWidth: 600),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Download PDF Button
+            ElevatedButton.icon(
+              icon: const Icon(Icons.download_rounded, color: Colors.white),
+              label: const Text('Download PDF'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.blue[800],
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8)),
+              ),
+              onPressed: () => provider.generateAndSharePdf(context),
             ),
-            onPressed: () => provider.generateAndSharePdf(context),
-          ),
+            const SizedBox(height: 12),
+
+            // Record Payment Button (for non-draft invoices)
+            if (provider.invoiceState != 'draft')
+              ElevatedButton.icon(
+                icon: const Icon(Icons.payment, color: Colors.white),
+                label: const Text('Record Payment'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: provider.isFullyPaid
+                      ? Colors.grey[400]
+                      : const Color(0xFFA12424),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8)),
+                ),
+                onPressed: provider.isFullyPaid
+                    ? null
+                    : () async {
+                  debugPrint('Record Payment button pressed');
+                  try {
+                    final result = await Navigator.push(
+                      context,
+                      SlidingPageTransitionRL(
+                        page: PaymentPage(invoiceData: provider.invoiceData),
+                      ),
+                    );
+                    debugPrint('PaymentPage result: $result');
+                    if (result is Map<dynamic, dynamic>) {
+                      provider.updateInvoiceData(
+                          Map<String, dynamic>.from(result));
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Payment recorded successfully'),
+                          backgroundColor: Colors.green,
+                        ),
+                      );
+                    }
+                  } catch (e) {
+                    debugPrint('Navigation error: $e');
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Error: $e'),
+                        backgroundColor: Colors.red,
+                      ),
+                    );
+                  }
+                },
+              ),
+
+            // Validate Invoice Button (for draft invoices)
+            if (provider.invoiceState == 'draft')
+              ElevatedButton.icon(
+                icon: const Icon(Icons.check_circle, color: Colors.white),
+                label: const Text('Validate Invoice'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.green[700],
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8)),
+                ),
+                onPressed: () async {
+                  debugPrint('Validate Invoice button pressed');
+                  final success = await provider.postInvoice(widget.invoiceId);
+                  if (success) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Invoice validated successfully'),
+                        backgroundColor: Colors.green,
+                      ),
+                    );
+                  } else {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(provider.errorMessage),
+                        backgroundColor: Colors.red,
+                      ),
+                    );
+                  }
+                },
+              ),
+          ],
         ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: ElevatedButton.icon(
-            icon: const Icon(Icons.payment, color: Colors.white),
-            label: const Text('Record Payment'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: provider.isFullyPaid
-                  ? Colors.grey[400]
-                  : const Color(0xFFA12424),
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(vertical: 12),
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8)),
-            ),
-            onPressed: provider.isFullyPaid
-                ? null
-                : () async {
-              debugPrint('Record Payment button pressed');
-              try {
-                final result = await Navigator.push(
-                  context,
-                  SlidingPageTransitionRL(
-                    page: PaymentPage(invoiceData: provider.invoiceData),
-                  ),
-                );
-                debugPrint('PaymentPage result: $result');
-                if (result is Map<dynamic, dynamic>) {
-                  provider.updateInvoiceData(Map<String, dynamic>.from(result));
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Payment recorded successfully'),
-                      backgroundColor: Colors.green,
-                    ),
-                  );
-                }
-              } catch (e) {
-                debugPrint('Navigation error: $e');
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text('Error: $e'),
-                    backgroundColor: Colors.red,
-                  ),
-                );
-              }
-            },
-          ),
-        ),
-      ],
+      ),
     );
   }
-
   bool _invoiceDataIsValid(Map? invoiceData) {
     if (invoiceData == null || invoiceData.isEmpty) return false;
     return invoiceData.containsKey('id') && invoiceData.containsKey('state');

@@ -1650,20 +1650,21 @@ class SaleOrderDetailProvider extends ChangeNotifier {
   }
 
   Color getInvoiceStatusColor(String status) {
-    if (status.contains('Paid') || status.contains('Fully Invoiced')) {
-      return Colors.green;
-    } else if (status.contains('Partially')) {
-      return Colors.amber;
-    } else if (status.contains('Draft')) {
-      return Colors.grey;
-    } else if (status.contains('Due') || status.contains('To Invoice')) {
-      return Colors.orange;
+    final lowerStatus = status.toLowerCase();
+    if (lowerStatus.contains('paid') || lowerStatus.contains('fully invoiced')) {
+      return Colors.green; // Fully paid or fully invoiced
+    } else if (lowerStatus.contains('partially paid')) {
+      return Colors.amber; // Partially paid
+    } else if (lowerStatus.contains('posted')) {
+      return Colors.blue; // Posted but no payments
+    } else if (lowerStatus.contains('draft')) {
+      return Colors.grey; // Draft
+    } else if (lowerStatus.contains('due') || lowerStatus.contains('to invoice')) {
+      return Colors.orange; // Due or to invoice
     } else {
-      return Colors.grey[700]!;
+      return Colors.grey[700]!; // Fallback
     }
-  }
-
-  Color getPickingStatusColor(String state) {
+  }  Color getPickingStatusColor(String state) {
     switch (state.toLowerCase()) {
       case 'done':
         return Colors.green;
@@ -1699,23 +1700,21 @@ class SaleOrderDetailProvider extends ChangeNotifier {
     }
   }
 
-  String formatInvoiceState(String state, bool isPaid) {
-    if (isPaid && state != 'draft' && state != 'cancel') {
-      return 'PAID';
+  String formatInvoiceState(String state, bool isFullyPaid, double amountResidual, double invoiceAmount) {
+    if (isFullyPaid) {
+      return 'Paid'; // Fully paid
+    } else if (state.toLowerCase() == 'posted' && amountResidual > 0 && amountResidual < invoiceAmount) {
+      return 'Partially Paid'; // Partial payment made
+    } else if (state.toLowerCase() == 'posted' && amountResidual == invoiceAmount) {
+      return 'Posted'; // Posted but no payments
+    } else if (state.toLowerCase() == 'draft') {
+      return 'Draft'; // Draft
+    } else if (state.toLowerCase() == 'open') {
+      return 'Due'; // Due
+    } else {
+      return state; // Fallback to raw state
     }
-
-    switch (state.toLowerCase()) {
-      case 'draft':
-        return 'DRAFT';
-      case 'posted':
-        return 'POSTED';
-      case 'cancel':
-        return 'CANCELLED';
-      default:
-        return state.toUpperCase();
-    }
-  }
-}
+  }}
 
 extension SaleOrderDetailProviderNew on SaleOrderDetailProvider {
   Future<void> fetchOrderDetails(int orderId) async {

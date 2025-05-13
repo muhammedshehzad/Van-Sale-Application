@@ -6,8 +6,8 @@ import 'package:provider/provider.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
-import '../../providers/sale_order_provider.dart'; // Adjust import based on your project structure
-import 'dart:developer' as developer; // Added for logging
+import '../../providers/sale_order_provider.dart';
+import 'dart:developer' as developer;
 
 class OrderConfirmationPage extends StatelessWidget {
   final String orderId;
@@ -17,7 +17,11 @@ class OrderConfirmationPage extends StatelessWidget {
   final String? paymentMethod;
   final String? orderNotes;
   final DateTime orderDate;
-  final double shippingCost; // Added shippingCost
+  final double shippingCost;
+  final String? customerReference; // Added
+  final DateTime? deliveryDate; // Added
+  final double discountPercentage; // Added
+  final double discountAmount; // Added
 
   OrderConfirmationPage({
     Key? key,
@@ -28,38 +32,42 @@ class OrderConfirmationPage extends StatelessWidget {
     this.paymentMethod,
     this.orderNotes,
     DateTime? orderDate,
-    required this.shippingCost, // Added shippingCost
+    required this.shippingCost,
+    this.customerReference,
+    this.deliveryDate,
+    this.discountPercentage = 0.0,
+    this.discountAmount = 0.0,
   })  : orderDate = orderDate ?? DateTime.now(),
         super(key: key);
 
   @override
   Widget build(BuildContext context) {
-    // Log passed data for debugging
     developer.log('OrderConfirmationPage passed data:');
     developer.log('  orderId: $orderId');
-    developer.log('  items: ${items.map((item) => "${item.product.name} (Qty: ${item.quantity}, Subtotal: ${item.subtotal})").toList()}');
+    developer.log(
+        '  items: ${items.map((item) => "${item.product.name} (Qty: ${item.quantity}, Subtotal: ${item.subtotal})").toList()}');
     developer.log('  totalAmount: $totalAmount');
     developer.log('  customer: ${customer?.toString() ?? "null"}');
     developer.log('  paymentMethod: $paymentMethod');
     developer.log('  orderNotes: $orderNotes');
     developer.log('  orderDate: $orderDate');
     developer.log('  shippingCost: $shippingCost');
+    developer.log('  customerReference: $customerReference');
+    developer.log('  deliveryDate: $deliveryDate');
+    developer.log('  discountPercentage: $discountPercentage');
+    developer.log('  discountAmount: $discountAmount');
 
     final currencyFormat = NumberFormat.currency(symbol: '\$');
-    final salesOrderProvider = Provider.of<SalesOrderProvider>(context, listen: false);
+    final salesOrderProvider =
+        Provider.of<SalesOrderProvider>(context, listen: false);
     final primaryColor = Theme.of(context).primaryColor;
     final dateFormat = DateFormat('MMM dd, yyyy • hh:mm a');
-
-    // Calculate subtotal and tax
-    const taxRate = 0.07; // Example tax rate
-    final subtotal = totalAmount - shippingCost; // Subtract shippingCost
-    final tax = subtotal * taxRate;
-
-    // Estimated delivery date (example: 5 days from order date)
-    final estimatedDelivery = orderDate.add(const Duration(days: 5));
     final estimatedDeliveryFormat = DateFormat('MMM dd, yyyy');
 
-    // Format address
+    const taxRate = 0.07;
+    final subtotal = totalAmount - shippingCost;
+    final tax = (subtotal - discountAmount) * taxRate;
+
     final addressParts = <String>[];
     if (customer?.street != null && customer!.street!.isNotEmpty) {
       addressParts.add(customer!.street!);
@@ -79,7 +87,8 @@ class OrderConfirmationPage extends StatelessWidget {
     if (customer?.countryId != null && customer!.countryId!.isNotEmpty) {
       addressParts.add(customer!.countryId!);
     }
-    final formattedAddress = addressParts.isNotEmpty ? addressParts.join(', ') : null;
+    final formattedAddress =
+        addressParts.isNotEmpty ? addressParts.join(', ') : null;
 
     return Scaffold(
       appBar: AppBar(
@@ -101,7 +110,8 @@ class OrderConfirmationPage extends StatelessWidget {
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
                 color: Colors.white,
-                border: Border(bottom: BorderSide(color: Colors.grey[200]!, width: 1)),
+                border: Border(
+                    bottom: BorderSide(color: Colors.grey[200]!, width: 1)),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -114,7 +124,8 @@ class OrderConfirmationPage extends StatelessWidget {
                           color: Colors.green.withOpacity(0.1),
                           borderRadius: BorderRadius.circular(8),
                         ),
-                        child: const Icon(Icons.check_circle, color: Colors.green, size: 24),
+                        child: const Icon(Icons.check_circle,
+                            color: Colors.green, size: 24),
                       ),
                       const SizedBox(width: 12),
                       Expanded(
@@ -137,6 +148,18 @@ class OrderConfirmationPage extends StatelessWidget {
                                 color: Colors.grey[600],
                               ),
                             ),
+                            if (customerReference != null &&
+                                customerReference!.isNotEmpty)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 4),
+                                child: Text(
+                                  'Customer Ref: $customerReference',
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    color: Colors.grey[600],
+                                  ),
+                                ),
+                              ),
                             const SizedBox(height: 4),
                             Text(
                               'Status: Confirmed',
@@ -160,79 +183,79 @@ class OrderConfirmationPage extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Customer Information Section
                     _buildInfoSection(
                       title: 'Customer Information',
                       icon: Icons.person,
                       content: customer != null
                           ? Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            customer!.name,
-                            style: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                          if (customer!.email != null && customer!.email!.isNotEmpty)
-                            Padding(
-                              padding: const EdgeInsets.only(top: 8),
-                              child: Text(
-                                'Email: ${customer!.email}',
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  color: Colors.grey[700],
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  customer!.name,
+                                  style: const TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w500,
+                                  ),
                                 ),
-                              ),
-                            ),
-                          if (customer!.phone != null && customer!.phone!.isNotEmpty)
-                            Padding(
-                              padding: const EdgeInsets.only(top: 4),
-                              child: Text(
-                                'Phone: ${customer!.phone}',
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  color: Colors.grey[700],
-                                ),
-                              ),
+                                if (customer!.email != null &&
+                                    customer!.email!.isNotEmpty)
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 8),
+                                    child: Text(
+                                      'Email: ${customer!.email}',
+                                      style: TextStyle(
+                                        fontSize: 14,
+                                        color: Colors.grey[700],
+                                      ),
+                                    ),
+                                  ),
+                                if (customer!.phone != null &&
+                                    customer!.phone!.isNotEmpty)
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 4),
+                                    child: Text(
+                                      'Phone: ${customer!.phone}',
+                                      style: TextStyle(
+                                        fontSize: 14,
+                                        color: Colors.grey[700],
+                                      ),
+                                    ),
+                                  )
+                                else if (customer!.mobile != null &&
+                                    customer!.mobile!.isNotEmpty)
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 4),
+                                    child: Text(
+                                      'Mobile: ${customer!.mobile}',
+                                      style: TextStyle(
+                                        fontSize: 14,
+                                        color: Colors.grey[700],
+                                      ),
+                                    ),
+                                  ),
+                                if (customer!.vat != null &&
+                                    customer!.vat!.isNotEmpty)
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 4),
+                                    child: Text(
+                                      'VAT: ${customer!.vat}',
+                                      style: TextStyle(
+                                        fontSize: 14,
+                                        color: Colors.grey[700],
+                                      ),
+                                    ),
+                                  ),
+                              ],
                             )
-                          else if (customer!.mobile != null && customer!.mobile!.isNotEmpty)
-                            Padding(
-                              padding: const EdgeInsets.only(top: 4),
-                              child: Text(
-                                'Mobile: ${customer!.mobile}',
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  color: Colors.grey[700],
-                                ),
-                              ),
-                            ),
-                          if (customer!.vat != null && customer!.vat!.isNotEmpty)
-                            Padding(
-                              padding: const EdgeInsets.only(top: 4),
-                              child: Text(
-                                'VAT: ${customer!.vat}',
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  color: Colors.grey[700],
-                                ),
-                              ),
-                            ),
-                        ],
-                      )
                           : const Text(
-                        'No customer information available',
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: Colors.grey,
-                        ),
-                      ),
+                              'No customer information available',
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: Colors.grey,
+                              ),
+                            ),
                     ),
-
                     const SizedBox(height: 16),
-
-                    // Shipping Address Section
                     if (formattedAddress != null)
                       _buildInfoSection(
                         title: 'Shipping Address',
@@ -245,10 +268,7 @@ class OrderConfirmationPage extends StatelessWidget {
                           ),
                         ),
                       ),
-
                     const SizedBox(height: 16),
-
-                    // Payment Method Section
                     if (paymentMethod != null && paymentMethod!.isNotEmpty)
                       _buildInfoSection(
                         title: 'Payment Method',
@@ -267,16 +287,15 @@ class OrderConfirmationPage extends StatelessWidget {
                               '(${paymentMethod == 'Invoice' ? 'Pending' : 'Paid'})',
                               style: TextStyle(
                                 fontSize: 14,
-                                color: paymentMethod == 'Invoice' ? Colors.orange : Colors.green,
+                                color: paymentMethod == 'Invoice'
+                                    ? Colors.orange
+                                    : Colors.green,
                               ),
                             ),
                           ],
                         ),
                       ),
-
                     const SizedBox(height: 16),
-
-                    // Delivery Information Section
                     _buildInfoSection(
                       title: 'Delivery Information',
                       icon: Icons.local_shipping,
@@ -284,7 +303,7 @@ class OrderConfirmationPage extends StatelessWidget {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'Estimated Delivery: ${estimatedDeliveryFormat.format(estimatedDelivery)}',
+                            'Delivery Date: ${deliveryDate != null ? estimatedDeliveryFormat.format(deliveryDate!) : 'TBD'}',
                             style: TextStyle(
                               fontSize: 14,
                               color: Colors.grey[800],
@@ -304,10 +323,7 @@ class OrderConfirmationPage extends StatelessWidget {
                         ],
                       ),
                     ),
-
                     const SizedBox(height: 16),
-
-                    // Order Items Section
                     const Padding(
                       padding: EdgeInsets.only(left: 4, bottom: 8),
                       child: Text(
@@ -320,13 +336,14 @@ class OrderConfirmationPage extends StatelessWidget {
                       ),
                     ),
                     ...items.map(
-                          (item) => Container(
+                      (item) => Container(
                         margin: const EdgeInsets.only(bottom: 12),
                         padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
                           color: Colors.white,
                           borderRadius: BorderRadius.circular(10),
-                          border: Border.all(color: Colors.grey[200]!, width: 1),
+                          border:
+                              Border.all(color: Colors.grey[200]!, width: 1),
                           boxShadow: [
                             BoxShadow(
                               color: Colors.grey.withOpacity(0.1),
@@ -348,16 +365,23 @@ class OrderConfirmationPage extends StatelessWidget {
                               ),
                               child: ClipRRect(
                                 borderRadius: BorderRadius.circular(8),
-                                child: item.product.imageUrl != null && item.product.imageUrl!.isNotEmpty
+                                child: item.product.imageUrl != null &&
+                                        item.product.imageUrl!.isNotEmpty
                                     ? Image.network(
-                                  item.product.imageUrl!,
-                                  fit: BoxFit.cover,
-                                  errorBuilder: (context, error, stackTrace) => _buildImageFallback(),
-                                  loadingBuilder: (context, child, loadingProgress) {
-                                    if (loadingProgress == null) return child;
-                                    return const Center(child: CircularProgressIndicator(strokeWidth: 2));
-                                  },
-                                )
+                                        item.product.imageUrl!,
+                                        fit: BoxFit.cover,
+                                        errorBuilder:
+                                            (context, error, stackTrace) =>
+                                                _buildImageFallback(),
+                                        loadingBuilder:
+                                            (context, child, loadingProgress) {
+                                          if (loadingProgress == null)
+                                            return child;
+                                          return const Center(
+                                              child: CircularProgressIndicator(
+                                                  strokeWidth: 2));
+                                        },
+                                      )
                                     : _buildImageFallback(),
                               ),
                             ),
@@ -398,7 +422,8 @@ class OrderConfirmationPage extends StatelessWidget {
                                       ),
                                     ],
                                   ),
-                                  if (item.product.defaultCode != null && item.product.defaultCode!.isNotEmpty)
+                                  if (item.product.defaultCode != null &&
+                                      item.product.defaultCode!.isNotEmpty)
                                     Padding(
                                       padding: const EdgeInsets.only(top: 4),
                                       child: Text(
@@ -409,7 +434,8 @@ class OrderConfirmationPage extends StatelessWidget {
                                         ),
                                       ),
                                     ),
-                                  if (item.selectedAttributes != null && item.selectedAttributes!.isNotEmpty)
+                                  if (item.selectedAttributes != null &&
+                                      item.selectedAttributes!.isNotEmpty)
                                     Padding(
                                       padding: const EdgeInsets.only(top: 4),
                                       child: Text(
@@ -443,8 +469,6 @@ class OrderConfirmationPage extends StatelessWidget {
                         ),
                       ),
                     ),
-
-                    // Order Notes Section
                     if (orderNotes != null && orderNotes!.isNotEmpty)
                       Padding(
                         padding: const EdgeInsets.only(top: 16),
@@ -461,10 +485,7 @@ class OrderConfirmationPage extends StatelessWidget {
                           ),
                         ),
                       ),
-
                     const SizedBox(height: 20),
-
-                    // Order Summary Section
                     Container(
                       padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
@@ -492,7 +513,8 @@ class OrderConfirmationPage extends StatelessWidget {
                                 ),
                               ),
                               Text(
-                                currencyFormat.format(subtotal - tax),
+                                currencyFormat
+                                    .format(subtotal - tax - discountAmount),
                                 style: TextStyle(
                                   fontSize: 14,
                                   color: Colors.grey[800],
@@ -501,29 +523,56 @@ class OrderConfirmationPage extends StatelessWidget {
                               ),
                             ],
                           ),
-                          if (shippingCost > 0) ...[
-                            const SizedBox(height: 8),
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Text(
-                                  'Shipping Cost',
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    color: Colors.grey[700],
+                          if (discountAmount > 0)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 8),
+                              child: Row(
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Text(
+                                    'Discount (${discountPercentage.toStringAsFixed(1)}%)',
+                                    style: TextStyle(
+                                      fontSize: 14,
+                                      color: Colors.grey[700],
+                                    ),
                                   ),
-                                ),
-                                Text(
-                                  currencyFormat.format(shippingCost),
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    color: Colors.grey[800],
-                                    fontWeight: FontWeight.w500,
+                                  Text(
+                                    '-${currencyFormat.format(discountAmount)}',
+                                    style: TextStyle(
+                                      fontSize: 14,
+                                      color: Colors.red,
+                                      fontWeight: FontWeight.w500,
+                                    ),
                                   ),
-                                ),
-                              ],
+                                ],
+                              ),
                             ),
-                          ],
+                          if (shippingCost > 0)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 8),
+                              child: Row(
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Text(
+                                    'Shipping Cost',
+                                    style: TextStyle(
+                                      fontSize: 14,
+                                      color: Colors.grey[700],
+                                    ),
+                                  ),
+                                  Text(
+                                    currencyFormat.format(shippingCost),
+                                    style: TextStyle(
+                                      fontSize: 14,
+                                      color: Colors.grey[800],
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
                           const SizedBox(height: 8),
                           Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -554,7 +603,8 @@ class OrderConfirmationPage extends StatelessWidget {
                             children: [
                               Row(
                                 children: [
-                                  Icon(Icons.attach_money, color: primaryColor, size: 20),
+                                  Icon(Icons.attach_money,
+                                      color: primaryColor, size: 20),
                                   const SizedBox(width: 8),
                                   const Text(
                                     'Total',
@@ -587,7 +637,8 @@ class OrderConfirmationPage extends StatelessWidget {
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
                 color: Colors.white,
-                border: Border(top: BorderSide(color: Colors.grey[200]!, width: 1)),
+                border:
+                    Border(top: BorderSide(color: Colors.grey[200]!, width: 1)),
               ),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -605,7 +656,8 @@ class OrderConfirmationPage extends StatelessWidget {
                       ),
                       onPressed: () => _printReceipt(context),
                       style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 24, vertical: 12),
                         side: BorderSide(color: primaryColor),
                         foregroundColor: primaryColor,
                         shape: RoundedRectangleBorder(
@@ -621,22 +673,26 @@ class OrderConfirmationPage extends StatelessWidget {
                       style: ElevatedButton.styleFrom(
                         backgroundColor: primaryColor,
                         foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 24, vertical: 12),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(8),
                         ),
                       ),
                       onPressed: () {
-                        final syncManager = Provider.of<DataSyncManager>(context, listen: false);
+                        final syncManager = Provider.of<DataSyncManager>(
+                            context,
+                            listen: false);
                         salesOrderProvider.clearOrder();
                         salesOrderProvider.resetInventory();
                         salesOrderProvider.notifyOrderConfirmed();
                         Navigator.pushAndRemoveUntil(
                           context,
                           MaterialPageRoute(
-                            builder: (context) => MainPage(syncManager: syncManager),
+                            builder: (context) =>
+                                MainPage(syncManager: syncManager),
                           ),
-                              (route) => false,
+                          (route) => false,
                         );
                       },
                       child: const Text(
@@ -718,10 +774,9 @@ class OrderConfirmationPage extends StatelessWidget {
     final currencyFormat = NumberFormat.currency(symbol: '\$');
     final dateFormat = DateFormat('MMM dd, yyyy • hh:mm a');
     const taxRate = 0.07;
-    final subtotal = totalAmount - shippingCost; // Subtract shippingCost
-    final tax = subtotal * taxRate;
+    final subtotal = totalAmount - shippingCost;
+    final tax = (subtotal - discountAmount) * taxRate;
 
-    // Format address
     final addressParts = <String>[];
     if (customer?.street != null && customer!.street!.isNotEmpty) {
       addressParts.add(customer!.street!);
@@ -741,14 +796,13 @@ class OrderConfirmationPage extends StatelessWidget {
     if (customer?.countryId != null && customer!.countryId!.isNotEmpty) {
       addressParts.add(customer!.countryId!);
     }
-    final formattedAddress = addressParts.isNotEmpty ? addressParts.join(', ') : 'N/A';
+    final formattedAddress =
+        addressParts.isNotEmpty ? addressParts.join(', ') : 'N/A';
 
-    // Define colors for styling
     final primaryColor = PdfColor.fromHex('#A12424');
     final accentColor = PdfColor.fromHex('#F5F5F5');
     final borderColor = PdfColor.fromHex('#DDDDDD');
 
-    // Create PDF document with custom theme
     final pdf = pw.Document(
       theme: pw.ThemeData.withFont(
         base: pw.Font.helvetica(),
@@ -765,12 +819,12 @@ class OrderConfirmationPage extends StatelessWidget {
           return pw.Column(
             crossAxisAlignment: pw.CrossAxisAlignment.start,
             children: [
-              // Header Section with Logo and Company Info
               pw.Container(
                 padding: const pw.EdgeInsets.all(16),
                 decoration: pw.BoxDecoration(
                   color: primaryColor,
-                  borderRadius: const pw.BorderRadius.all(pw.Radius.circular(8)),
+                  borderRadius:
+                      const pw.BorderRadius.all(pw.Radius.circular(8)),
                 ),
                 child: pw.Row(
                   mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
@@ -794,6 +848,15 @@ class OrderConfirmationPage extends StatelessWidget {
                             fontSize: 14,
                           ),
                         ),
+                        if (customerReference != null &&
+                            customerReference!.isNotEmpty)
+                          pw.Text(
+                            'Customer Ref: $customerReference',
+                            style: pw.TextStyle(
+                              color: PdfColors.white,
+                              fontSize: 14,
+                            ),
+                          ),
                       ],
                     ),
                     pw.Column(
@@ -828,13 +891,12 @@ class OrderConfirmationPage extends StatelessWidget {
                 ),
               ),
               pw.SizedBox(height: 20),
-
-              // Date and Order Details
               pw.Container(
                 padding: const pw.EdgeInsets.all(12),
                 decoration: pw.BoxDecoration(
                   color: accentColor,
-                  borderRadius: const pw.BorderRadius.all(pw.Radius.circular(6)),
+                  borderRadius:
+                      const pw.BorderRadius.all(pw.Radius.circular(6)),
                 ),
                 child: pw.Row(
                   mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
@@ -859,18 +921,16 @@ class OrderConfirmationPage extends StatelessWidget {
                 ),
               ),
               pw.SizedBox(height: 20),
-
-              // Customer and Shipping Info - Two columns
               pw.Row(
                 crossAxisAlignment: pw.CrossAxisAlignment.start,
                 children: [
-                  // Customer Information
                   pw.Expanded(
                     child: pw.Container(
                       padding: const pw.EdgeInsets.all(12),
                       decoration: pw.BoxDecoration(
                         border: pw.Border.all(color: borderColor),
-                        borderRadius: const pw.BorderRadius.all(pw.Radius.circular(6)),
+                        borderRadius:
+                            const pw.BorderRadius.all(pw.Radius.circular(6)),
                       ),
                       child: pw.Column(
                         crossAxisAlignment: pw.CrossAxisAlignment.start,
@@ -915,22 +975,26 @@ class OrderConfirmationPage extends StatelessWidget {
                               fontWeight: pw.FontWeight.bold,
                             ),
                           ),
-                          if (customer?.email != null && customer!.email!.isNotEmpty)
+                          if (customer?.email != null &&
+                              customer!.email!.isNotEmpty)
                             pw.Text(
                               'Email: ${customer!.email}',
                               style: const pw.TextStyle(fontSize: 12),
                             ),
-                          if (customer?.phone != null && customer!.phone!.isNotEmpty)
+                          if (customer?.phone != null &&
+                              customer!.phone!.isNotEmpty)
                             pw.Text(
                               'Phone: ${customer!.phone}',
                               style: const pw.TextStyle(fontSize: 12),
                             )
-                          else if (customer?.mobile != null && customer!.mobile!.isNotEmpty)
+                          else if (customer?.mobile != null &&
+                              customer!.mobile!.isNotEmpty)
                             pw.Text(
                               'Mobile: ${customer!.mobile}',
                               style: const pw.TextStyle(fontSize: 12),
                             ),
-                          if (customer?.vat != null && customer!.vat!.isNotEmpty)
+                          if (customer?.vat != null &&
+                              customer!.vat!.isNotEmpty)
                             pw.Text(
                               'VAT: ${customer!.vat}',
                               style: const pw.TextStyle(fontSize: 12),
@@ -940,13 +1004,13 @@ class OrderConfirmationPage extends StatelessWidget {
                     ),
                   ),
                   pw.SizedBox(width: 12),
-                  // Shipping Address
                   pw.Expanded(
                     child: pw.Container(
                       padding: const pw.EdgeInsets.all(12),
                       decoration: pw.BoxDecoration(
                         border: pw.Border.all(color: borderColor),
-                        borderRadius: const pw.BorderRadius.all(pw.Radius.circular(6)),
+                        borderRadius:
+                            const pw.BorderRadius.all(pw.Radius.circular(6)),
                       ),
                       child: pw.Column(
                         crossAxisAlignment: pw.CrossAxisAlignment.start,
@@ -988,6 +1052,11 @@ class OrderConfirmationPage extends StatelessWidget {
                             formattedAddress,
                             style: const pw.TextStyle(fontSize: 12),
                           ),
+                          if (deliveryDate != null)
+                            pw.Text(
+                              'Delivery Date: ${dateFormat.format(deliveryDate!)}',
+                              style: const pw.TextStyle(fontSize: 12),
+                            ),
                         ],
                       ),
                     ),
@@ -995,8 +1064,6 @@ class OrderConfirmationPage extends StatelessWidget {
                 ],
               ),
               pw.SizedBox(height: 20),
-
-              // Order Items Table with better styling
               pw.Text(
                 'ORDER DETAILS',
                 style: pw.TextStyle(
@@ -1009,7 +1076,8 @@ class OrderConfirmationPage extends StatelessWidget {
               pw.Container(
                 decoration: pw.BoxDecoration(
                   border: pw.Border.all(color: borderColor),
-                  borderRadius: const pw.BorderRadius.all(pw.Radius.circular(6)),
+                  borderRadius:
+                      const pw.BorderRadius.all(pw.Radius.circular(6)),
                 ),
                 child: pw.Table(
                   border: null,
@@ -1020,7 +1088,6 @@ class OrderConfirmationPage extends StatelessWidget {
                     3: const pw.FlexColumnWidth(1.5),
                   },
                   children: [
-                    // Table Header
                     pw.TableRow(
                       decoration: pw.BoxDecoration(
                         color: primaryColor,
@@ -1073,11 +1140,12 @@ class OrderConfirmationPage extends StatelessWidget {
                         ),
                       ],
                     ),
-                    // Table Rows with Zebra Striping
                     ...List.generate(
                       items.length,
-                          (index) => pw.TableRow(
-                        decoration: index % 2 == 0 ? null : pw.BoxDecoration(color: accentColor),
+                      (index) => pw.TableRow(
+                        decoration: index % 2 == 0
+                            ? null
+                            : pw.BoxDecoration(color: accentColor),
                         children: [
                           pw.Padding(
                             padding: const pw.EdgeInsets.all(8),
@@ -1090,12 +1158,17 @@ class OrderConfirmationPage extends StatelessWidget {
                                     fontWeight: pw.FontWeight.bold,
                                   ),
                                 ),
-                                if (items[index].product.defaultCode != null && items[index].product.defaultCode!.isNotEmpty)
+                                if (items[index].product.defaultCode != null &&
+                                    items[index]
+                                        .product
+                                        .defaultCode!
+                                        .isNotEmpty)
                                   pw.Text(
                                     'SKU: ${items[index].product.defaultCode}',
                                     style: const pw.TextStyle(fontSize: 10),
                                   ),
-                                if (items[index].selectedAttributes != null && items[index].selectedAttributes!.isNotEmpty)
+                                if (items[index].selectedAttributes != null &&
+                                    items[index].selectedAttributes!.isNotEmpty)
                                   pw.Text(
                                     'Options: ${items[index].selectedAttributes!.entries.map((e) => '${e.key}: ${e.value}').join(', ')}',
                                     style: pw.TextStyle(
@@ -1135,14 +1208,13 @@ class OrderConfirmationPage extends StatelessWidget {
                 ),
               ),
               pw.SizedBox(height: 20),
-
-              // Order Notes if available
-              if (orderNotes != null && orderNotes!.isNotEmpty) ...[
+              if (orderNotes != null && orderNotes!.isNotEmpty)
                 pw.Container(
                   padding: const pw.EdgeInsets.all(12),
                   decoration: pw.BoxDecoration(
                     color: accentColor,
-                    borderRadius: const pw.BorderRadius.all(pw.Radius.circular(6)),
+                    borderRadius:
+                        const pw.BorderRadius.all(pw.Radius.circular(6)),
                     border: pw.Border.all(color: borderColor),
                   ),
                   child: pw.Column(
@@ -1167,10 +1239,8 @@ class OrderConfirmationPage extends StatelessWidget {
                     ],
                   ),
                 ),
+              if (orderNotes != null && orderNotes!.isNotEmpty)
                 pw.SizedBox(height: 20),
-              ],
-
-              // Order Summary with better styling
               pw.Row(
                 children: [
                   pw.Spacer(),
@@ -1179,27 +1249,45 @@ class OrderConfirmationPage extends StatelessWidget {
                       padding: const pw.EdgeInsets.all(12),
                       decoration: pw.BoxDecoration(
                         border: pw.Border.all(color: borderColor),
-                        borderRadius: const pw.BorderRadius.all(pw.Radius.circular(6)),
+                        borderRadius:
+                            const pw.BorderRadius.all(pw.Radius.circular(6)),
                       ),
                       child: pw.Column(
                         children: [
                           pw.Row(
-                            mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                            mainAxisAlignment:
+                                pw.MainAxisAlignment.spaceBetween,
                             children: [
                               pw.Text(
                                 'Subtotal',
                                 style: const pw.TextStyle(fontSize: 12),
                               ),
                               pw.Text(
-                                currencyFormat.format(subtotal - tax),
+                                currencyFormat
+                                    .format(subtotal - tax - discountAmount),
                                 style: const pw.TextStyle(fontSize: 12),
                               ),
                             ],
                           ),
-                          if (shippingCost > 0) ...[
-                            pw.SizedBox(height: 8),
+                          if (discountAmount > 0)
                             pw.Row(
-                              mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                              mainAxisAlignment:
+                                  pw.MainAxisAlignment.spaceBetween,
+                              children: [
+                                pw.Text(
+                                  'Discount (${discountPercentage.toStringAsFixed(1)}%)',
+                                  style: const pw.TextStyle(fontSize: 12),
+                                ),
+                                pw.Text(
+                                  '-${currencyFormat.format(discountAmount)}',
+                                  style: const pw.TextStyle(fontSize: 12),
+                                ),
+                              ],
+                            ),
+                          if (shippingCost > 0)
+                            pw.Row(
+                              mainAxisAlignment:
+                                  pw.MainAxisAlignment.spaceBetween,
                               children: [
                                 pw.Text(
                                   'Shipping Cost',
@@ -1211,10 +1299,10 @@ class OrderConfirmationPage extends StatelessWidget {
                                 ),
                               ],
                             ),
-                          ],
                           pw.SizedBox(height: 8),
                           pw.Row(
-                            mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                            mainAxisAlignment:
+                                pw.MainAxisAlignment.spaceBetween,
                             children: [
                               pw.Text(
                                 'Tax (7%)',
@@ -1228,7 +1316,8 @@ class OrderConfirmationPage extends StatelessWidget {
                           ),
                           pw.Divider(color: borderColor),
                           pw.Row(
-                            mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                            mainAxisAlignment:
+                                pw.MainAxisAlignment.spaceBetween,
                             children: [
                               pw.Text(
                                 'TOTAL',
@@ -1255,12 +1344,9 @@ class OrderConfirmationPage extends StatelessWidget {
                 ],
               ),
               pw.SizedBox(height: 20),
-
-              // Footer with signature space and thank you message
               pw.Row(
                 mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
                 children: [
-                  // Signature Area
                   pw.Column(
                     crossAxisAlignment: pw.CrossAxisAlignment.start,
                     children: [
@@ -1268,7 +1354,8 @@ class OrderConfirmationPage extends StatelessWidget {
                         width: 200,
                         height: 40,
                         decoration: pw.BoxDecoration(
-                          border: pw.Border(bottom: pw.BorderSide(color: borderColor)),
+                          border: pw.Border(
+                              bottom: pw.BorderSide(color: borderColor)),
                         ),
                       ),
                       pw.SizedBox(height: 4),
@@ -1278,12 +1365,12 @@ class OrderConfirmationPage extends StatelessWidget {
                       ),
                     ],
                   ),
-                  // Thank you message
                   pw.Container(
                     padding: const pw.EdgeInsets.all(12),
                     decoration: pw.BoxDecoration(
                       color: primaryColor,
-                      borderRadius: const pw.BorderRadius.all(pw.Radius.circular(6)),
+                      borderRadius:
+                          const pw.BorderRadius.all(pw.Radius.circular(6)),
                     ),
                     child: pw.Text(
                       'Thank you for your business!',
@@ -1303,7 +1390,6 @@ class OrderConfirmationPage extends StatelessWidget {
     );
 
     try {
-      // Print or share the PDF
       await Printing.layoutPdf(
         onLayout: (PdfPageFormat format) async => pdf.save(),
         name: 'receipt_$orderId.pdf',

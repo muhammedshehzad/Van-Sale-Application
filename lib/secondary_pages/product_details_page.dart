@@ -425,11 +425,22 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
                   children: [
                     GestureDetector(
                       onTap: () {
-                        if (_imageGallery.isNotEmpty) {
+                        if (_imageGallery.isNotEmpty &&
+                            (_imageGallery[0].startsWith('data:image') ||
+                                !_imageGallery[0]
+                                    .startsWith('https://placeholder.com/'))) {
                           Navigator.push(
                             context,
                             SlidingPageTransitionRL(
                               page: PhotoViewer(imageUrl: _imageGallery[0]),
+                            ),
+                          );
+                        } else {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content:
+                                  Text('No image available for this product'),
+                              duration: Duration(seconds: 2),
                             ),
                           );
                         }

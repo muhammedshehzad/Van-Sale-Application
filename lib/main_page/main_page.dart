@@ -645,40 +645,56 @@ class _MainPageState extends State<MainPage> with TickerProviderStateMixin {
     final screenHeight = MediaQuery.of(context).size.height;
     final isSmallScreen = screenWidth < 360;
 
-    return BottomAppBar(
-      shape: const CircularNotchedRectangle(),
-      notchMargin: 6.0,
-      color: Colors.white,
-      elevation: 10,
-      child: Container(
-        height: screenHeight * 0.08,
-        padding: EdgeInsets.symmetric(horizontal: screenWidth * 0.04),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            // Left side
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                buildNavItem(0, Icons.dashboard,
-                    isSmallScreen ? null : 'Dashboard', screenWidth),
-                SizedBox(width: screenWidth * 0.02),
-                buildNavItem(1, Icons.inventory,
-                    isSmallScreen ? null : 'Products', screenWidth),
-              ],
-            ),
-            // Right side
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                buildNavItem(2, Icons.assignment,
-                    isSmallScreen ? null : 'Orders', screenWidth),
-                SizedBox(width: screenWidth * 0.02),
-                buildNavItem(3, Icons.people,
-                    isSmallScreen ? null : 'Customers', screenWidth),
-              ],
-            ),
-          ],
+    // Create items list for easier management
+    final navItems = [
+      {'icon': Icons.dashboard, 'label': 'Dashboard'},
+      {'icon': Icons.inventory_2, 'label': 'Products'},
+      {'icon': Icons.assignment, 'label': 'Orders'},
+      {'icon': Icons.people, 'label': 'Customers'},
+    ];
+
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.1),
+            blurRadius: 10,
+            offset: const Offset(0, -2),
+          ),
+        ],
+      ),
+      child: SafeArea(
+        child: Container(
+          height: screenHeight * 0.075,
+          padding: EdgeInsets.symmetric(horizontal: screenWidth * 0.02),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
+            children: [
+              // Left items (first 2)
+              ...List.generate(
+                  2,
+                  (index) => buildNavItem(
+                      index,
+                      navItems[index]['icon'] as IconData,
+                      isSmallScreen ? null : navItems[index]['label'] as String,
+                      screenWidth)),
+
+              // Center space for FAB
+              SizedBox(width: screenWidth * 0.15),
+
+              // Right items (last 2)
+              ...List.generate(
+                  2,
+                  (index) => buildNavItem(
+                      index + 2,
+                      navItems[index + 2]['icon'] as IconData,
+                      isSmallScreen
+                          ? null
+                          : navItems[index + 2]['label'] as String,
+                      screenWidth)),
+            ],
+          ),
         ),
       ),
     );
@@ -696,10 +712,10 @@ class _MainPageState extends State<MainPage> with TickerProviderStateMixin {
             : 28.0;
 
     final fontSize = screenWidth < 360
-        ? 8.0
+        ? 10.0
         : screenWidth < 600
-            ? 8.0
-            : 10.0;
+            ? 10.0
+            : 14.0;
 
     // Responsive container width
     final containerWidth = screenWidth < 360
@@ -763,7 +779,7 @@ class _MainPageState extends State<MainPage> with TickerProviderStateMixin {
       case 0:
         return DashboardPage();
       case 1:
-        return ProductSelectionPage(
+        return ProductsPage(
           availableProducts: salesProvider.products,
           onAddProduct: (product, quantity) {
             // Implement logic to handle adding product to order

@@ -39,9 +39,6 @@ class _AddProductPageState extends State<AddProductPage> {
   final _tagController = TextEditingController();
 
   List<String> _selectedTags = [];
-  String _selectedUnit = 'Units';
-  String _selectedPurchaseUnit = 'Units';
-  String _selectedCategory = 'General';
   String _selectedProductType = 'product';
   String _selectedResponsible = '';
   String _selectedSalesTax = 'No Tax';
@@ -105,6 +102,12 @@ class _AddProductPageState extends State<AddProductPage> {
   List<ProductItem> _availableProducts = [];
   bool _needsProductRefresh = false;
 
+  bool _isLoadingUnits = false;
+  List<Map<String, dynamic>> _units = [];
+  String _selectedUnit = '';
+  String _selectedPurchaseUnit = '';
+  String _selectedCategory = '';
+
   @override
   void dispose() {
     _nameController.dispose();
@@ -139,6 +142,91 @@ class _AddProductPageState extends State<AddProductPage> {
       setState(() {
         _productImage = File(pickedFile.path);
       });
+    }
+  }
+
+  Future<void> _fetchCategories() async {
+    setState(() => _isLoadingCategories = true);
+    try {
+      final client = await SessionManager.getActiveClient();
+      if (client == null) throw Exception('No active session found.');
+
+      final result = await client.callKw({
+        'model': 'product.category',
+        'method': 'search_read',
+        'args': [
+          [], // All categories
+          ['id', 'name', 'complete_name'],
+        ],
+        'kwargs': {},
+      });
+
+      setState(() {
+        _categories = List<Map<String, dynamic>>.from(result);
+        // Set default category if available
+        if (_categories.isNotEmpty) {
+          _selectedCategory = _categories[0]['name'];
+        } else {
+          _selectedCategory = ''; // Fallback to empty if no categories
+        }
+        _isLoadingCategories = false;
+      });
+    } catch (e) {
+      setState(() => _isLoadingCategories = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error loading categories: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  Future<void> _fetchUnits() async {
+    setState(() => _isLoadingUnits = true);
+    try {
+      final client = await SessionManager.getActiveClient();
+      if (client == null) throw Exception('No active session found.');
+
+      final result = await client.callKw({
+        'model': 'uom.uom',
+        'method': 'search_read',
+        'args': [
+          [], // Fetch all units
+          ['id', 'name', 'category_id'], // Fetch ID, name, and category
+        ],
+        'kwargs': {},
+      });
+
+      setState(() {
+        _units = List<Map<String, dynamic>>.from(result).map((unit) {
+          return {
+            'id': unit['id'],
+            'name': unit['name'],
+            'category_id':
+                unit['category_id'] != false ? unit['category_id'][0] : null,
+            'category_name': unit['category_id'] != false
+                ? unit['category_id'][1]
+                : 'Unknown',
+          };
+        }).toList();
+        // Set default unit if available
+        if (_units.isNotEmpty) {
+          _selectedUnit = _units[0]['name'];
+          _selectedPurchaseUnit = _units[0]['name'];
+        }
+        _isLoadingUnits = false;
+      });
+    } catch (e) {
+      setState(() => _isLoadingUnits = false);
+      debugPrint('Error fetching units: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to load units of measure. Please try again.'),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 3),
+        ),
+      );
     }
   }
 
@@ -236,241 +324,405 @@ class _AddProductPageState extends State<AddProductPage> {
     }
   }
 
-  int _mapUnitToOdooId(String unit) => 1;
+  int _mapUnitToOdooId(String unitName) {
+    final unit = _units.firstWhere(
+      (u) => u['name'] == unitName,
+      orElse: () => {'id': 1}, // Fallback to default unit ID
+    );
+    return unit['id'] as int;
+  }
 
-  int _mapCategoryToOdooId(String category) => 1;
+  int _mapCategoryToOdooId(String categoryName) {
+    final category = _categories.firstWhere(
+      (c) => c['name'] == categoryName,
+      orElse: () => {'id': 1}, // Fallback to default category ID
+    );
+    return category['id'] as int;
+  }
 
+  bool _validateUnitCategories() {
+    if (_units.isEmpty) return false; // No units available
+
+    final selectedUnit = _units.firstWhere(
+      (unit) => unit['name'] == _selectedUnit,
+      orElse: () => {'category_id': null},
+    );
+    final selectedPurchaseUnit = _units.firstWhere(
+      (unit) => unit['name'] == _selectedPurchaseUnit,
+      orElse: () => {'category_id': null},
+    );
+
+    if (selectedUnit['category_id'] == null ||
+        selectedPurchaseUnit['category_id'] == null) {
+      return false; // Invalid unit selection
+    }
+
+    return selectedUnit['category_id'] == selectedPurchaseUnit['category_id'];
+  }
+  Future<bool> _isBarcodeUnique(String barcode, {int? excludeProductId}) async {
+    try {
+      final client = await SessionManager.getActiveClient();
+      if (client == null) throw Exception('No active session found.');
+
+      final domain = [
+        ['barcode', '=', barcode],
+      ];
+      if (excludeProductId != null) {
+        domain.add(['id', '!=', excludeProductId.toString()]);
+            }
+
+      final result = await client.callKw({
+        'model': 'product.product',
+        'method': 'search',
+        'args': [domain],
+        'kwargs': {},
+      });
+
+      if (result.isNotEmpty) {
+        // Fetch product names for better error messaging
+        final products = await client.callKw({
+          'model': 'product.product',
+          'method': 'read',
+          'args': [result, ['name', 'default_code']],
+          'kwargs': {},
+        });
+        debugPrint('Barcode $barcode already assigned to: $products');
+      }
+
+      return result.isEmpty; // True if barcode is unique, false if already used
+    } catch (e) {
+      debugPrint('Error checking barcode uniqueness: $e');
+      return false; // Assume non-unique on error to prevent submission
+    }
+  }
   Future<void> _addProduct() async {
     setState(() {
       _isLoading = true; // Show loading state
     });
-    if (_formKey.currentState!.validate()) {
-      try {
-        await Future.delayed(const Duration(seconds: 2));
-        final client = await SessionManager.getActiveClient();
-        if (client == null) throw Exception('No active session found.');
 
-        final productData = {
-          'name': _nameController.text,
-          'default_code': _internalReferenceController.text.isNotEmpty
-              ? _internalReferenceController.text
-              : 'PROD-${DateTime.now().millisecondsSinceEpoch}',
-          'list_price': double.parse(_salePriceController.text),
-          'standard_price': double.parse(_costController.text),
-          'barcode': _barcodeController.text.isNotEmpty
-              ? _barcodeController.text
-              : null,
-          'type': 'product',
-          'uom_id': _mapUnitToOdooId(_selectedUnit),
-          'uom_po_id': _mapUnitToOdooId(_selectedPurchaseUnit),
-          'categ_id': _mapCategoryToOdooId(_selectedCategory),
-          'description_sale': _descriptionController.text,
-          'weight': _weightController.text.isNotEmpty
-              ? double.parse(_weightController.text)
-              : 0.0,
-          'volume': _volumeController.text.isNotEmpty
-              ? double.parse(_volumeController.text)
-              : 0.0,
-          'sale_ok': _canBeSold,
-          'purchase_ok': _canBePurchased,
-          'responsible_id': _selectedResponsible.isNotEmpty ? 1 : 0,
-          'invoice_policy': _selectedInvoicePolicy == 'Ordered quantities'
-              ? 'order'
-              : 'delivery',
-          'tracking': _mapTrackingToOdoo(_selectedInventoryTracking),
-          'sale_delay': _customerLeadTimeController.text.isNotEmpty
-              ? double.parse(_customerLeadTimeController.text)
-              : 0.0,
-          'reordering_min_qty': _reorderMinController.text.isNotEmpty
-              ? double.parse(_reorderMinController.text)
-              : 0.0,
-          'reordering_max_qty': _reorderMaxController.text.isNotEmpty
-              ? double.parse(_reorderMaxController.text)
-              : 0.0,
-          'expiration_time': _expirationTracking ? 30 : 0,
-          'use_expiration_date': _expirationTracking,
-          'taxes_id': _selectedSalesTax != 'No Tax' ? [1] : [],
-          'supplier_taxes_id': _selectedPurchaseTax != 'No Tax' ? [1] : [],
-        };
-
-        debugPrint('Product data prepared: ${jsonEncode(productData)}');
-
-        // Process the product image if available
-        if (_productImage != null) {
-          try {
-            final bytes = await _productImage!.readAsBytes();
-            final base64Image = base64Encode(bytes);
-            productData['image_1920'] = base64Image;
-            debugPrint('Image processed and added to product data');
-          } catch (e) {
-            debugPrint('Error processing image: $e');
-          }
-        }
-
-        dynamic productId;
-
-        if (widget.productToEdit != null) {
-          // Validate product ID
-          if (widget.productToEdit!['id'] == null) {
-            throw Exception('Product ID is null, cannot update');
-          }
-
-          // Convert ID to integer
-          int parsedId;
-          try {
-            parsedId = int.parse(widget.productToEdit!['id'].toString());
-          } catch (e) {
-            throw Exception(
-                'Invalid product ID format: ${widget.productToEdit!['id']}');
-          }
-
-          debugPrint(
-              'Checking product with ID: $parsedId (Type: ${parsedId.runtimeType})');
-
-          // Verify product exists in Odoo
-          final productExists = await client.callKw({
-            'model': 'product.product',
-            'method': 'search',
-            'args': [
-              [
-                ['id', '=', parsedId]
-              ]
-            ],
-            'kwargs': {},
-          });
-
-          if (productExists.isEmpty) {
-            throw Exception(
-                'Product with ID $parsedId does not exist or has been deleted');
-          }
-
-          debugPrint('Updating product with ID: $parsedId');
-
-          // Update existing product
-          await client.callKw({
-            'model': 'product.product',
-            'method': 'write',
-            'args': [
-              [parsedId],
-              productData
-            ],
-            'kwargs': {},
-          });
-
-          productId = parsedId;
-
-          debugPrint('Product updated successfully with ID: $productId');
-        } else {
-          // Create new product
-          debugPrint('Creating new product...');
-          productId = await client.callKw({
-            'model': 'product.product',
-            'method': 'create',
-            'args': [productData],
-            'kwargs': {},
-          });
-
-          debugPrint(
-              'New product created with ID: $productId (Type: ${productId.runtimeType})');
-
-          // Create initial inventory if specified
-          if (_quantityController.text.isNotEmpty &&
-              int.parse(_quantityController.text) > 0) {
-            debugPrint('Creating initial inventory...');
-            await client.callKw({
-              'model': 'stock.quant',
-              'method': 'create',
-              'args': [
-                {
-                  'product_id': productId,
-                  'location_id': 8,
-                  'quantity': int.parse(_quantityController.text).toDouble(),
-                }
-              ],
-              'kwargs': {},
-            });
-            debugPrint('Initial inventory created');
-          }
-        }
-
-        // Add supplier info if specified
-        if (_suppliers.isNotEmpty) {
-          debugPrint('Adding ${_suppliers.length} suppliers to product');
-          for (var supplier in _suppliers) {
-            await client.callKw({
-              'model': 'product.supplierinfo',
-              'method': 'create',
-              'args': [
-                {
-                  'product_id': productId,
-                  'partner_id': supplier['partner_id'],
-                  'product_code': supplier['code'],
-                  'price': supplier['price'],
-                  'delay': supplier['leadTime'],
-                }
-              ],
-              'kwargs': {},
-            });
-          }
-        }
-
-        // Add product tags
-        if (_selectedTags.isNotEmpty) {
-          debugPrint('Tags would be added here');
-          // Implement tag handling as needed
-        }
-
-        // Handle product variants if needed
-        if (_hasVariants && _attributes.isNotEmpty) {
-          debugPrint('Product variants would be created here');
-          // Implement variant handling as needed
-        }
-
-        // Refresh product list in provider
-        debugPrint('Refreshing product list...');
-        final salesProvider =
-            Provider.of<SalesOrderProvider>(context, listen: false);
-        await salesProvider.loadProducts();
-        _availableProducts = salesProvider.products.cast<ProductItem>();
-        _needsProductRefresh = true;
-        debugPrint('Product list refreshed');
-
-        // Add haptic feedback
-        HapticFeedback.mediumImpact();
-        _productImage = null;
-
-        // Return success result to parent screen
-        Navigator.of(context).pop({
-          'success': true,
-          'message': widget.productToEdit != null
-              ? 'Product updated successfully'
-              : 'Product added successfully (ID: $productId)',
-        });
-      } catch (e) {
-        debugPrint('Error in _addProduct: $e');
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error: $e'),
-            backgroundColor: Colors.red,
-            duration: const Duration(seconds: 3),
-          ),
-        );
-      }
-    } else {
-      // Form validation failed
+    if (!_formKey.currentState!.validate()) {
+      setState(() {
+        _isLoading = false;
+      });
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Please fix the errors in the form'),
+        SnackBar(
+          content: Text('Please fix the errors in the form.'),
           backgroundColor: Colors.orange,
-          duration: Duration(seconds: 2),
+          duration: const Duration(seconds: 3),
         ),
       );
+      return;
     }
-    setState(() {
-      _isLoading = false; // Reset loading state
-    });
-  }
 
+    // Validate unit of measure categories
+    if (!_validateUnitCategories()) {
+      setState(() {
+        _isLoading = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Error: The Unit of Measure and Purchase Unit of Measure must belong to the same category (e.g., both must be units or both must be weights).',
+          ),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 5),
+          action: SnackBarAction(
+            label: 'Fix',
+            textColor: Colors.white,
+            onPressed: () {
+              // Optionally scroll to the unit dropdowns
+            },
+          ),
+        ),
+      );
+      return;
+    }
+
+    // Validate barcode uniqueness
+    if (_barcodeController.text.isNotEmpty) {
+      final isUnique = await _isBarcodeUnique(
+        _barcodeController.text,
+        excludeProductId: widget.productToEdit != null ? int.tryParse(widget.productToEdit!['id'].toString()) : null,
+      );
+      if (!isUnique) {
+        setState(() {
+          _isLoading = false;
+        });
+        showDialog(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: Text('Barcode Error'),
+            content: Text(
+              'The barcode "${_barcodeController.text}" is already assigned to another product. Please enter a different barcode or leave it blank.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: Text('OK'),
+              ),
+            ],
+          ),
+        );
+        return;
+      }
+    }
+
+    try {
+      final client = await SessionManager.getActiveClient();
+      if (client == null) throw Exception('No active session found.');
+
+      // Prepare product data
+      final productData = {
+        'name': _nameController.text,
+        'default_code': _internalReferenceController.text.isNotEmpty
+            ? _internalReferenceController.text
+            : 'PROD-${DateTime.now().millisecondsSinceEpoch}',
+        'list_price': double.parse(_salePriceController.text),
+        'standard_price': double.parse(_costController.text),
+        'barcode': _barcodeController.text.isNotEmpty ? _barcodeController.text : null,
+        'type': 'product',
+        'uom_id': _mapUnitToOdooId(_selectedUnit),
+        'uom_po_id': _mapUnitToOdooId(_selectedPurchaseUnit),
+        'categ_id': _mapCategoryToOdooId(_selectedCategory),
+        'description_sale': _descriptionController.text,
+        'weight': _weightController.text.isNotEmpty ? double.parse(_weightController.text) : 0.0,
+        'volume': _volumeController.text.isNotEmpty ? double.parse(_volumeController.text) : 0.0,
+        'sale_ok': _canBeSold,
+        'purchase_ok': _canBePurchased,
+        'responsible_id': _selectedResponsible.isNotEmpty ? 1 : 0,
+        'invoice_policy': _selectedInvoicePolicy == 'Ordered quantities' ? 'order' : 'delivery',
+        'tracking': _mapTrackingToOdoo(_selectedInventoryTracking),
+        'sale_delay': _customerLeadTimeController.text.isNotEmpty ? double.parse(_customerLeadTimeController.text) : 0.0,
+        'reordering_min_qty': _reorderMinController.text.isNotEmpty ? double.parse(_reorderMinController.text) : 0.0,
+        'reordering_max_qty': _reorderMaxController.text.isNotEmpty ? double.parse(_reorderMaxController.text) : 0.0,
+        'expiration_time': _expirationTracking ? 30 : 0,
+        'use_expiration_date': _expirationTracking,
+        'taxes_id': _selectedSalesTax != 'No Tax' ? [1] : [],
+        'supplier_taxes_id': _selectedPurchaseTax != 'No Tax' ? [1] : [],
+      };
+
+      debugPrint('Product data prepared: ${jsonEncode(productData)}');
+
+      // Process product image (non-critical, do not fail if image processing fails)
+      if (_productImage != null) {
+        try {
+          final bytes = await _productImage!.readAsBytes();
+          final base64Image = base64Encode(bytes);
+          productData['image_1920'] = base64Image;
+          debugPrint('Image processed and added to product data');
+        } catch (e) {
+          debugPrint('Error processing image: $e');
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Failed to process product image. Continuing without image.'),
+              backgroundColor: Colors.orange,
+              duration: const Duration(seconds: 3),
+            ),
+          );
+        }
+      }
+
+      dynamic productId;
+
+      // Perform all Odoo operations in a single transaction-like block
+      if (widget.productToEdit != null) {
+        // Validate product ID
+        if (widget.productToEdit!['id'] == null) {
+          throw Exception('Product ID is null, cannot update');
+        }
+
+        int parsedId;
+        try {
+          parsedId = int.parse(widget.productToEdit!['id'].toString());
+        } catch (e) {
+          throw Exception('Invalid product ID format: ${widget.productToEdit!['id']}');
+        }
+
+        debugPrint('Checking product with ID: $parsedId (Type: ${parsedId.runtimeType})');
+
+        // Verify product exists in Odoo
+        final productExists = await client.callKw({
+          'model': 'product.product',
+          'method': 'search',
+          'args': [
+            [
+              ['id', '=', parsedId]
+            ]
+          ],
+          'kwargs': {},
+        });
+
+        if (productExists.isEmpty) {
+          throw Exception('Product with ID $parsedId does not exist or has been deleted');
+        }
+
+        debugPrint('Updating product with ID: $parsedId');
+
+        // Update existing product
+        await client.callKw({
+          'model': 'product.product',
+          'method': 'write',
+          'args': [
+            [parsedId],
+            productData
+          ],
+          'kwargs': {},
+        });
+
+        productId = parsedId;
+
+        debugPrint('Product updated successfully with ID: $productId');
+      } else {
+        // Create new product
+        debugPrint('Creating new product...');
+        productId = await client.callKw({
+          'model': 'product.product',
+          'method': 'create',
+          'args': [productData],
+          'kwargs': {},
+        });
+
+        debugPrint('New product created with ID: $productId (Type: ${productId.runtimeType})');
+      }
+
+      // Create initial inventory if specified
+      if (_quantityController.text.isNotEmpty && int.parse(_quantityController.text) > 0) {
+        debugPrint('Creating initial inventory...');
+        await client.callKw({
+          'model': 'stock.quant',
+          'method': 'create',
+          'args': [
+            {
+              'product_id': productId,
+              'location_id': 8,
+              'quantity': int.parse(_quantityController.text).toDouble(),
+            }
+          ],
+          'kwargs': {},
+        });
+        debugPrint('Initial inventory created');
+      }
+
+      // Add supplier info if specified
+      if (_suppliers.isNotEmpty) {
+        debugPrint('Adding ${_suppliers.length} suppliers to product');
+        for (var supplier in _suppliers) {
+          await client.callKw({
+            'model': 'product.supplierinfo',
+            'method': 'create',
+            'args': [
+              {
+                'product_id': productId,
+                'partner_id': supplier['partner_id'],
+                'product_code': supplier['code'],
+                'price': supplier['price'],
+                'delay': supplier['leadTime'],
+              }
+            ],
+            'kwargs': {},
+          });
+        }
+      }
+
+      // Add product tags
+      if (_selectedTags.isNotEmpty) {
+        debugPrint('Tags would be added here');
+        // Implement tag handling as needed
+      }
+
+      // Handle product variants if needed
+      if (_hasVariants && _attributes.isNotEmpty) {
+        debugPrint('Product variants would be created here');
+        // Implement variant handling as needed
+      }
+
+      // Refresh product list in provider
+      debugPrint('Refreshing product list...');
+      final salesProvider = Provider.of<SalesOrderProvider>(context, listen: false);
+      await salesProvider.loadProducts();
+      _availableProducts = salesProvider.products.cast<ProductItem>();
+      _needsProductRefresh = true;
+      debugPrint('Product list refreshed');
+
+      // Add haptic feedback
+      HapticFeedback.mediumImpact();
+      _productImage = null;
+
+      // Show success message
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            widget.productToEdit != null
+                ? 'Product updated successfully!'
+                : 'Product added successfully (ID: $productId)!',
+          ),
+          backgroundColor: Colors.green,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+
+      // Return success result to parent screen
+      Navigator.of(context).pop({
+        'success': true,
+        'message': widget.productToEdit != null
+            ? 'Product updated successfully'
+            : 'Product added successfully (ID: $productId)',
+      });
+    } catch (e) {
+      debugPrint('Error in _addProduct: $e');
+      String errorMessage = 'An unexpected error occurred. Please try again.';
+      bool showRetry = false;
+
+      // Handle specific Odoo exceptions
+      if (e.toString().contains('odoo.exceptions.ValidationError')) {
+        if (e.toString().contains('Barcode(s) already assigned')) {
+          errorMessage =
+          'The barcode "${_barcodeController.text}" is already assigned to another product. Please enter a different barcode or leave it blank.';
+          showRetry = true;
+        } else if (e.toString().contains('The default Unit of Measure and the purchase Unit of Measure must be in the same category')) {
+          errorMessage =
+          'The Unit of Measure and Purchase Unit of Measure must belong to the same category (e.g., both units or both weights). Please select compatible units.';
+          showRetry = true;
+        } else {
+          errorMessage = 'Invalid product data. Please check all fields and try again.';
+          showRetry = true;
+        }
+      } else if (e.toString().contains('No active session found')) {
+        errorMessage = 'Session expired. Please log in again.';
+        showRetry = false;
+      } else if (e.toString().contains('Product with ID') && e.toString().contains('does not exist')) {
+        errorMessage = 'The product you are trying to update no longer exists.';
+        showRetry = false;
+      }
+
+      // Show error dialog for critical errors
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text('Error'),
+          content: Text(errorMessage),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: Text('OK'),
+            ),
+            if (showRetry)
+              TextButton(
+                onPressed: () {
+                  Navigator.of(context).pop();
+                  _addProduct(); // Retry the operation
+                },
+                child: Text('Retry'),
+              ),
+          ],
+        ),
+      );
+    } finally {
+      setState(() {
+        _isLoading = false; // Reset loading state
+      });
+    }
+  }
   String _mapTrackingToOdoo(String tracking) {
     switch (tracking) {
       case 'No tracking':
@@ -520,38 +772,6 @@ class _AddProductPageState extends State<AddProductPage> {
     }
   }
 
-  Future<void> _fetchCategories() async {
-    setState(() => _isLoadingCategories = true);
-    try {
-      final client = await SessionManager.getActiveClient();
-      if (client == null) throw Exception('No active session found.');
-
-      final result = await client.callKw({
-        'model': 'product.category',
-        'method': 'search_read',
-        'args': [
-          [], // All categories
-          ['id', 'name', 'complete_name'],
-        ],
-        'kwargs': {},
-      });
-
-      setState(() {
-        _categories = List<Map<String, dynamic>>.from(result);
-        _selectedCategory =
-            _categories.isNotEmpty ? _categories[0]['id'].toString() : '';
-        _isLoadingCategories = false;
-      });
-    } catch (e) {
-      setState(() => _isLoadingCategories = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-            content: Text('Error loading categories: $e'),
-            backgroundColor: Colors.red),
-      );
-    }
-  }
-
   Future<void> _createCategory(String name) async {
     try {
       final client = await SessionManager.getActiveClient();
@@ -596,37 +816,17 @@ class _AddProductPageState extends State<AddProductPage> {
     super.initState();
     _fetchVendors();
     _fetchCategories();
-
-    // Ensure initial values exist in their respective lists
-    final availableUnits = ProductItem().units;
-    if (availableUnits.isNotEmpty && !availableUnits.contains(_selectedUnit)) {
-      _selectedUnit = availableUnits.first;
-    } else if (availableUnits.isEmpty) {
-      _selectedUnit = 'Units'; // Fallback default
-    }
-
-    if (availableUnits.isNotEmpty && !availableUnits.contains(_selectedPurchaseUnit)) {
-      _selectedPurchaseUnit = availableUnits.first;
-    } else if (availableUnits.isEmpty) {
-      _selectedPurchaseUnit = 'Units'; // Fallback default
-    }
-
-    final availableCategories = ProductItem().categories;
-    if (availableCategories.isNotEmpty && !availableCategories.contains(_selectedCategory)) {
-      _selectedCategory = availableCategories.first;
-    } else if (availableCategories.isEmpty) {
-      _selectedCategory = 'General'; // Fallback default
-    }
+    _fetchUnits(); // Fetch units of measure
 
     if (widget.productToEdit != null) {
       _initializeFormWithProductData();
     }
   }
+
   void _initializeFormWithProductData() {
     final product = widget.productToEdit!;
 
     setState(() {
-      // Reset product image to null before loading new data
       _productImage = null;
 
       _nameController.text = product['name'] ?? '';
@@ -641,9 +841,12 @@ class _AddProductPageState extends State<AddProductPage> {
 
       // Set dropdown values
       _selectedProductType = product['type'] ?? 'product';
-      _selectedUnit = product['uom_id']?[1]?.toString() ?? 'Units';
-      _selectedPurchaseUnit = product['uom_po_id']?[1]?.toString() ?? 'Units';
-      _selectedCategory = product['categ_id']?[1]?.toString() ?? 'General';
+      _selectedUnit = product['uom_id']?[1]?.toString() ??
+          (_units.isNotEmpty ? _units[0]['name'] : '');
+      _selectedPurchaseUnit = product['uom_po_id']?[1]?.toString() ??
+          (_units.isNotEmpty ? _units[0]['name'] : '');
+      _selectedCategory = product['categ_id']?[1]?.toString() ??
+          (_categories.isNotEmpty ? _categories[0]['name'] : '');
       _selectedResponsible = product['responsible_id']?[1]?.toString() ?? '';
       _canBeSold = product['sale_ok'] ?? true;
       _canBePurchased = product['purchase_ok'] ?? true;
@@ -653,7 +856,6 @@ class _AddProductPageState extends State<AddProductPage> {
       if (product['image_1920'] != null && product['image_1920'] != false) {
         try {
           if (product['image_1920'] is String) {
-            // Handle base64 string
             final bytes = base64Decode(product['image_1920'] as String);
             final tempDir = Directory.systemTemp;
             final tempFile =
@@ -661,7 +863,6 @@ class _AddProductPageState extends State<AddProductPage> {
             tempFile.writeAsBytesSync(bytes);
             _productImage = tempFile;
           } else if (product['image_1920'] is Uint8List) {
-            // Handle Uint8List
             final tempDir = Directory.systemTemp;
             final tempFile =
                 File('${tempDir.path}/temp_product_image_${product['id']}.jpg');
@@ -670,7 +871,7 @@ class _AddProductPageState extends State<AddProductPage> {
           }
         } catch (e) {
           debugPrint('Error decoding image: $e');
-          _productImage = null; // Ensure image is null if decoding fails
+          _productImage = null;
         }
       }
     });
@@ -981,44 +1182,68 @@ class _AddProductPageState extends State<AddProductPage> {
                     return null;
                   },
                 ),
-                _buildDropdownField(
-                  label: 'Unit of Measure',
-                  value: _selectedUnit,
-                  items: ProductItem().units,
-                  onChanged: (val) => setState(() => _selectedUnit = val),
-                  validator: (val) {
-                    if (val == null || !ProductItem().units.contains(val)) {
-                      return 'Please select a valid unit of measure';
-                    }
-                    return null;
-                  },
-                ),
-                _buildDropdownField(
-                  label: 'Purchase Unit of Measure',
-                  value: _selectedPurchaseUnit,
-                  items: ProductItem().units,
-                  onChanged: (val) =>
-                      setState(() => _selectedPurchaseUnit = val),
-                  validator: (val) {
-                    if (val == null || !ProductItem().units.contains(val)) {
-                      return 'Please select a valid purchase unit';
-                    }
-                    return null;
-                  },
-                ),
-                _buildDropdownField(
-                  label: 'Category',
-                  value: _selectedCategory,
-                  items: ProductItem().categories,
-                  onChanged: (val) => setState(() => _selectedCategory = val),
-                  validator: (val) {
-                    if (val == null ||
-                        !ProductItem().categories.contains(val)) {
-                      return 'Please select a valid category';
-                    }
-                    return null;
-                  },
-                ),
+                _isLoadingUnits
+                    ? const CircularProgressIndicator()
+                    : _buildDropdownField(
+                        label: 'Unit of Measure',
+                        value: _selectedUnit.isEmpty && _units.isNotEmpty
+                            ? _units[0]['name']
+                            : _selectedUnit,
+                        items: _units
+                            .map((unit) => unit['name'].toString())
+                            .toList(),
+                        onChanged: (val) => setState(() => _selectedUnit = val),
+                        validator: (val) {
+                          if (val == null ||
+                              !_units.any((unit) => unit['name'] == val)) {
+                            return 'Please select a valid unit of measure';
+                          }
+                          return null;
+                        },
+                      ),
+                _isLoadingUnits
+                    ? const CircularProgressIndicator()
+                    : _buildDropdownField(
+                        label: 'Purchase Unit of Measure',
+                        value:
+                            _selectedPurchaseUnit.isEmpty && _units.isNotEmpty
+                                ? _units[0]['name']
+                                : _selectedPurchaseUnit,
+                        items: _units
+                            .map((unit) => unit['name'].toString())
+                            .toList(),
+                        onChanged: (val) =>
+                            setState(() => _selectedPurchaseUnit = val),
+                        validator: (val) {
+                          if (val == null ||
+                              !_units.any((unit) => unit['name'] == val)) {
+                            return 'Please select a valid purchase unit';
+                          }
+                          return null;
+                        },
+                      ),
+                _isLoadingCategories
+                    ? const CircularProgressIndicator()
+                    : _buildDropdownField(
+                        label: 'Category',
+                        value:
+                            _selectedCategory.isEmpty && _categories.isNotEmpty
+                                ? _categories[0]['name']
+                                : _selectedCategory,
+                        items: _categories
+                            .map((category) => category['name'].toString())
+                            .toList(),
+                        onChanged: (val) =>
+                            setState(() => _selectedCategory = val),
+                        validator: (val) {
+                          if (val == null ||
+                              !_categories
+                                  .any((category) => category['name'] == val)) {
+                            return 'Please select a valid category';
+                          }
+                          return null;
+                        },
+                      ),
                 _buildTextField(
                   controller: _minOrderQuantityController,
                   label: 'Minimum Order Quantity',

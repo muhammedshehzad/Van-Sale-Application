@@ -460,10 +460,10 @@ class DataProvider with ChangeNotifier {
 
   // Update the quantity of a move line
   Future<bool> updateMoveLineQuantity(
-    int moveLineId,
-    double quantity,
-    List<String>? lotSerialNumbers,
-  ) async {
+      int moveLineId,
+      double quantity,
+      List<String>? lotSerialNumbers,
+      ) async {
     try {
       final client = await SessionManager.getActiveClient();
       if (client == null) {
@@ -490,22 +490,26 @@ class DataProvider with ChangeNotifier {
       final currentMoveLine = moveLineResult[0];
       final currentQuantity =
           (currentMoveLine['quantity'] as num?)?.toDouble() ?? 0.0;
-      final currentLotNames = currentMoveLine['lot_name'] != null
+
+      // Handle lot_name which can be String, bool(false) or null
+      final currentLotNames = (currentMoveLine['lot_name'] is String)
           ? (currentMoveLine['lot_name'] as String)
-              .split(',')
-              .map((s) => s.trim())
-              .toList()
+          .split(',')
+          .map((s) => s.trim())
+          .where((s) => s.isNotEmpty)
+          .toList()
           : <String>[];
 
       // Calculate new total quantity
       final newQuantity = currentQuantity + quantity;
 
       // Combine existing and new lot/serial numbers
-      final combinedLotSerialNumbers =
-          <String>{...currentLotNames, ...?lotSerialNumbers}.toList();
+      final combinedLotSerialNumbers = lotSerialNumbers != null
+          ? <String>{...currentLotNames, ...lotSerialNumbers}.toList()
+          : currentLotNames;
 
       final values = <String, dynamic>{
-        'quantity': newQuantity,
+        'quantity': newQuantity,  // Changed from 'quantity' to 'qty_done'
       };
 
       if (combinedLotSerialNumbers.isNotEmpty) {
@@ -529,7 +533,6 @@ class DataProvider with ChangeNotifier {
     }
   }
 
-  // Undo a move line
   Future<bool> undoMoveLine(int moveLineId) async {
     try {
       final client = await SessionManager.getActiveClient();
