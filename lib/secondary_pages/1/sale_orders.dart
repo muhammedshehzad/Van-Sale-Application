@@ -67,7 +67,9 @@ class _SaleOrdersListState extends State<SaleOrdersList>
 
   Future<List<Map<String, dynamic>>> _fetchSaleOrderHistory(
       BuildContext context) async {
-    Provider.of<SalesOrderProvider>(context, listen: false);
+    // Access provider (optional, remove if not needed)
+    final salesOrderProvider =
+        Provider.of<SalesOrderProvider>(context, listen: false);
 
     try {
       final client = await SessionManager.getActiveClient();
@@ -79,7 +81,9 @@ class _SaleOrdersListState extends State<SaleOrdersList>
         'model': 'sale.order',
         'method': 'search_read',
         'args': [
-          [],
+          [
+            ['name', 'not like', 'TCK%']
+          ],
           [
             'id',
             'name',
@@ -94,16 +98,23 @@ class _SaleOrdersListState extends State<SaleOrdersList>
         'kwargs': {},
       });
 
+      if (result is! List) {
+        throw Exception('Unexpected response format from server');
+      }
+
+      final orders = List<Map<String, dynamic>>.from(result);
+      _cachedOrders = orders; // Update cache
+
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Successfully fetched ${result.length} orders'),
+          content: Text('Successfully fetched ${orders.length} orders'),
           backgroundColor: Colors.green,
           behavior: SnackBarBehavior.floating,
           duration: const Duration(seconds: 2),
         ),
       );
 
-      return List<Map<String, dynamic>>.from(result);
+      return orders;
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -489,7 +500,10 @@ class _SaleOrdersListState extends State<SaleOrdersList>
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: EdgeInsets.all(_standardPadding),
+      padding: EdgeInsets.only(
+          left: _standardPadding,
+          right: _standardPadding,
+          top: _standardPadding),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [

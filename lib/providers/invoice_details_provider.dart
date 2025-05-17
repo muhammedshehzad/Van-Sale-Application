@@ -111,18 +111,16 @@ class InvoiceDetailsProvider extends ChangeNotifier {
 
   // Initialize with invoice data
   void setInvoiceData(Map<String, dynamic> data) {
-    if (_invoiceData['id'] != data['id']) {
-      _invoiceData = Map<String, dynamic>.from(data);
-      currencyFormat = NumberFormat.currency(
-        symbol: currency == 'USD' ? '\$' : currency,
-        decimalDigits: 2,
-      );
-      debugPrint(
-          'InvoiceDetailsProvider: setInvoiceData with invoiceNumber=$invoiceNumber, lines=${invoiceLines.length}');
-      notifyListeners();
-    }
+    // Always update the data to ensure state changes are reflected
+    _invoiceData = Map<String, dynamic>.from(data);
+    currencyFormat = NumberFormat.currency(
+      symbol: currency == 'USD' ? '\$' : currency,
+      decimalDigits: 2,
+    );
+    debugPrint(
+        'InvoiceDetailsProvider: setInvoiceData with invoiceNumber=$invoiceNumber, state=${data['state']}, lines=${invoiceLines.length}');
+    notifyListeners();
   }
-
   // Fetch invoice details
   Future<void> fetchInvoiceDetails(String invoiceId) async {
     if (invoiceId.isEmpty) {
@@ -134,10 +132,10 @@ class InvoiceDetailsProvider extends ChangeNotifier {
 
     _isLoading = true;
     _errorMessage = '';
+    _invoiceData = {}; // Clear previous data
     notifyListeners();
 
     try {
-      // Validate and parse invoiceId
       int? parsedInvoiceId;
       try {
         parsedInvoiceId = int.parse(invoiceId);
@@ -224,7 +222,6 @@ class InvoiceDetailsProvider extends ChangeNotifier {
     _isLoading = false;
     notifyListeners();
   }
-
   // Post (validate) invoice
   Future<bool> postInvoice(String invoiceId) async {
     _isLoading = true;
@@ -238,7 +235,6 @@ class InvoiceDetailsProvider extends ChangeNotifier {
         throw Exception('No active session');
       }
 
-      // Call action_post to validate the invoice
       await client.callKw({
         'model': 'account.move',
         'method': 'action_post',
@@ -252,12 +248,130 @@ class InvoiceDetailsProvider extends ChangeNotifier {
 
       // Refresh invoice details to reflect the new state
       await fetchInvoiceDetails(invoiceId);
+      debugPrint('postInvoice: Successfully validated invoice ID $invoiceId');
       _isLoading = false;
       notifyListeners();
       return true;
     } catch (e, stackTrace) {
       _errorMessage = 'Failed to validate invoice: $e';
       debugPrint('InvoiceDetailsProvider: postInvoice error: $e');
+      debugPrint('Stack trace: $stackTrace');
+      _isLoading = false;
+      notifyListeners();
+      return false;
+    }
+  }
+  // Reset invoice to draft
+  Future<bool> resetToDraft(String invoiceId) async {
+    _isLoading = true;
+    _errorMessage = '';
+    notifyListeners();
+
+    try {
+      int parsedInvoiceId = int.parse(invoiceId);
+      final client = await SessionManager.getActiveClient();
+      if (client == null) {
+        throw Exception('No active session');
+      }
+
+      // Call action_draft to reset the invoice to draft
+      await client.callKw({
+        'model': 'account.move',
+        'method': 'button_draft',
+        'args': [
+          [parsedInvoiceId]
+        ],
+        'kwargs': {},
+      }).timeout(const Duration(seconds: 5), onTimeout: () {
+        throw Exception('Invoice reset to draft timed out');
+      });
+
+      // Refresh invoice details to reflect the new state
+      await fetchInvoiceDetails(invoiceId);
+      _isLoading = false;
+      notifyListeners();
+      return true;
+    } catch (e, stackTrace) {
+      _errorMessage = 'Failed to reset invoice to draft: $e';
+      debugPrint('InvoiceDetailsProvider: resetToDraft error: $e');
+      debugPrint('Stack trace: $stackTrace');
+      _isLoading = false;
+      notifyListeners();
+      return false;
+    }
+  }
+
+  // Cancel invoice
+  Future<bool> cancelInvoice(String invoiceId) async {
+    _isLoading = true;
+    _errorMessage = '';
+    notifyListeners();
+
+    try {
+      int parsedInvoiceId = int.parse(invoiceId);
+      final client = await SessionManager.getActiveClient();
+      if (client == null) {
+        throw Exception('No active session');
+      }
+
+      // Call action_cancel to cancel the invoice
+      await client.callKw({
+        'model': 'account.move',
+        'method': 'button_cancel',
+        'args': [
+          [parsedInvoiceId]
+        ],
+        'kwargs': {},
+      }).timeout(const Duration(seconds: 5), onTimeout: () {
+        throw Exception('Invoice cancellation timed out');
+      });
+
+      // Refresh invoice details to reflect the new state
+      await fetchInvoiceDetails(invoiceId);
+      _isLoading = false;
+      notifyListeners();
+      return true;
+    } catch (e, stackTrace) {
+      _errorMessage = 'Failed to cancel invoice: $e';
+      debugPrint('InvoiceDetailsProvider: cancelInvoice error: $e');
+      debugPrint('Stack trace: $stackTrace');
+      _isLoading = false;
+      notifyListeners();
+      return false;
+    }
+  }
+
+  // Delete invoice
+  Future<bool> deleteInvoice(String invoiceId) async {
+    _isLoading = true;
+    _errorMessage = '';
+    notifyListeners();
+
+    try {
+      int parsedInvoiceId = int.parse(invoiceId);
+      final client = await SessionManager.getActiveClient();
+      if (client == null) {
+        throw Exception('No active session');
+      }
+
+      // Call unlink to delete the invoice
+      await client.callKw({
+        'model': 'account.move',
+        'method': 'unlink',
+        'args': [
+          [parsedInvoiceId]
+        ],
+        'kwargs': {},
+      }).timeout(const Duration(seconds: 5), onTimeout: () {
+        throw Exception('Invoice deletion timed out');
+      });
+
+      _isLoading = false;
+      notifyListeners();
+      return true;
+    } catch (e, stackTrace) {
+      _errorMessage = 'Failed to delete invoice: $e';
+      debugPrint('InvoiceDetailsProvider: deleteInvoice error: $e');
       debugPrint('Stack trace: $stackTrace');
       _isLoading = false;
       notifyListeners();

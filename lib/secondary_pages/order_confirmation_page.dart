@@ -92,10 +92,10 @@ class OrderConfirmationPage extends StatelessWidget {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Order Confirmed'),
+        title: const Text('Order Confirmed',style: TextStyle(color: Colors.white),),
         automaticallyImplyLeading: false,
         elevation: 0,
-        backgroundColor: Colors.white,
+        backgroundColor: primaryColor,
         titleTextStyle: const TextStyle(
           color: Colors.black87,
           fontSize: 20,

@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:latest_van_sale_application/assets/widgets%20and%20consts/create_customer_page.dart';
+import 'package:latest_van_sale_application/secondary_pages/customer_details_page.dart';
+import 'package:latest_van_sale_application/secondary_pages/settings_page.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -18,9 +20,11 @@ import '../secondary_pages/1/dashboard.dart';
 import '../secondary_pages/1/invoice_list_page.dart';
 import '../secondary_pages/1/products.dart';
 import '../secondary_pages/1/sale_orders.dart';
+import '../secondary_pages/Reports_analytics_page.dart';
 import '../secondary_pages/add_products_page.dart';
 import '../assets/widgets and consts/order_utils.dart';
-import '../secondary_pages/pending_deliveries.dart';
+import '../secondary_pages/help_and_support.dart';
+import '../secondary_pages/deliveries_page.dart';
 import '../secondary_pages/todays_sales_page.dart';
 
 const Color secondaryColor = Color(0xFFD32F2F); // Red accent
@@ -177,8 +181,8 @@ class _MainPageState extends State<MainPage> with TickerProviderStateMixin {
         },
       ),
       floatingActionButton: _buildFloatingActionButton(),
-      floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
-      bottomNavigationBar: _buildBottomNavigationBar(context),
+      floatingActionButtonLocation: FloatingActionButtonLocation.miniEndFloat,
+      bottomNavigationBar: buildBottomNavigationBar(context),
     );
   }
 
@@ -266,56 +270,56 @@ class _MainPageState extends State<MainPage> with TickerProviderStateMixin {
               DrawerHeader(
                 decoration: const BoxDecoration(
                   color: primaryColor,
-                  image: DecorationImage(
-                    image: AssetImage('assets/images/drawer_background.jpg'),
-                    // Local asset for reliability
-                    fit: BoxFit.cover,
-                    opacity:
-                        0.7, // Slightly increased opacity for better readability
-                  ),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    CircleAvatar(
-                      backgroundColor: Colors.white,
-                      radius: 30,
-                      child: _isLoadingImage
-                          ? const CircularProgressIndicator()
-                          : _userImageBase64 != null
-                              ? ClipOval(
-                                  child: Image.memory(
-                                    base64Decode(_userImageBase64!),
-                                    fit: BoxFit.cover,
-                                    width: 60,
-                                    height: 60,
-                                    errorBuilder:
-                                        (context, error, stackTrace) => Text(
-                                      userName.isNotEmpty
-                                          ? userName
-                                              .substring(0, 1)
-                                              .toUpperCase()
-                                          : "U",
-                                      style: const TextStyle(
-                                        fontSize: 24.0,
-                                        color: primaryColor,
-                                        fontWeight: FontWeight.bold,
+                    InkWell(
+                      onTap: () => Navigator.push(
+                          context,
+                          SlidingPageTransitionLR(
+                              page: PhotoViewer(
+                            imageUrl: _userImageBase64,
+                          ))),
+                      child: CircleAvatar(
+                        backgroundColor: Colors.white,
+                        radius: 30,
+                        child: _isLoadingImage
+                            ? const CircularProgressIndicator()
+                            : _userImageBase64 != null
+                                ? ClipOval(
+                                    child: Image.memory(
+                                      base64Decode(_userImageBase64!),
+                                      fit: BoxFit.cover,
+                                      width: 60,
+                                      height: 60,
+                                      errorBuilder:
+                                          (context, error, stackTrace) => Text(
+                                        userName.isNotEmpty
+                                            ? userName
+                                                .substring(0, 1)
+                                                .toUpperCase()
+                                            : "U",
+                                        style: const TextStyle(
+                                          fontSize: 24.0,
+                                          color: primaryColor,
+                                          fontWeight: FontWeight.bold,
+                                        ),
                                       ),
                                     ),
+                                  )
+                                : Text(
+                                    userName.isNotEmpty
+                                        ? userName.substring(0, 1).toUpperCase()
+                                        : "U",
+                                    style: const TextStyle(
+                                      fontSize: 24.0,
+                                      color: primaryColor,
+                                      fontWeight: FontWeight.bold,
+                                    ),
                                   ),
-                                )
-                              : Text(
-                                  userName.isNotEmpty
-                                      ? userName.substring(0, 1).toUpperCase()
-                                      : "U",
-                                  style: const TextStyle(
-                                    fontSize: 24.0,
-                                    color: primaryColor,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
+                      ),
                     ),
-                    const SizedBox(height: 10),
                     Text(
                       userName,
                       style: const TextStyle(
@@ -328,12 +332,25 @@ class _MainPageState extends State<MainPage> with TickerProviderStateMixin {
                       ),
                     ),
                     Text(
-                      'userrole',
+                      'Van Sales Agent',
+                      style: TextStyle(
+                        color: Colors.white70,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                        shadows: [
+                          Shadow(color: Colors.black45, blurRadius: 2)
+                        ], // Text shadow for better readability
+                      ),
+                    ),
+                    const SizedBox(height: 5),
+                    Text(
+                      DateFormat('EEEE, d MMMM yyyy').format(DateTime.now()),
                       style: const TextStyle(
                         color: Colors.white,
-                        fontSize: 14,
-                        shadows: [Shadow(color: Colors.black45, blurRadius: 2)],
+                        fontSize: 12,
+                        fontWeight: FontWeight.w400,
                       ),
+                      overflow: TextOverflow.ellipsis,
                     ),
                   ],
                 ),
@@ -458,9 +475,8 @@ class _MainPageState extends State<MainPage> with TickerProviderStateMixin {
                 selectedColor: primaryColor,
                 onTap: () {
                   Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Reports coming soon')),
-                  );
+                  Navigator.push(context,
+                      SlidingPageTransitionLR(page: ReportsAnalyticsPage()));
                 },
               ),
               ListTile(
@@ -470,9 +486,8 @@ class _MainPageState extends State<MainPage> with TickerProviderStateMixin {
                 selectedColor: primaryColor,
                 onTap: () {
                   Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Settings coming soon')),
-                  );
+                  Navigator.push(
+                      context, SlidingPageTransitionLR(page: SettingsPage()));
                 },
               ),
 
@@ -485,9 +500,8 @@ class _MainPageState extends State<MainPage> with TickerProviderStateMixin {
                 selectedColor: primaryColor,
                 onTap: () {
                   Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Help & Support coming soon')),
-                  );
+                  Navigator.push(context,
+                      SlidingPageTransitionLR(page: HelpSupportPage()));
                 },
               ),
               const SizedBox(height: 8),
@@ -547,7 +561,6 @@ class _MainPageState extends State<MainPage> with TickerProviderStateMixin {
     );
   }
 
-  // Building the floating action button
   Widget _buildFloatingActionButton() {
     IconData? fabIcon;
     String? fabTooltip;
@@ -578,24 +591,29 @@ class _MainPageState extends State<MainPage> with TickerProviderStateMixin {
         fabTooltip = 'Add New';
     }
 
-    return FloatingActionButton(
-      onPressed: () {
-        _handleFABPress();
-      },
-      backgroundColor: primaryColor,
-      child: Icon(fabIcon, color: Colors.white),
-      tooltip: fabTooltip,
+    return Padding(
+      padding: const EdgeInsets.only(right: 12.0),
+      child: FloatingActionButton(
+        onPressed: () {
+          _handleFABPress();
+        },
+        backgroundColor: primaryColor,
+        tooltip: fabTooltip,
+        child: Icon(
+          fabIcon,
+          color: Colors.white,
+          size: 24,
+        ),
+      ),
     );
   }
 
   void showCreateOrderSheetGeneral(BuildContext context) {
-    // First, show a customer selection dialog
     showDialog(
       context: context,
       builder: (context) => CustomerSelectionDialog(
         onCustomerSelected: (Customer selectedCustomer) {
           Navigator.pop(context);
-          // Then show the order creation sheet with the selected customer
           Navigator.push(
               context,
               SlidingPageTransitionRL(
@@ -603,16 +621,12 @@ class _MainPageState extends State<MainPage> with TickerProviderStateMixin {
         },
       ),
     );
-  } // Handle FAB press based on selected index
+  }
 
   void _handleFABPress() {
-    final orderPickingProvider =
-        Provider.of<OrderPickingProvider>(context, listen: false);
     switch (selectedIndex) {
       case 0:
         showCreateOrderSheetGeneral(context);
-
-        // );
         break;
       case 1:
         Navigator.push(
@@ -637,20 +651,24 @@ class _MainPageState extends State<MainPage> with TickerProviderStateMixin {
     }
   }
 
-  // Building the improved bottom navigation bar
-
-  // Build individual nav items
-  Widget _buildBottomNavigationBar(BuildContext context) {
-    final screenWidth = MediaQuery.of(context).size.width;
-    final screenHeight = MediaQuery.of(context).size.height;
-    final isSmallScreen = screenWidth < 360;
-
-    // Create items list for easier management
+  Widget buildBottomNavigationBar(BuildContext context) {
     final navItems = [
-      {'icon': Icons.dashboard, 'label': 'Dashboard'},
-      {'icon': Icons.inventory_2, 'label': 'Products'},
-      {'icon': Icons.assignment, 'label': 'Orders'},
-      {'icon': Icons.people, 'label': 'Customers'},
+      {
+        'icon': Icons.dashboard,
+        'inactiveIcon': Icons.dashboard_outlined,
+      },
+      {
+        'icon': Icons.inventory_2,
+        'inactiveIcon': Icons.inventory_2_outlined,
+      },
+      {
+        'icon': Icons.assignment,
+        'inactiveIcon': Icons.assignment_outlined,
+      },
+      {
+        'icon': Icons.people,
+        'inactiveIcon': Icons.people_outlined,
+      },
     ];
 
     return Container(
@@ -658,41 +676,40 @@ class _MainPageState extends State<MainPage> with TickerProviderStateMixin {
         color: Colors.white,
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.1),
-            blurRadius: 10,
-            offset: const Offset(0, -2),
+            color: Colors.black.withOpacity(0.08),
+            blurRadius: 8,
+            offset: const Offset(0, -1),
           ),
         ],
+        borderRadius: const BorderRadius.only(
+          topLeft: Radius.circular(16),
+          topRight: Radius.circular(16),
+        ),
       ),
       child: SafeArea(
         child: Container(
-          height: screenHeight * 0.075,
-          padding: EdgeInsets.symmetric(horizontal: screenWidth * 0.02),
+          height: 64, // Fixed height for better consistency
+          padding: const EdgeInsets.symmetric(horizontal: 12),
           child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceAround,
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: [
-              // Left items (first 2)
               ...List.generate(
-                  2,
-                  (index) => buildNavItem(
-                      index,
-                      navItems[index]['icon'] as IconData,
-                      isSmallScreen ? null : navItems[index]['label'] as String,
-                      screenWidth)),
-
-              // Center space for FAB
-              SizedBox(width: screenWidth * 0.15),
-
-              // Right items (last 2)
+                2,
+                (index) => buildNavItem(
+                  index,
+                  navItems[index]['icon'] as IconData,
+                  navItems[index]['inactiveIcon'] as IconData,
+                ),
+              ),
+              // Center FAB placeholder
               ...List.generate(
-                  2,
-                  (index) => buildNavItem(
-                      index + 2,
-                      navItems[index + 2]['icon'] as IconData,
-                      isSmallScreen
-                          ? null
-                          : navItems[index + 2]['label'] as String,
-                      screenWidth)),
+                2,
+                (index) => buildNavItem(
+                  index + 2,
+                  navItems[index + 2]['icon'] as IconData,
+                  navItems[index + 2]['inactiveIcon'] as IconData,
+                ),
+              ),
             ],
           ),
         ),
@@ -701,76 +718,50 @@ class _MainPageState extends State<MainPage> with TickerProviderStateMixin {
   }
 
   Widget buildNavItem(
-      int index, IconData icon, String? label, double screenWidth) {
+    int index,
+    IconData activeIcon,
+    IconData inactiveIcon,
+  ) {
     final isSelected = selectedIndex == index;
 
-    // Scale down sizes to prevent overflow
-    final iconSize = screenWidth < 360
-        ? 20.0
-        : screenWidth < 600
-            ? 26.0
-            : 28.0;
-
-    final fontSize = screenWidth < 360
-        ? 10.0
-        : screenWidth < 600
-            ? 10.0
-            : 14.0;
-
-    // Responsive container width
-    final containerWidth = screenWidth < 360
-        ? screenWidth * 0.18
-        : screenWidth < 600
-            ? screenWidth * 0.16
-            : screenWidth * 0.14;
-
-    // Reduced padding to prevent overflow
-    final padding = screenWidth < 360
-        ? const EdgeInsets.symmetric(horizontal: 4, vertical: 3)
-        : const EdgeInsets.symmetric(horizontal: 6, vertical: 4);
-
-    return InkWell(
-      onTap: () {
-        _animationController.forward().then((_) {
-          _animationController.reverse();
-          setState(() {
-            selectedIndex = index;
-          });
-        });
-      },
-      borderRadius: BorderRadius.circular(8),
-      child: Container(
-        width: containerWidth,
-        padding: padding,
-        // Constrain height to prevent overflow
-        height: screenWidth < 360 ? 48.0 : 56.0,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              icon,
-              size: iconSize,
-              color: isSelected ? primaryColor : Colors.grey,
-            ),
-            if (label != null) ...[
-              SizedBox(height: screenWidth < 360 ? 1 : 2),
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: fontSize,
-                  color: isSelected ? primaryColor : Colors.grey,
-                  fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                ),
-                overflow: TextOverflow.ellipsis,
-                maxLines: 1,
+    return Expanded(
+      child: InkWell(
+        onTap: () {
+          if (!isSelected) {
+            _animationController.forward().then((_) {
+              _animationController.reverse();
+              setState(() {
+                selectedIndex = index;
+              });
+            });
+          }
+        },
+        borderRadius: BorderRadius.circular(12),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          padding: const EdgeInsets.symmetric(
+            vertical: 9,
+          ),
+          decoration: BoxDecoration(
+            color:
+                isSelected ? primaryColor.withOpacity(0.1) : Colors.transparent,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                isSelected ? activeIcon : inactiveIcon,
+                size: MediaQuery.of(context).size.width < 600 ? 30 : 36,
+                color: isSelected ? primaryColor : Colors.grey.shade500,
               ),
             ],
-          ],
+          ),
         ),
       ),
     );
-  } // Building the main body based on selected index
+  }
 
   Widget _buildBody() {
     final salesProvider =
@@ -1277,3 +1268,4 @@ class _MainPageState extends State<MainPage> with TickerProviderStateMixin {
     );
   }
 }
+

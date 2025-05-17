@@ -147,9 +147,8 @@ class LogoutService {
       });
 
       // Faster loading experience with simulated minimum duration
-      // This ensures the loading isn't too jarring if it completes very quickly
       Future<void> minLoadingTime =
-          Future.delayed(const Duration(milliseconds: 800));
+      Future.delayed(const Duration(milliseconds: 800));
 
       // Start SharedPreferences clearing
       debugPrint('LogoutService: Clearing SharedPreferences');
@@ -157,7 +156,7 @@ class LogoutService {
       try {
         await Future.wait([
           prefs.remove('url').then(
-              (success) => debugPrint('LogoutService: Removed url: $success')),
+                  (success) => debugPrint('LogoutService: Removed url: $success')),
           prefs.remove('isLoggedIn').then((success) =>
               debugPrint('LogoutService: Removed isLoggedIn: $success')),
           prefs.remove('userName').then((success) =>
@@ -193,6 +192,16 @@ class LogoutService {
         rethrow;
       }
 
+      // Clear DataSyncManager cache
+      debugPrint('LogoutService: Clearing DataSyncManager cache');
+      try {
+        await DataSyncManager().clearCache();
+        debugPrint('LogoutService: DataSyncManager cache cleared successfully');
+      } catch (e) {
+        debugPrint('LogoutService: Error clearing DataSyncManager cache: $e');
+        // Optionally add to error handling, but don't rethrow to continue logout
+      }
+
       // Wait for minimum loading time to complete
       await minLoadingTime;
 
@@ -217,8 +226,8 @@ class LogoutService {
         try {
           await Navigator.pushAndRemoveUntil(
             context,
-            SlidingPageTransitionLR(page: Login()),
-            (Route<dynamic> route) => false,
+            SlidingPageTransitionRL(page: Login()), // Ensure Login is defined
+                (Route<dynamic> route) => false,
           );
           debugPrint('LogoutService: Navigation to Login completed');
         } catch (e) {
@@ -280,7 +289,7 @@ class LogoutService {
               backgroundColor: Colors.red,
               behavior: SnackBarBehavior.floating,
               margin:
-                  const EdgeInsets.only(bottom: 20.0, left: 20.0, right: 20.0),
+              const EdgeInsets.only(bottom: 20.0, left: 20.0, right: 20.0),
               shape: const RoundedRectangleBorder(
                 borderRadius: BorderRadius.all(Radius.circular(8.0)),
               ),
@@ -300,7 +309,6 @@ class LogoutService {
     }
   }
 }
-
 const Color primaryColor = Color(0xFFA12424);
 final Color neutralGrey = const Color(0xFF757575);
 final Color backgroundColor = const Color(0xFFF5F5F5);

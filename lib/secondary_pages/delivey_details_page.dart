@@ -13,6 +13,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:printing/printing.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:shimmer/shimmer.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../../../authentication/cyllo_session_model.dart';
 import '../providers/sale_order_detail_provider.dart';
@@ -1627,7 +1628,164 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return Center(
-                child: CircularProgressIndicator(color: Color(0xFFA12424)));
+              child: SingleChildScrollView(
+                padding: EdgeInsets.all(16.0),
+                child: Shimmer.fromColors(
+                  baseColor: Colors.grey[300]!,
+                  highlightColor: Colors.grey[100]!,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Delivery Status Card
+                      Card(
+                        elevation: 2,
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                        child: Padding(
+                          padding: EdgeInsets.all(16.0),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Container(
+                                    width: 120,
+                                    height: 20,
+                                    color: Colors.white,
+                                  ),
+                                  Container(
+                                    width: 80,
+                                    height: 30,
+                                    color: Colors.white,
+                                  ),
+                                ],
+                              ),
+                              SizedBox(height: 16),
+                              // Info Rows
+                              ...List.generate(
+                                6,
+                                (index) => Padding(
+                                  padding: EdgeInsets.only(bottom: 12.0),
+                                  child: Row(
+                                    children: [
+                                      Container(
+                                        width: 20,
+                                        height: 20,
+                                        color: Colors.white,
+                                      ),
+                                      SizedBox(width: 12),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Container(
+                                              width: 100,
+                                              height: 14,
+                                              color: Colors.white,
+                                            ),
+                                            SizedBox(height: 4),
+                                            Container(
+                                              width: double.infinity,
+                                              height: 16,
+                                              color: Colors.white,
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      SizedBox(height: 16),
+                      // Activity History Card
+                      Card(
+                        elevation: 2,
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                        child: Padding(
+                          padding: EdgeInsets.all(16.0),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Container(
+                                width: 150,
+                                height: 20,
+                                color: Colors.white,
+                              ),
+                              SizedBox(height: 8),
+                              // Timeline Items
+                              ...List.generate(
+                                3,
+                                (index) => Padding(
+                                  padding: EdgeInsets.only(bottom: 16.0),
+                                  child: Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Column(
+                                        children: [
+                                          Container(
+                                            width: 12,
+                                            height: 12,
+                                            decoration: BoxDecoration(
+                                              shape: BoxShape.circle,
+                                              color: Colors.white,
+                                            ),
+                                          ),
+                                          if (index < 2)
+                                            Container(
+                                              width: 2,
+                                              height: 70,
+                                              color: Colors.white,
+                                            ),
+                                        ],
+                                      ),
+                                      SizedBox(width: 12),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Container(
+                                              width: 120,
+                                              height: 14,
+                                              color: Colors.white,
+                                            ),
+                                            SizedBox(height: 4),
+                                            Container(
+                                              width: 80,
+                                              height: 16,
+                                              color: Colors.white,
+                                            ),
+                                            SizedBox(height: 4),
+                                            Container(
+                                              width: double.infinity,
+                                              height: 40,
+                                              color: Colors.white,
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
           }
           if (snapshot.hasError) {
             return Center(
@@ -1691,6 +1849,31 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
                 !_lotNumberControllers.containsKey(moveLineId)) {
               _lotNumberControllers[moveLineId] = TextEditingController();
             }
+          }
+          Widget _buildEmptyState() {
+            return Container(
+              height: 300,
+              alignment: Alignment.center,
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    Icons.inventory_2_outlined,
+                    size: 64,
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'No Picked Products Available',
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                      color: theme.colorScheme.onSurface,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                ],
+              ),
+            );
           }
 
           return TabBarView(
@@ -1852,153 +2035,236 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
 
               // Products Tab (unchanged)
               SingleChildScrollView(
-                padding: EdgeInsets.all(16.0),
+                padding: const EdgeInsets.all(16.0),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Text('Products',
-                            style: theme.textTheme.titleLarge
-                                ?.copyWith(fontWeight: FontWeight.bold)),
-                        Text('${moveLines.length} items',
-                            style: theme.textTheme.bodyMedium),
+                        Text(
+                          'Products',
+                          style: theme.textTheme.titleLarge?.copyWith(
+                            fontWeight: FontWeight.bold,
+                            color: theme.colorScheme.primary,
+                          ),
+                        ),
+                        Text(
+                          '${moveLines.length} items',
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
                       ],
                     ),
-                    SizedBox(height: 8),
+                    const SizedBox(height: 8),
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Text('Ordered: $totalOrdered',
-                            style: theme.textTheme.bodyMedium),
-                        Text('Picked: $totalPicked',
-                            style: theme.textTheme.bodyMedium
-                                ?.copyWith(color: Colors.green)),
+                        Text(
+                          'Ordered: $totalOrdered',
+                          style: theme.textTheme.bodyMedium,
+                        ),
+                        Text(
+                          'Picked: $totalPicked',
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: Colors.green.shade600,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
                       ],
                     ),
-                    SizedBox(height: 16),
-                    ListView.builder(
-                      shrinkWrap: true,
-                      physics: NeverScrollableScrollPhysics(),
-                      itemCount: moveLines.length,
-                      itemBuilder: (context, index) {
-                        final line = moveLines[index];
-                        final productId = line['product_id'];
-                        if (productId is! List)
-                          return ListTile(title: Text('Invalid product data'));
-                        final productName = productId.length > 1
-                            ? productId[1] as String
-                            : 'Unknown Product';
-                        final pickedQty = line['quantity'] as double? ?? 0.0;
-                        final orderedQty =
-                            line['ordered_qty'] as double? ?? 0.0;
-                        final productCode = line['product_code'] is String
-                            ? line['product_code'] as String
-                            : '';
-                        final productBarcode = line['product_barcode'] is String
-                            ? line['product_barcode'] as String
-                            : '';
-                        final uomName = line['uom_name'] is String
-                            ? line['uom_name'] as String
-                            : 'Units';
-                        final priceUnit = line['price_unit'] as double? ?? 0.0;
-                        final lotName = line['lot_name'] != false &&
-                                line['lot_name'] is String
-                            ? line['lot_name'] as String
-                            : null;
-                        final productImage = line['product_image'];
-                        Widget imageWidget;
-                        if (productImage != null &&
-                            productImage != false &&
-                            productImage is String) {
-                          try {
-                            imageWidget = Image.memory(
-                                base64Decode(productImage),
-                                fit: BoxFit.cover,
-                                width: 40,
-                                height: 40);
-                          } catch (e) {
-                            imageWidget = Icon(Icons.inventory_2,
-                                color: Colors.grey[400], size: 24);
-                          }
-                        } else {
-                          imageWidget = Icon(Icons.inventory_2,
-                              color: Colors.grey[400], size: 24);
-                        }
-                        final lineValue = priceUnit * pickedQty;
+                    const SizedBox(height: 16),
+                    moveLines.isEmpty
+                        ? _buildEmptyState()
+                        : ListView.builder(
+                            shrinkWrap: true,
+                            physics: const NeverScrollableScrollPhysics(),
+                            itemCount: moveLines.length,
+                            itemBuilder: (context, index) {
+                              final line = moveLines[index];
+                              final productId = line['product_id'];
+                              if (productId is! List) {
+                                return const ListTile(
+                                    title: Text('Invalid product data'));
+                              }
+                              final productName = productId.length > 1
+                                  ? productId[1] as String
+                                  : 'Unknown Product';
+                              final pickedQty =
+                                  line['quantity'] as double? ?? 0.0;
+                              final orderedQty =
+                                  line['ordered_qty'] as double? ?? 0.0;
+                              final productCode = line['product_code'] is String
+                                  ? line['product_code'] as String
+                                  : '';
+                              final productBarcode =
+                                  line['product_barcode'] is String
+                                      ? line['product_barcode'] as String
+                                      : '';
+                              final uomName = line['uom_name'] is String
+                                  ? line['uom_name'] as String
+                                  : 'Units';
+                              final priceUnit =
+                                  line['price_unit'] as double? ?? 0.0;
+                              final lotName = line['lot_name'] != false &&
+                                      line['lot_name'] is String
+                                  ? line['lot_name'] as String
+                                  : null;
+                              final productImage = line['product_image'];
+                              Widget imageWidget;
+                              if (productImage != null &&
+                                  productImage != false &&
+                                  productImage is String) {
+                                try {
+                                  imageWidget = Image.memory(
+                                    base64Decode(productImage),
+                                    fit: BoxFit.cover,
+                                    width: 48,
+                                    height: 48,
+                                  );
+                                } catch (e) {
+                                  imageWidget = Icon(
+                                    Icons.inventory_2,
+                                    color: theme.colorScheme.onSurfaceVariant,
+                                    size: 24,
+                                  );
+                                }
+                              } else {
+                                imageWidget = Icon(
+                                  Icons.inventory_2,
+                                  color: theme.colorScheme.onSurfaceVariant,
+                                  size: 24,
+                                );
+                              }
+                              final lineValue = priceUnit * pickedQty;
 
-                        return Card(
-                          elevation: 2,
-                          margin: EdgeInsets.only(bottom: 12),
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12)),
-                          child: Padding(
-                            padding: EdgeInsets.all(12.0),
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Container(
-                                  width: 40,
-                                  height: 40,
-                                  decoration: BoxDecoration(
-                                    color: Colors.grey[100],
-                                    borderRadius: BorderRadius.circular(8),
+                              return AnimatedOpacity(
+                                opacity: 1.0,
+                                duration: const Duration(milliseconds: 300),
+                                child: Card(
+                                  elevation: 3,
+                                  margin: const EdgeInsets.only(bottom: 12),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(16),
                                   ),
-                                  child: imageWidget,
-                                ),
-                                SizedBox(width: 12),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(productName,
-                                          style: theme.textTheme.titleMedium
-                                              ?.copyWith(
-                                                  fontWeight: FontWeight.w600)),
-                                      if (productCode.isNotEmpty)
-                                        Text('SKU: $productCode',
-                                            style: theme.textTheme.bodySmall
-                                                ?.copyWith(color: Colors.grey)),
-                                      if (productBarcode.isNotEmpty)
-                                        Text('Barcode: $productBarcode',
-                                            style: theme.textTheme.bodySmall
-                                                ?.copyWith(color: Colors.grey)),
-                                      if (lotName != null)
-                                        Text('Lot: $lotName',
-                                            style: theme.textTheme.bodySmall
-                                                ?.copyWith(color: Colors.grey)),
-                                      SizedBox(height: 8),
-                                      Row(
-                                        mainAxisAlignment:
-                                            MainAxisAlignment.spaceBetween,
-                                        children: [
-                                          Text('Ordered: $orderedQty $uomName',
-                                              style: theme.textTheme.bodySmall),
-                                          Text(
-                                            'Picked: $pickedQty $uomName',
-                                            style: theme.textTheme.bodySmall
-                                                ?.copyWith(
-                                              color: pickedQty >= orderedQty
-                                                  ? Colors.green
-                                                  : Colors.orange,
-                                            ),
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(12.0),
+                                    child: Row(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Container(
+                                          width: 48,
+                                          height: 48,
+                                          decoration: BoxDecoration(
+                                            color: theme
+                                                .colorScheme.surfaceContainer,
+                                            borderRadius:
+                                                BorderRadius.circular(12),
+                                            boxShadow: [
+                                              BoxShadow(
+                                                color: Colors.black
+                                                    .withOpacity(0.05),
+                                                blurRadius: 4,
+                                                offset: const Offset(0, 2),
+                                              ),
+                                            ],
                                           ),
-                                        ],
-                                      ),
-                                      Text(
-                                          'Value: \$${lineValue.toStringAsFixed(2)}',
-                                          style: theme.textTheme.bodySmall),
-                                    ],
+                                          child: Center(child: imageWidget),
+                                        ),
+                                        const SizedBox(width: 12),
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              Text(
+                                                productName,
+                                                style: theme
+                                                    .textTheme.titleMedium
+                                                    ?.copyWith(
+                                                  fontWeight: FontWeight.w600,
+                                                  color: theme
+                                                      .colorScheme.onSurface,
+                                                ),
+                                              ),
+                                              if (productCode.isNotEmpty)
+                                                Text(
+                                                  'SKU: $productCode',
+                                                  style: theme
+                                                      .textTheme.bodySmall
+                                                      ?.copyWith(
+                                                    color: theme.colorScheme
+                                                        .onSurfaceVariant,
+                                                  ),
+                                                ),
+                                              if (productBarcode.isNotEmpty)
+                                                Text(
+                                                  'Barcode: $productBarcode',
+                                                  style: theme
+                                                      .textTheme.bodySmall
+                                                      ?.copyWith(
+                                                    color: theme.colorScheme
+                                                        .onSurfaceVariant,
+                                                  ),
+                                                ),
+                                              if (lotName != null)
+                                                Text(
+                                                  'Lot: $lotName',
+                                                  style: theme
+                                                      .textTheme.bodySmall
+                                                      ?.copyWith(
+                                                    color: theme.colorScheme
+                                                        .onSurfaceVariant,
+                                                  ),
+                                                ),
+                                              const SizedBox(height: 8),
+                                              Row(
+                                                mainAxisAlignment:
+                                                    MainAxisAlignment
+                                                        .spaceBetween,
+                                                children: [
+                                                  Text(
+                                                    'Ordered: $orderedQty $uomName',
+                                                    style: theme
+                                                        .textTheme.bodySmall,
+                                                  ),
+                                                  Text(
+                                                    'Picked: $pickedQty $uomName',
+                                                    style: theme
+                                                        .textTheme.bodySmall
+                                                        ?.copyWith(
+                                                      color: pickedQty >=
+                                                              orderedQty
+                                                          ? Colors
+                                                              .green.shade600
+                                                          : Colors
+                                                              .orange.shade600,
+                                                      fontWeight:
+                                                          FontWeight.w600,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                              Text(
+                                                'Value: \$${lineValue.toStringAsFixed(2)}',
+                                                style: theme.textTheme.bodySmall
+                                                    ?.copyWith(
+                                                  color: theme
+                                                      .colorScheme.onSurface,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ],
+                                    ),
                                   ),
                                 ),
-                              ],
-                            ),
+                              );
+                            },
                           ),
-                        );
-                      },
-                    ),
                   ],
                 ),
               ),
@@ -2986,7 +3252,7 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
         throw Exception('No active Odoo session found.');
       }
 
-      final pickingId = widget.pickingData['id'] as int;
+      final pickingId = widget.pickingData['id'] ?? 0 as int;
 
       // Fetch stock.move.line
       debugPrint('Fetching stock.move.line for pickingId: $pickingId');

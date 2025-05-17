@@ -74,6 +74,7 @@ class _ProductsPageState extends State<ProductsPage> {
           'initState: Initialized ${filteredProductTemplates.length} product templates');
     });
   }
+
   void _restoreDraftState() {
     final salesProvider =
         Provider.of<SalesOrderProvider>(context, listen: false);
@@ -115,30 +116,6 @@ class _ProductsPageState extends State<ProductsPage> {
     }
   }
 
-  Future<bool> _isBarcodeUnique(String barcode, {int? excludeProductId}) async {
-    try {
-      final client = await SessionManager.getActiveClient();
-      if (client == null) throw Exception('No active session found.');
-
-      final domain = [
-        ['barcode', '=', barcode],
-      ];
-      if (excludeProductId != null) {
-        domain.add(['id', '!=', excludeProductId.toString()]);
-      }
-      final result = await client.callKw({
-        'model': 'product.product',
-        'method': 'search',
-        'args': [domain],
-        'kwargs': {},
-      });
-
-      return result.isEmpty; // True if barcode is unique, false if already used
-    } catch (e) {
-      debugPrint('Error checking barcode uniqueness: $e');
-      return false; // Assume non-unique on error to prevent submission
-    }
-  }
 
   void _filterProductTemplates(String query) {
     setState(() {
@@ -314,7 +291,7 @@ class _ProductsPageState extends State<ProductsPage> {
           Container(
             width: MediaQuery.of(context).size.width,
             height: MediaQuery.of(context).size.height,
-            padding: const EdgeInsets.only(left: 12, right: 12, top: 12),
+            padding: const EdgeInsets.only(left: 16, right: 16, top: 16),
             child: RefreshIndicator(
               onRefresh: _refreshProducts,
               color: primaryColor,
@@ -337,7 +314,7 @@ class _ProductsPageState extends State<ProductsPage> {
     if (variants.isEmpty) return;
 
     final deviceSize = MediaQuery.of(context).size;
-    final dialogHeight = deviceSize.height * 0.75; // 75% of screen height
+    final dialogHeight = deviceSize.height * 0.75;
 
     await showDialog(
       context: context,
@@ -350,9 +327,9 @@ class _ProductsPageState extends State<ProductsPage> {
           elevation: 5,
           backgroundColor: Colors.white,
           insetPadding: EdgeInsets.zero,
-          // Remove default padding to allow full width
+
           child: FractionallySizedBox(
-            widthFactor: .9, // Use full screen width
+            widthFactor: .9,
             child: Container(
               constraints: BoxConstraints(
                 maxHeight: dialogHeight,
@@ -490,7 +467,6 @@ class _ProductsPageState extends State<ProductsPage> {
         imageBytes = null;
       }
     }
-
 
     bool isSelected = false;
     if (selectedAttributes != null) {
@@ -671,7 +647,7 @@ class _ProductsPageState extends State<ProductsPage> {
         ),
       ),
     );
-  } // Helper function to split product name into base name and variant parts
+  }
 
   List<String> nameParts(String name) {
     final parts = name.split(' [');
@@ -682,7 +658,7 @@ class _ProductsPageState extends State<ProductsPage> {
   }
 
   Widget buildProductsList() {
-    // Get categories, filter out nulls
+
     List<String> categories = filteredProductTemplates
         .where((p) => p['category'] != null)
         .map((p) => p['category'] as String)
@@ -690,7 +666,7 @@ class _ProductsPageState extends State<ProductsPage> {
         .toList()
       ..sort();
 
-    // If no categories, use a default "All Products" tab
+
     if (categories.isEmpty) {
       categories = ['All Products'];
     }
@@ -702,40 +678,37 @@ class _ProductsPageState extends State<ProductsPage> {
       length: categories.length,
       child: Column(
         children: [
-          Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: TextField(
-              controller: searchController,
-              decoration: InputDecoration(
-                hintText: 'Search products...',
-                hintStyle: const TextStyle(color: Colors.grey),
-                prefixIcon: const Icon(Icons.search, color: Colors.grey),
-                suffixIcon: searchController.text.isNotEmpty
-                    ? IconButton(
-                  icon: const Icon(Icons.clear, color: Colors.grey),
-                  onPressed: () {
-                    searchController.clear();
-                    _filterProductTemplates('');
-                  },
-                )
-                    : null,
-                filled: true,
-                fillColor: Colors.white,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: BorderSide.none,
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: BorderSide(color: Colors.grey[300]!),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: const BorderSide(color: Color(0xFF1F2C54)),
-                ),
+          TextField(
+            controller: searchController,
+            decoration: InputDecoration(
+              hintText: 'Search products...',
+              hintStyle: const TextStyle(color: Colors.grey),
+              prefixIcon: const Icon(Icons.search, color: Colors.grey),
+              suffixIcon: searchController.text.isNotEmpty
+                  ? IconButton(
+                      icon: const Icon(Icons.clear, color: Colors.grey),
+                      onPressed: () {
+                        searchController.clear();
+                        _filterProductTemplates('');
+                      },
+                    )
+                  : null,
+              filled: true,
+              fillColor: Colors.white,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: BorderSide.none,
               ),
-              onChanged: _filterProductTemplates,
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: BorderSide(color: Colors.grey[300]!),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: const BorderSide(color: Color(0xFF1F2C54)),
+              ),
             ),
+            onChanged: _filterProductTemplates,
           ),
           TabBar(
             isScrollable: true,
@@ -745,11 +718,11 @@ class _ProductsPageState extends State<ProductsPage> {
             unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.w500),
             tabs: categories
                 .map((category) => Tab(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8.0),
-                child: Text(category),
-              ),
-            ))
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                        child: Text(category),
+                      ),
+                    ))
                 .toList(),
           ),
           const SizedBox(height: 10),
@@ -757,73 +730,73 @@ class _ProductsPageState extends State<ProductsPage> {
             child: TabBarView(
               children: categories.map((category) {
                 final filteredByCategory = category == 'All Products'
-                    ? filteredProductTemplates // Show all products if no categories
+                    ? filteredProductTemplates
                     : filteredProductTemplates
-                    .where((p) => p['category'] == category)
-                    .toList();
+                        .where((p) => p['category'] == category)
+                        .toList();
                 developer.log(
                     'buildProductsList: Category "$category" has ${filteredByCategory.length} templates');
 
                 return filteredByCategory.isEmpty
                     ? const Center(child: Text("No products in this category."))
                     : RefreshIndicator(
-                  onRefresh: _refreshProducts,
-                  color: const Color(0xFF1F2C54),
-                  child: ListView.builder(
-                    physics: const AlwaysScrollableScrollPhysics(),
-                    itemCount: filteredByCategory.length,
-                    itemBuilder: (context, index) {
-                      final template = filteredByCategory[index];
-                      return GestureDetector(
-                        onTap: () async {
-                          if (template['variants'].length > 1) {
-                            final odooClient =
-                            await SessionManager.getActiveClient();
-                            if (odooClient == null) {
-                              developer.log(
-                                  'Error: Failed to initialize OdooClient');
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text(
-                                      'Unable to load variants: Session not initialized'),
-                                  backgroundColor: Colors.red,
-                                  behavior: SnackBarBehavior.floating,
-                                ),
-                              );
-                              return;
-                            }
+                        onRefresh: _refreshProducts,
+                        color: const Color(0xFF1F2C54),
+                        child: ListView.builder(
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          itemCount: filteredByCategory.length,
+                          itemBuilder: (context, index) {
+                            final template = filteredByCategory[index];
+                            return GestureDetector(
+                              onTap: () async {
+                                if (template['variants'].length > 1) {
+                                  final odooClient =
+                                      await SessionManager.getActiveClient();
+                                  if (odooClient == null) {
+                                    developer.log(
+                                        'Error: Failed to initialize OdooClient');
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text(
+                                            'Unable to load variants: Session not initialized'),
+                                        backgroundColor: Colors.red,
+                                        behavior: SnackBarBehavior.floating,
+                                      ),
+                                    );
+                                    return;
+                                  }
 
-                            Map<String, String>? selectedAttributes;
-                            if (template['variants'].isNotEmpty) {
-                              selectedAttributes =
-                                  (template['variants'][0] as Product)
-                                      .selectedVariants;
-                            }
-                            await _showVariantsDialog(
-                              context,
-                              template,
-                              odooClient,
-                              selectedAttributes,
+                                  Map<String, String>? selectedAttributes;
+                                  if (template['variants'].isNotEmpty) {
+                                    selectedAttributes =
+                                        (template['variants'][0] as Product)
+                                            .selectedVariants;
+                                  }
+                                  await _showVariantsDialog(
+                                    context,
+                                    template,
+                                    odooClient,
+                                    selectedAttributes,
+                                  );
+                                } else {
+                                  Navigator.push(
+                                    context,
+                                    SlidingPageTransitionRL(
+                                      page: ProductDetailsPage(
+                                        productId: template['variants'][0].id,
+                                        selectedAttributes:
+                                            (template['variants'][0] as Product)
+                                                .selectedVariants,
+                                      ),
+                                    ),
+                                  );
+                                }
+                              },
+                              child: _buildProductCard(template),
                             );
-                          } else {
-                            Navigator.push(
-                              context,
-                              SlidingPageTransitionRL(
-                                page: ProductDetailsPage(
-                                  productId: template['variants'][0].id,
-                                  selectedAttributes:
-                                  (template['variants'][0] as Product)
-                                      .selectedVariants,
-                                ),
-                              ),
-                            );
-                          }
-                        },
-                        child: _buildProductCard(template),
+                          },
+                        ),
                       );
-                    },
-                  ),
-                );
               }).toList(),
             ),
           ),
@@ -831,6 +804,7 @@ class _ProductsPageState extends State<ProductsPage> {
       ),
     );
   }
+
   Widget _buildProductCard(Map<String, dynamic> template) {
     final imageUrl = template['imageUrl'] as String?;
     Uint8List? imageBytes;

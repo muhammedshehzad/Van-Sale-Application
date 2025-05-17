@@ -9,6 +9,7 @@ import 'package:latest_van_sale_application/providers/invoice_provider.dart';
 import 'package:latest_van_sale_application/providers/order_picking_provider.dart';
 import 'package:latest_van_sale_application/providers/sale_order_detail_provider.dart';
 import 'package:latest_van_sale_application/providers/sale_order_provider.dart';
+import 'package:latest_van_sale_application/secondary_pages/settings_page.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'assets/widgets and consts/cached_data.dart';
@@ -40,6 +41,7 @@ void main() async {
         ChangeNotifierProvider(create: (_) => DataSyncManager()),
         ChangeNotifierProvider(create: (_) => DataProvider()),
         ChangeNotifierProvider(create: (_) => InvoiceCreationProvider()),
+        ChangeNotifierProvider(create: (_) => SettingsProvider()),
         ChangeNotifierProvider(
             create: (_) => SaleOrderDetailProvider(orderData: {})),
       ],
@@ -79,6 +81,41 @@ class _MyAppState extends State<MyApp> {
     super.dispose();
   }
 
+  void _showSyncErrorDialog(BuildContext context, List<String> errors) {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Data Sync Issues'),
+          content: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                    'Some data could not be loaded. Using cached data if available:'),
+                const SizedBox(height: 8),
+                ...errors.map((error) => Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 4.0),
+                      child: Text('• $error',
+                          style: const TextStyle(color: Colors.red)),
+                    )),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+              },
+              child: const Text('OK'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   Future<void> _checkLoginStatus() async {
     _progressTracker = ProgressTracker(
       tasks: [
@@ -94,6 +131,8 @@ class _MyAppState extends State<MyApp> {
         });
       },
     );
+
+    List<String> syncErrors = [];
 
     try {
       // Create artificial delay for smoother progress visualization
@@ -124,7 +163,7 @@ class _MyAppState extends State<MyApp> {
 
         // Task 4: Sync data if needed
         if (needsSync) {
-          await _syncManager.performFullSync(context);
+          syncErrors = await _syncManager.performFullSync(context);
         }
         _progressTracker.completeTask('Syncing data');
 
@@ -145,6 +184,11 @@ class _MyAppState extends State<MyApp> {
         _isLoggedIn = isLoggedIn;
         _isLoading = false;
       });
+
+      // Show dialog if there were sync errors
+      if (syncErrors.isNotEmpty) {
+        _showSyncErrorDialog(context, syncErrors);
+      }
     } catch (e) {
       setState(() {
         _isLoading = false;

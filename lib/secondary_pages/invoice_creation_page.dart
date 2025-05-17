@@ -5,8 +5,9 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
+import 'package:shimmer/shimmer.dart';
 import '../assets/widgets and consts/page_transition.dart';
-import '../authentication/cyllo_session_model.dart'; // For session handling
+import '../authentication/cyllo_session_model.dart';
 import '../providers/invoice_creation_provider.dart';
 import '../providers/order_picking_provider.dart';
 import '../providers/sale_order_provider.dart';
@@ -23,16 +24,32 @@ class InvoiceCreationPage extends StatefulWidget {
 }
 
 class _InvoiceCreationPageState extends State<InvoiceCreationPage> {
+  List<Map<String, dynamic>> filteredSaleOrders = []; // Declare at class level
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      Provider.of<InvoiceCreationProvider>(context, listen: false)
-          .initialize(widget.saleOrderData);
+      final provider =
+          Provider.of<InvoiceCreationProvider>(context, listen: false);
+      provider.initialize(widget.saleOrderData);
+      if (widget.saleOrderData.isEmpty) {
+        _loadInitialSaleOrders();
+      } else {
+        debugPrint('Initialized with sale order data: ${widget.saleOrderData}');
+      }
+      debugPrint('Initialized with sale order data: ${widget.saleOrderData}');
     });
   }
 
-  // Method to fetch variant attributes (adapted from CreateOrderPage)
+  Future<void> _loadInitialSaleOrders() async {
+    final provider =
+        Provider.of<InvoiceCreationProvider>(context, listen: false);
+    final saleOrders = await _fetchSaleOrders();
+    setState(() {
+      filteredSaleOrders = saleOrders;
+    });
+  }
+
   Future<List<Map<String, String>>> _fetchVariantAttributes(
       List<int> attributeValueIds) async {
     try {
@@ -91,7 +108,377 @@ class _InvoiceCreationPageState extends State<InvoiceCreationPage> {
     }
   }
 
-  // Variant dialog (adapted from CreateOrderPage)
+  void _showSaleOrderPicker(
+      BuildContext context, InvoiceCreationProvider provider) {
+    final searchController = TextEditingController();
+    List<Map<String, dynamic>> filteredSaleOrders = [];
+    bool isSearching = false;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        return DraggableScrollableSheet(
+          initialChildSize: 0.9,
+          minChildSize: 0.5,
+          maxChildSize: 0.9,
+          expand: false,
+          builder: (context, scrollController) {
+            return StatefulBuilder(
+              builder: (context, setState) {
+                if (filteredSaleOrders.isEmpty && !isSearching) {
+                  filteredSaleOrders = this.filteredSaleOrders;
+                }
+
+                return Column(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: primaryColor,
+                        borderRadius: const BorderRadius.vertical(
+                            top: Radius.circular(20)),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text(
+                            'Select Sale Order',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.close, color: Colors.white),
+                            onPressed: () => Navigator.pop(context),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: TextField(
+                        controller: searchController,
+                        decoration: InputDecoration(
+                          hintText: 'Search by order name or customer',
+                          prefixIcon:
+                              Icon(Icons.search, color: Colors.grey[600]),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(10),
+                            borderSide: BorderSide(color: Colors.grey[300]!),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(10),
+                            borderSide:
+                                BorderSide(color: primaryColor, width: 2),
+                          ),
+                          filled: true,
+                          fillColor: Colors.white,
+                          contentPadding:
+                              const EdgeInsets.symmetric(vertical: 10),
+                        ),
+                        onChanged: (query) async {
+                          setState(() {
+                            isSearching = true;
+                          });
+                          final saleOrders =
+                              await _fetchSaleOrders(query: query.trim());
+                          setState(() {
+                            filteredSaleOrders = saleOrders;
+                            isSearching = false;
+                          });
+                          if (query.isEmpty) {
+                            setState(() {
+                              filteredSaleOrders = this.filteredSaleOrders;
+                            });
+                          }
+                        },
+                      ),
+                    ),
+                    Expanded(
+                      child: isSearching
+                          ? const Center(child: CircularProgressIndicator())
+                          : filteredSaleOrders.isEmpty
+                              ? const Center(
+                                  child: Text('No sale orders found'))
+                              : ListView.builder(
+                                  controller: scrollController,
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 8),
+                                  itemCount: filteredSaleOrders.length,
+                                  itemBuilder: (context, index) {
+                                    final order = filteredSaleOrders[index];
+                                    return GestureDetector(
+                                      onTap: () async {
+                                        final fullOrderDetails =
+                                            await _fetchSaleOrderDetails(
+                                                order['id']);
+                                        if (fullOrderDetails != null) {
+                                          provider.updateSaleOrder(
+                                              fullOrderDetails);
+                                          Navigator.pop(context);
+                                        } else {
+                                          ScaffoldMessenger.of(context)
+                                              .showSnackBar(
+                                            const SnackBar(
+                                                content: Text(
+                                                    'Failed to load sale order details')),
+                                          );
+                                        }
+                                      },
+                                      child: Padding(
+                                        padding: const EdgeInsets.symmetric(
+                                            vertical: 8, horizontal: 16),
+                                        child: Row(
+                                          children: [
+                                            Icon(Icons.receipt_long,
+                                                color: primaryColor, size: 24),
+                                            const SizedBox(width: 12),
+                                            Expanded(
+                                              child: Column(
+                                                crossAxisAlignment:
+                                                    CrossAxisAlignment.start,
+                                                children: [
+                                                  Text(
+                                                    order['name'],
+                                                    style: const TextStyle(
+                                                      fontWeight:
+                                                          FontWeight.w500,
+                                                      fontSize: 14,
+                                                    ),
+                                                  ),
+                                                  Text(
+                                                    'Customer: ${order['partner_name']}',
+                                                    style: TextStyle(
+                                                      color: Colors.grey[600],
+                                                      fontSize: 12,
+                                                    ),
+                                                  ),
+                                                  const SizedBox(height: 4),
+                                                  Text(
+                                                    'Status: ${order['state']}',
+                                                    style: TextStyle(
+                                                      color: Colors.grey[600],
+                                                      fontSize: 12,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                            Expanded(
+                                              child: Column(
+                                                crossAxisAlignment:
+                                                    CrossAxisAlignment.end,
+                                                children: [
+                                                  Text(
+                                                    'Order ID: ${order['id']}',
+                                                    style: TextStyle(
+                                                      color: Colors.grey[600],
+                                                      fontSize: 12,
+                                                    ),
+                                                  ),
+                                                  const SizedBox(height: 4),
+                                                  Text(
+                                                    'Total: \$${order['amount_total']?.toStringAsFixed(2) ?? '0.00'}',
+                                                    style: TextStyle(
+                                                      color: Colors.grey[600],
+                                                      fontSize: 12,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            )
+                                          ],
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                ),
+                    ),
+                  ],
+                );
+              },
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<Map<String, dynamic>?> _fetchSaleOrderDetails(int saleOrderId) async {
+    try {
+      final client = await SessionManager.getActiveClient();
+      if (client == null) {
+        log("Error: Odoo client is null");
+        return null;
+      }
+
+      // Fetch sale order details
+      final result = await client.callKw({
+        'model': 'sale.order',
+        'method': 'read',
+        'args': [
+          [saleOrderId],
+          [
+            'id',
+            'name',
+            'partner_id',
+            'state',
+            'amount_total',
+            'currency_id',
+            'user_id',
+            'order_line',
+            'payment_term_id',
+            'fiscal_position_id',
+            'date_order',
+            'validity_date',
+          ],
+        ],
+        'kwargs': {},
+      });
+
+      if (result.isEmpty) return null;
+
+      final saleOrder = result[0];
+      final orderLineIds = saleOrder['order_line'] as List<dynamic>? ?? [];
+
+      // Fetch order lines details
+      final orderLines = orderLineIds.isNotEmpty
+          ? await client.callKw({
+              'model': 'sale.order.line',
+              'method': 'read',
+              'args': [
+                orderLineIds,
+                [
+                  'product_id',
+                  'name',
+                  'product_uom_qty',
+                  'price_unit',
+                  'discount',
+                  'tax_id',
+                  'price_subtotal',
+                ],
+              ],
+              'kwargs': {},
+            })
+          : [];
+
+      // Fetch product details for each order line
+      final productIds = orderLines
+          .map((line) => (line['product_id'] as List<dynamic>?)?.first)
+          .where((id) => id != null)
+          .toSet()
+          .toList();
+
+      final productDetails = productIds.isNotEmpty
+          ? await client.callKw({
+              'model': 'product.product',
+              'method': 'read',
+              'args': [
+                productIds,
+                ['default_code', 'barcode'],
+              ],
+              'kwargs': {},
+            })
+          : [];
+
+      // Map product details to order lines
+      final productMap = {
+        for (var product in productDetails) product['id']: product
+      };
+
+      final enrichedOrderLines = orderLines.map((line) {
+        final productId = (line['product_id'] as List<dynamic>?)?.first;
+        final product = productMap[productId];
+        return {
+          ...line,
+          'default_code': product?['default_code'] ?? '',
+          'barcode': product?['barcode'] ?? '',
+        };
+      }).toList();
+
+      return {
+        'id': saleOrder['id'],
+        'name': saleOrder['name'],
+        'partner_id': saleOrder['partner_id'],
+        'state': saleOrder['state'],
+        'amount_total': saleOrder['amount_total'],
+        'currency_id': saleOrder['currency_id'],
+        'user_id': saleOrder['user_id'],
+        'payment_term_id': saleOrder['payment_term_id'],
+        'fiscal_position_id': saleOrder['fiscal_position_id'],
+        'date_order': saleOrder['date_order'],
+        'validity_date': saleOrder['validity_date'],
+        'line_details': enrichedOrderLines,
+      };
+    } catch (e) {
+      log("Error fetching sale order details: $e");
+      return null;
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> _fetchSaleOrders(
+      {String query = ''}) async {
+    try {
+      final client = await SessionManager.getActiveClient();
+      if (client == null) {
+        log("Error: Odoo client is null");
+        return [];
+      }
+
+      // Broaden the state filter to include more possible states
+      final domain = [
+        [
+          'state',
+          'in',
+          ['draft', 'sent', 'sale', 'done']
+        ],
+        if (query.isNotEmpty) ...[
+          '|',
+          ['name', 'ilike', '%$query%'],
+          ['partner_id.name', 'ilike', '%$query%'],
+        ],
+      ];
+
+      final result = await client.callKw({
+        'model': 'sale.order',
+        'method': 'search_read',
+        'args': [domain],
+        'kwargs': {
+          'fields': ['id', 'name', 'partner_id', 'state', 'amount_total'],
+          'limit': 100, // Increased limit to fetch more results
+        },
+      });
+
+      if (result.isEmpty) {
+        log("No sale orders found for query: $query, domain: $domain");
+      } else {
+        log("Fetched ${result.length} sale orders");
+      }
+
+      return List<Map<String, dynamic>>.from(result).map((order) {
+        return {
+          'id': order['id'],
+          'name': order['name'] ?? 'Unnamed Order',
+          'partner_name':
+              order['partner_id'] is List && order['partner_id'].length > 1
+                  ? order['partner_id'][1]
+                  : 'Unknown Customer',
+          'state': order['state'] ?? 'unknown',
+          'amount_total': order['amount_total'] ?? 0.0,
+        };
+      }).toList();
+    } catch (e, stackTrace) {
+      log("Error fetching sale orders: $e\nStackTrace: $stackTrace");
+      return [];
+    }
+  }
+
   Future<void> _showVariantsDialog(
     BuildContext context,
     List<Product> variants,
@@ -373,7 +760,6 @@ class _InvoiceCreationPageState extends State<InvoiceCreationPage> {
 
                 return Column(
                   children: [
-                    // Header
                     Container(
                       padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
@@ -399,7 +785,6 @@ class _InvoiceCreationPageState extends State<InvoiceCreationPage> {
                         ],
                       ),
                     ),
-                    // Search Bar
                     Padding(
                       padding: const EdgeInsets.all(16),
                       child: TextField(
@@ -448,7 +833,6 @@ class _InvoiceCreationPageState extends State<InvoiceCreationPage> {
                         },
                       ),
                     ),
-                    // Product List
                     Expanded(
                       child: ListView.builder(
                         controller: scrollController,
@@ -636,7 +1020,7 @@ class _InvoiceCreationPageState extends State<InvoiceCreationPage> {
       'quantity': 1.0,
     };
     provider.addInvoiceLine(productData);
-  } // Rest of the InvoiceCreationPage code remains unchanged
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -659,8 +1043,156 @@ class _InvoiceCreationPageState extends State<InvoiceCreationPage> {
           ),
           body: SafeArea(
             child: provider.isLoading
-                ? const Center(
-                    child: CircularProgressIndicator(color: primaryColor))
+                ? Center(
+                    child: Shimmer.fromColors(
+                    baseColor: Colors.grey[300]!,
+                    highlightColor: Colors.grey[100]!,
+                    child: ListView.builder(
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      itemCount: 3, // Reduce to show fewer placeholders
+                      itemBuilder: (context, index) {
+                        return Padding(
+                          padding: const EdgeInsets.all(16),
+                          child: Card(
+                            elevation: 1,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Padding(
+                              padding: const EdgeInsets.all(16),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    mainAxisAlignment:
+                                        MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      Container(
+                                        width: 200,
+                                        height: 20,
+                                        decoration: BoxDecoration(
+                                          color: Colors.white,
+                                          borderRadius:
+                                              BorderRadius.circular(4),
+                                        ),
+                                      ),
+                                      Container(
+                                        width: 24,
+                                        height: 24,
+                                        decoration: BoxDecoration(
+                                          color: Colors.white,
+                                          borderRadius:
+                                              BorderRadius.circular(12),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 12),
+                                  Row(
+                                    children: [
+                                      Container(
+                                        width: 80,
+                                        height: 24,
+                                        decoration: BoxDecoration(
+                                          color: Colors.white,
+                                          borderRadius:
+                                              BorderRadius.circular(6),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Container(
+                                        width: 100,
+                                        height: 24,
+                                        decoration: BoxDecoration(
+                                          color: Colors.white,
+                                          borderRadius:
+                                              BorderRadius.circular(6),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 16),
+                                  Container(
+                                    padding: const EdgeInsets.all(8),
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: Row(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.spaceBetween,
+                                      children: [
+                                        Container(
+                                          width: 80,
+                                          height: 16,
+                                          color: Colors.white,
+                                        ),
+                                        Container(
+                                          width: 100,
+                                          height: 16,
+                                          color: Colors.white,
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  const SizedBox(height: 16),
+                                  Container(
+                                    height: 100,
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 12),
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: Container(
+                                          height: 48,
+                                          decoration: BoxDecoration(
+                                            color: Colors.white,
+                                            borderRadius:
+                                                BorderRadius.circular(8),
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 12),
+                                      Expanded(
+                                        child: Container(
+                                          height: 48,
+                                          decoration: BoxDecoration(
+                                            color: Colors.white,
+                                            borderRadius:
+                                                BorderRadius.circular(8),
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 12),
+                                  Container(
+                                    height: 48,
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 12),
+                                  Container(
+                                    height: 48,
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ))
                 : provider.errorMessage.isNotEmpty
                     ? _buildErrorState(provider)
                     : _buildContent(provider),
@@ -708,6 +1240,7 @@ class _InvoiceCreationPageState extends State<InvoiceCreationPage> {
       onRefresh: () async {
         await provider.fetchAvailableProducts();
         await provider.fetchJournals();
+        await provider.fetchPaymentMethods();
         await provider.fetchPaymentTerms();
         await provider.fetchFiscalPositions();
       },
@@ -738,10 +1271,53 @@ class _InvoiceCreationPageState extends State<InvoiceCreationPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              'Sale Order: ${provider.saleOrderData?['name'] ?? 'N/A'}',
-              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
-            ),
+            provider.saleOrderData?['id'] == null ||
+                    provider.saleOrderData?['name'] == null
+                ? Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Sale Order',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                          color: Colors.black87,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      InkWell(
+                        onTap: () => _showSaleOrderPicker(context, provider),
+                        child: InputDecorator(
+                          decoration: InputDecoration(
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 10,
+                            ),
+                          ),
+                          child: Text(
+                            provider.saleOrderData?['name'] ??
+                                'Select a Sale Order',
+                            style: TextStyle(
+                              fontSize: 14,
+                              color: provider.saleOrderData?['name'] != null
+                                  ? Colors.black87
+                                  : Colors.grey[600],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  )
+                : Text(
+                    'Sale Order: ${provider.saleOrderData?['name'] ?? 'N/A'}',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 18,
+                    ),
+                  ),
             const SizedBox(height: 12),
             DropdownButtonFormField(
               decoration: InputDecoration(
@@ -796,10 +1372,15 @@ class _InvoiceCreationPageState extends State<InvoiceCreationPage> {
                     OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
               ),
               value: provider.paymentTermId,
+              isExpanded: true,
               items: provider.availablePaymentTerms
                   .map((term) => DropdownMenuItem(
                         value: term['id'],
-                        child: Text(term['name']),
+                        child: Text(
+                          term['name'],
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontSize: 14),
+                        ),
                       ))
                   .toList(),
               onChanged: (value) => provider.updatePaymentTerms(value as int),
@@ -844,7 +1425,6 @@ class _InvoiceCreationPageState extends State<InvoiceCreationPage> {
 
   Widget _buildInvoiceLines(InvoiceCreationProvider provider) {
     final deviceSize = MediaQuery.of(context).size;
-    print(provider.invoiceLines);
     return Card(
       elevation: 3,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -895,7 +1475,6 @@ class _InvoiceCreationPageState extends State<InvoiceCreationPage> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          // Product Name and Delete Button
                           Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
@@ -926,7 +1505,6 @@ class _InvoiceCreationPageState extends State<InvoiceCreationPage> {
                             ],
                           ),
                           const SizedBox(height: 8),
-                          // SKU, Barcode, and Variants
                           Wrap(
                             spacing: 8,
                             runSpacing: 8,
@@ -964,7 +1542,6 @@ class _InvoiceCreationPageState extends State<InvoiceCreationPage> {
                                     style: TextStyle(
                                       color: Colors.grey[800],
                                       fontSize: 12,
-                                      fontWeight: FontWeight.w500,
                                     ),
                                   ),
                                 ),
@@ -987,7 +1564,6 @@ class _InvoiceCreationPageState extends State<InvoiceCreationPage> {
                             ),
                           ],
                           const SizedBox(height: 12),
-                          // Pricing Information
                           Container(
                             padding: const EdgeInsets.all(8),
                             decoration: BoxDecoration(
@@ -1017,7 +1593,6 @@ class _InvoiceCreationPageState extends State<InvoiceCreationPage> {
                             ),
                           ),
                           const SizedBox(height: 12),
-                          // Description Field
                           TextField(
                             decoration: InputDecoration(
                               labelText: 'Description',
@@ -1040,7 +1615,6 @@ class _InvoiceCreationPageState extends State<InvoiceCreationPage> {
                             ),
                           ),
                           const SizedBox(height: 12),
-                          // Quantity and Discount
                           Row(
                             children: [
                               Expanded(
@@ -1111,7 +1685,6 @@ class _InvoiceCreationPageState extends State<InvoiceCreationPage> {
                             ],
                           ),
                           const SizedBox(height: 12),
-                          // Taxes Dropdown
                           DropdownButtonFormField(
                             decoration: InputDecoration(
                               labelText: 'Tax',
@@ -1141,7 +1714,6 @@ class _InvoiceCreationPageState extends State<InvoiceCreationPage> {
                             ),
                           ),
                           const SizedBox(height: 12),
-                          // Analytic Account Dropdown
                           DropdownButtonFormField(
                             decoration: InputDecoration(
                               labelText: 'Analytic Account',
@@ -1330,7 +1902,30 @@ class _InvoiceCreationPageState extends State<InvoiceCreationPage> {
                     }
                     final result =
                         await provider.createDraftInvoice(saleOrderId);
-                    if (result != null && mounted) {
+                    if (result == null) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text(provider.errorMessage)),
+                      );
+                      return;
+                    }
+                    if (result['already_exists'] == true && mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            'Invoice ${result['name']} already exists (State: ${result['state']})',
+                          ),
+                        ),
+                      );
+                      Navigator.pushReplacement(
+                        context,
+                        SlidingPageTransitionRL(
+                          page: InvoiceDetailsPage(
+                              invoiceId: result['id'].toString()),
+                        ),
+                      );
+                      return;
+                    }
+                    if (result['id'] != null && mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
                             content:
@@ -1382,6 +1977,22 @@ class _InvoiceCreationPageState extends State<InvoiceCreationPage> {
                         SnackBar(
                           content: Text(
                             'Invoice ${result['invoiceName']} validated successfully',
+                          ),
+                        ),
+                      );
+                      Navigator.pushReplacement(
+                        context,
+                        SlidingPageTransitionRL(
+                          page: InvoiceDetailsPage(
+                            invoiceId: result['invoiceId'].toString(),
+                          ),
+                        ),
+                      );
+                    } else if (result['already_exists'] == true && mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            'Invoice ${result['invoiceName']} already exists (State: ${result['state']})',
                           ),
                         ),
                       );
@@ -1465,5 +2076,5 @@ class _InvoiceCreationPageState extends State<InvoiceCreationPage> {
         ),
       ),
     );
-  } // ... (rest of the existing methods: _buildErrorState, _buildContent, etc.)
+  }
 }

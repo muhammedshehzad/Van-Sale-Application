@@ -944,7 +944,7 @@ class _CustomersListState extends State<CustomersList> {
       IconData icon, String label, Color color, VoidCallback onTap) {
     return GestureDetector(
       onTap: () {
-        FocusScope.of(context).unfocus(); // Add this line
+        FocusScope.of(context).unfocus();
         onTap();
       },
       child: Column(

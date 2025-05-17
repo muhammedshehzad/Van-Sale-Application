@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:provider/provider.dart';
 import 'dart:convert';
 import '../authentication/cyllo_session_model.dart';
 
@@ -584,7 +585,233 @@ class OdooProvider extends ChangeNotifier {
     }
   }
 }
+class BackorderHandlerWidget extends StatefulWidget {
+  final Map<String, dynamic> picking;
 
+  const BackorderHandlerWidget({required this.picking, Key? key}) : super(key: key);
+
+  @override
+  _BackorderHandlerWidgetState createState() => _BackorderHandlerWidgetState();
+}
+
+class _BackorderHandlerWidgetState extends State<BackorderHandlerWidget> {
+  bool _isProcessing = false;
+
+  Future<void> _handleBackorder() async {
+    if (_isProcessing || !mounted) return;
+    setState(() => _isProcessing = true);
+
+    try {
+      await _internalHandleBackorder(widget.picking, context);
+    } catch (e) {
+      debugPrint('Error in backorder handling: $e');
+    } finally {
+      if (mounted) {
+        setState(() => _isProcessing = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ElevatedButton(
+      onPressed: _isProcessing ? null : _handleBackorder,
+      child: Text(_isProcessing ? 'Processing...' : 'Handle Backorder'),
+    );
+  }
+}
+
+Future<void> _internalHandleBackorder(Map<String, dynamic> picking, BuildContext context) async {
+  if (!context.mounted) {
+    debugPrint('Backorder handling aborted: Widget not mounted');
+    return;
+  }
+  debugPrint('Starting backorder handling for picking: ${picking['id']}');
+
+  final client = await SessionManager.getActiveClient();
+  if (client == null) {
+    debugPrint('Backorder handling aborted: No active client found');
+    return;
+  }
+
+  final provider = Provider.of<SaleOrderDetailProvider>(context, listen: false);
+
+  try {
+    // Fetch picking state and sale ID
+    final pickingStateResult = await client.callKw({
+      'model': 'stock.picking',
+      'method': 'search_read',
+      'args': [
+        [['id', '=', picking['id']]],
+        ['state', 'sale_id'],
+      ],
+      'kwargs': {},
+    });
+
+    if (pickingStateResult.isEmpty) {
+      throw Exception('Picking ${picking['id']} not found');
+    }
+
+    final pickingState = pickingStateResult[0]['state'] as String;
+    final saleId = pickingStateResult[0]['sale_id'] is List
+        ? pickingStateResult[0]['sale_id'][0] as int
+        : pickingStateResult[0]['sale_id'] as int?;
+    debugPrint('Picking state: $pickingState, Sale ID: $saleId');
+
+    if (!['assigned', 'partially_available'].contains(pickingState)) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Cannot create backorder: Invalid state ($pickingState)')),
+        );
+      }
+      return;
+    }
+
+    // Set order ID if missing
+    if (provider.orderId == null && saleId != null) {
+      provider.setOrderId(saleId);
+      debugPrint('Order ID set from sale_id: $saleId');
+    }
+
+    final backorderId = picking['backorder_id'];
+    if (backorderId != false) {
+      debugPrint('Backorder already exists: $backorderId');
+      return;
+    }
+
+    // Fetch stock moves
+    final moves = await client.callKw({
+      'model': 'stock.move',
+      'method': 'search_read',
+      'args': [
+        [['picking_id', '=', picking['id']]],
+        ['id', 'product_id', 'product_uom_qty', 'quantity'],
+      ],
+      'kwargs': {},
+    });
+    debugPrint('Stock moves retrieved: ${moves.length}');
+
+    // Fetch and filter valid move lines
+    final moveLines = await client.callKw({
+      'model': 'stock.move.line',
+      'method': 'search_read',
+      'args': [
+        [['picking_id', '=', picking['id']]],
+        ['id', 'product_id', 'quantity', 'product_uom_qty', 'move_id'],
+      ],
+      'kwargs': {},
+    });
+    final validMoveLines = moveLines.where((line) => line['id'] != null).toList();
+    debugPrint('Valid move lines: ${validMoveLines.length}');
+
+    // Check for unfulfilled quantities
+    final hasUnfulfilled = moves.any((move) {
+      final productUomQty = move['product_uom_qty'] as double;
+      final quantity = move['quantity'] as double? ?? 0.0;
+      return productUomQty > quantity;
+    });
+    debugPrint('Has unfulfilled quantities: $hasUnfulfilled');
+
+    if (!hasUnfulfilled || !context.mounted) {
+      debugPrint('No backorder needed or widget unmounted');
+      return;
+    }
+
+    // Show confirmation dialog
+    final createBackorder = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Create Backorder?'),
+        content: const Text('Some items are unfulfilled. Create a backorder?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('No'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Yes'),
+          ),
+        ],
+      ),
+    );
+
+    if (createBackorder != true || !context.mounted) {
+      debugPrint('Backorder creation declined or widget unmounted');
+      return;
+    }
+
+    // Update move lines with picked quantities
+    for (var moveLine in validMoveLines) {
+      final moveId = moveLine['move_id'] is List
+          ? moveLine['move_id'][0] as int
+          : moveLine['move_id'] as int;
+      final move = moves.firstWhere((m) => m['id'] == moveId, orElse: () => {});
+      if (move.isEmpty) continue;
+      final pickedQty = move['quantity'] as double? ?? 0.0;
+      await client.callKw({
+        'model': 'stock.move.line',
+        'method': 'write',
+        'args': [[moveLine['id']], {'quantity': pickedQty}],
+        'kwargs': {},
+      });
+    }
+
+    // Validate picking and create backorder
+    final validationResult = await client.callKw({
+      'model': 'stock.picking',
+      'method': 'button_validate',
+      'args': [[picking['id']]],
+      'kwargs': {'context': {'create_backorder': true}},
+    });
+
+    if (validationResult is Map && validationResult['type'] == 'ir.actions.act_window') {
+      final wizardId = await client.callKw({
+        'model': 'stock.backorder.confirmation',
+        'method': 'create',
+        'args': [{}],
+        'kwargs': {'context': validationResult['context']},
+      });
+      await client.callKw({
+        'model': 'stock.backorder.confirmation',
+        'method': 'process',
+        'args': [[wizardId]],
+        'kwargs': {},
+      });
+    }
+
+    // Verify backorder creation
+    final backorderCheck = await client.callKw({
+      'model': 'stock.picking',
+      'method': 'search_read',
+      'args': [
+        [['backorder_id', '=', picking['id']], ['state', '!=', 'cancel']],
+        ['id'],
+      ],
+      'kwargs': {},
+    });
+
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(backorderCheck.isNotEmpty
+              ? 'Backorder created successfully'
+              : 'Failed to create backorder'),
+        ),
+      );
+    }
+
+    if (provider.orderId != null && context.mounted) {
+      await provider.fetchOrderDetails();
+    }
+  } catch (e) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error: $e')),
+      );
+    }
+  }
+}
 class SaleOrderDetailProvider extends ChangeNotifier {
   final Map<String, dynamic> orderData;
   Map<String, dynamic>? _orderDetails;
@@ -610,11 +837,306 @@ class SaleOrderDetailProvider extends ChangeNotifier {
   Map<int, double> get stockAvailability => _stockAvailability;
 
   String? get errorMessage => _errorMessage;
+  int? orderId; // Added orderId property
 
   bool get isLoading => _isLoading;
 
   SaleOrderDetailProvider({required this.orderData}) {
+    orderId = orderData['id'] as int?; // Initialize orderId from orderData
+    debugPrint('SaleOrderDetailProvider initialized with order ID: $orderId');
     fetchOrderDetails();
+  }
+  void setOrderId(int id) {
+    orderId = id;
+    debugPrint('Order ID set to: $id');
+    notifyListeners();
+  }
+
+  Future<void> fetchOrderDetails() async {
+    _isLoading = true;
+    _error = null;
+    notifyListeners();
+
+    try {
+      final client = await SessionManager.getActiveClient();
+      if (client == null) {
+        throw Exception('No active Odoo session found. Please log in again.');
+      }
+
+      if (orderId == null) {
+        throw Exception('Order ID is null');
+      }
+
+
+      Future<List<String>> getValidFields(
+          String model, List<String> requestedFields) async {
+        final availableFields = await client.callKw({
+          'model': model,
+          'method': 'fields_get',
+          'args': [],
+          'kwargs': {},
+        });
+        return requestedFields
+            .where((field) => availableFields.containsKey(field))
+            .toList();
+      }
+
+      final saleOrderFields = await getValidFields('sale.order', [
+        'name',
+        'partner_id',
+        'partner_invoice_id',
+        'partner_shipping_id',
+        'date_order',
+        'amount_total',
+        'amount_untaxed',
+        'amount_tax',
+        'state',
+        'order_line',
+        'note',
+        'payment_term_id',
+        'user_id',
+        'client_order_ref',
+        'validity_date',
+        'commitment_date',
+        'expected_date',
+        'invoice_status',
+        'delivery_status',
+        'origin',
+        'opportunity_id',
+        'campaign_id',
+        'medium_id',
+        'source_id',
+        'team_id',
+        'tag_ids',
+        'company_id',
+        'create_date',
+        'write_date',
+        'fiscal_position_id',
+        'picking_policy',
+        'warehouse_id',
+        'payment_term_id',
+        'incoterm',
+        'invoice_ids',
+        'picking_ids'
+      ]);
+
+      final result = await client.callKw({
+        'model': 'sale.order',
+        'method': 'search_read',
+        'args': [
+          [
+            ['id', '=', orderId]
+          ],
+          saleOrderFields,
+        ],
+        'kwargs': {},
+      });
+
+      if (result.isEmpty) {
+        throw Exception('Order not found for ID: $orderId');
+      }
+
+      final order = result[0];
+
+      if (order['order_line'] != null &&
+          order['order_line'] is List &&
+          order['order_line'].isNotEmpty) {
+        final orderLineFields = await getValidFields('sale.order.line', [
+          'product_id',
+          'name',
+          'product_uom_qty',
+          'qty_delivered',
+          'qty_invoiced',
+          'qty_to_deliver',
+          'product_uom',
+          'price_unit',
+          'discount',
+          'tax_id',
+          'price_subtotal',
+          'price_tax',
+          'price_total',
+          'state',
+          'invoice_status',
+          'customer_lead',
+          'display_type',
+          'sequence'
+        ]);
+        final orderLines = await client.callKw({
+          'model': 'sale.order.line',
+          'method': 'search_read',
+          'args': [
+            [
+              ['id', 'in', order['order_line']]
+            ],
+            orderLineFields,
+          ],
+          'kwargs': {},
+        });
+        order['line_details'] = orderLines;
+        debugPrint('Fetched order lines: ${orderLines.length} lines');
+      } else {
+        order['line_details'] = [];
+      }
+
+      if (order['picking_ids'] != null &&
+          order['picking_ids'] is List &&
+          order['picking_ids'].isNotEmpty) {
+        final pickingFields = await getValidFields('stock.picking', [
+          'name',
+          'partner_id',
+          'scheduled_date',
+          'date_done',
+          'state',
+          'origin',
+          'priority',
+          'backorder_id',
+          'move_ids',
+          'picking_type_id',
+          'move_line_ids_without_package'
+        ]);
+        final pickings = await client.callKw({
+          'model': 'stock.picking',
+          'method': 'search_read',
+          'args': [
+            [
+              ['id', 'in', order['picking_ids']]
+            ],
+            pickingFields,
+          ],
+          'kwargs': {},
+        });
+        order['picking_details'] = pickings;
+        debugPrint('Fetched pickings: ${pickings.length} pickings');
+      } else {
+        order['picking_details'] = [];
+      }
+
+      if (order['invoice_ids'] != null &&
+          order['invoice_ids'] is List &&
+          order['invoice_ids'].isNotEmpty) {
+        final invoiceFields = await getValidFields('account.move', [
+          'name',
+          'partner_id',
+          'invoice_date',
+          'invoice_date_due',
+          'amount_total',
+          'amount_residual',
+          'amount_untaxed',
+          'amount_tax',
+          'state',
+          'invoice_payment_state',
+          'type',
+          'ref',
+          'invoice_line_ids',
+        ]);
+        final invoices = await client.callKw({
+          'model': 'account.move',
+          'method': 'search_read',
+          'args': [
+            [
+              ['id', 'in', order['invoice_ids']]
+            ],
+            invoiceFields,
+          ],
+          'kwargs': {},
+        });
+
+        for (var invoice in invoices) {
+          if (invoice['invoice_line_ids'] != null &&
+              invoice['invoice_line_ids'] is List &&
+              invoice['invoice_line_ids'].isNotEmpty) {
+            final invoiceLineFields =
+            await getValidFields('account.move.line', [
+              'name',
+              'product_id',
+              'quantity',
+              'price_unit',
+              'price_subtotal',
+              'price_total',
+              'tax_ids',
+              'discount',
+            ]);
+            final invoiceLines = await client.callKw({
+              'model': 'account.move.line',
+              'method': 'search_read',
+              'args': [
+                [
+                  ['id', 'in', invoice['invoice_line_ids']]
+                ],
+                invoiceLineFields,
+              ],
+              'kwargs': {
+                'context': {
+                  'lang': 'en_US',
+                },
+              },
+            });
+
+            for (var line in invoiceLines) {
+              if (line['product_id'] is int && line['product_id'] != false) {
+                final productResult = await client.callKw({
+                  'model': 'product.product',
+                  'method': 'search_read',
+                  'args': [
+                    [
+                      ['id', '=', line['product_id']]
+                    ],
+                    ['name'],
+                  ],
+                  'kwargs': {},
+                });
+                line['product_id'] = productResult.isNotEmpty
+                    ? [line['product_id'], productResult[0]['name'] as String]
+                    : [line['product_id'], ''];
+              } else if (line['product_id'] == false) {
+                line['product_id'] = false;
+              }
+
+              if (line['tax_ids'] is List && line['tax_ids'].isNotEmpty) {
+                final taxResult = await client.callKw({
+                  'model': 'account.tax',
+                  'method': 'search_read',
+                  'args': [
+                    [
+                      ['id', 'in', line['tax_ids']]
+                    ],
+                    ['name'],
+                  ],
+                  'kwargs': {},
+                });
+                line['tax_ids'] =
+                    List.from(line['tax_ids']).asMap().entries.map((entry) {
+                      final taxId = entry.value;
+                      final tax = taxResult.firstWhere(
+                            (t) => t['id'] == taxId,
+                        orElse: () => {'name': ''},
+                      );
+                      return [taxId, tax['name'] as String];
+                    }).toList();
+              } else {
+                line['tax_ids'] = [];
+              }
+            }
+
+            invoice['invoice_line_ids'] = invoiceLines;
+          } else {
+            invoice['invoice_line_ids'] = [];
+          }
+        }
+
+        order['invoice_details'] = invoices;
+        debugPrint('Fetched invoices: ${invoices.length} invoices');
+      } else {
+        order['invoice_details'] = [];
+      }
+      _orderDetails = Map<String, dynamic>.from(order);
+      _isLoading = false;
+    } catch (e) {
+      _error = 'Failed to fetch order details: $e';
+      _isLoading = false;
+      debugPrint('Error fetching order details: $e');
+    }
+    notifyListeners();
   }
 
   Future<void> createDraftInvoice(int orderId) async {
@@ -780,291 +1302,6 @@ class SaleOrderDetailProvider extends ChangeNotifier {
     }
   }
 
-  Future<void> fetchOrderDetails() async {
-    _isLoading = true;
-    _error = null;
-    notifyListeners();
-
-    try {
-      final client = await SessionManager.getActiveClient();
-      if (client == null) {
-        throw Exception('No active Odoo session found. Please log in again.');
-      }
-
-      Future<List<String>> getValidFields(
-          String model, List<String> requestedFields) async {
-        final availableFields = await client.callKw({
-          'model': model,
-          'method': 'fields_get',
-          'args': [],
-          'kwargs': {},
-        });
-        return requestedFields
-            .where((field) => availableFields.containsKey(field))
-            .toList();
-      }
-
-      final saleOrderFields = await getValidFields('sale.order', [
-        'name',
-        'partner_id',
-        'partner_invoice_id',
-        'partner_shipping_id',
-        'date_order',
-        'amount_total',
-        'amount_untaxed',
-        'amount_tax',
-        'state',
-        'order_line',
-        'note',
-        'payment_term_id',
-        'user_id',
-        'client_order_ref',
-        'validity_date',
-        'commitment_date',
-        'expected_date',
-        'invoice_status',
-        'delivery_status',
-        'origin',
-        'opportunity_id',
-        'campaign_id',
-        'medium_id',
-        'source_id',
-        'team_id',
-        'tag_ids',
-        'company_id',
-        'create_date',
-        'write_date',
-        'fiscal_position_id',
-        'picking_policy',
-        'warehouse_id',
-        'payment_term_id',
-        'incoterm',
-        'invoice_ids',
-        'picking_ids'
-      ]);
-
-      final result = await client.callKw({
-        'model': 'sale.order',
-        'method': 'search_read',
-        'args': [
-          [
-            ['id', '=', orderData['id']]
-          ],
-          saleOrderFields,
-        ],
-        'kwargs': {},
-      });
-
-      if (result.isEmpty) {
-        throw Exception('Order not found for ID: ${orderData['id']}');
-      }
-
-      final order = result[0];
-
-      if (order['order_line'] != null &&
-          order['order_line'] is List &&
-          order['order_line'].isNotEmpty) {
-        final orderLineFields = await getValidFields('sale.order.line', [
-          'product_id',
-          'name',
-          'product_uom_qty',
-          'qty_delivered',
-          'qty_invoiced',
-          'qty_to_deliver',
-          'product_uom',
-          'price_unit',
-          'discount',
-          'tax_id',
-          'price_subtotal',
-          'price_tax',
-          'price_total',
-          'state',
-          'invoice_status',
-          'customer_lead',
-          'display_type',
-          'sequence'
-        ]);
-        final orderLines = await client.callKw({
-          'model': 'sale.order.line',
-          'method': 'search_read',
-          'args': [
-            [
-              ['id', 'in', order['order_line']]
-            ],
-            orderLineFields,
-          ],
-          'kwargs': {},
-        });
-        order['line_details'] = orderLines;
-
-        // Debug: Log fetched order lines
-        debugPrint('Fetched order lines: ${orderLines.map((line) => {
-              'id': line['id'],
-              'product_uom_qty': line['product_uom_qty']
-            })}');
-      } else {
-        order['line_details'] = [];
-      }
-
-      if (order['picking_ids'] != null &&
-          order['picking_ids'] is List &&
-          order['picking_ids'].isNotEmpty) {
-        final pickingFields = await getValidFields('stock.picking', [
-          'name',
-          'partner_id',
-          'scheduled_date',
-          'date_done',
-          'state',
-          'origin',
-          'priority',
-          'backorder_id',
-          'move_ids',
-          'picking_type_id',
-          'move_line_ids_without_package'
-        ]);
-        final pickings = await client.callKw({
-          'model': 'stock.picking',
-          'method': 'search_read',
-          'args': [
-            [
-              ['id', 'in', order['picking_ids']]
-            ],
-            pickingFields,
-          ],
-          'kwargs': {},
-        });
-
-        order['picking_details'] = pickings;
-      } else {
-        order['picking_details'] = [];
-      }
-
-      if (order['invoice_ids'] != null &&
-          order['invoice_ids'] is List &&
-          order['invoice_ids'].isNotEmpty) {
-        final invoiceFields = await getValidFields('account.move', [
-          'name',
-          'partner_id',
-          'invoice_date',
-          'invoice_date_due',
-          'amount_total',
-          'amount_residual',
-          'amount_untaxed',
-          'amount_tax',
-          'state',
-          'invoice_payment_state',
-          'type',
-          'ref',
-          'invoice_line_ids',
-        ]);
-        final invoices = await client.callKw({
-          'model': 'account.move',
-          'method': 'search_read',
-          'args': [
-            [
-              ['id', 'in', order['invoice_ids']]
-            ],
-            invoiceFields,
-          ],
-          'kwargs': {},
-        });
-
-        for (var invoice in invoices) {
-          if (invoice['invoice_line_ids'] != null &&
-              invoice['invoice_line_ids'] is List &&
-              invoice['invoice_line_ids'].isNotEmpty) {
-            final invoiceLineFields =
-                await getValidFields('account.move.line', [
-              'name',
-              'product_id',
-              'quantity',
-              'price_unit',
-              'price_subtotal',
-              'price_total',
-              'tax_ids',
-              'discount',
-            ]);
-            final invoiceLines = await client.callKw({
-              'model': 'account.move.line',
-              'method': 'search_read',
-              'args': [
-                [
-                  ['id', 'in', invoice['invoice_line_ids']]
-                ],
-                invoiceLineFields,
-              ],
-              'kwargs': {
-                'context': {
-                  'lang': 'en_US',
-                },
-              },
-            });
-
-            for (var line in invoiceLines) {
-              if (line['product_id'] is int && line['product_id'] != false) {
-                final productResult = await client.callKw({
-                  'model': 'product.product',
-                  'method': 'search_read',
-                  'args': [
-                    [
-                      ['id', '=', line['product_id']]
-                    ],
-                    ['name'],
-                  ],
-                  'kwargs': {},
-                });
-                line['product_id'] = productResult.isNotEmpty
-                    ? [line['product_id'], productResult[0]['name'] as String]
-                    : [line['product_id'], ''];
-              } else if (line['product_id'] == false) {
-                line['product_id'] = false;
-              }
-
-              if (line['tax_ids'] is List && line['tax_ids'].isNotEmpty) {
-                final taxResult = await client.callKw({
-                  'model': 'account.tax',
-                  'method': 'search_read',
-                  'args': [
-                    [
-                      ['id', 'in', line['tax_ids']]
-                    ],
-                    ['name'],
-                  ],
-                  'kwargs': {},
-                });
-                line['tax_ids'] =
-                    List.from(line['tax_ids']).asMap().entries.map((entry) {
-                  final taxId = entry.value;
-                  final tax = taxResult.firstWhere(
-                    (t) => t['id'] == taxId,
-                    orElse: () => {'name': ''},
-                  );
-                  return [taxId, tax['name'] as String];
-                }).toList();
-              } else {
-                line['tax_ids'] = [];
-              }
-            }
-
-            invoice['invoice_line_ids'] = invoiceLines;
-          } else {
-            invoice['invoice_line_ids'] = [];
-          }
-        }
-
-        order['invoice_details'] = invoices;
-      } else {
-        order['invoice_details'] = [];
-      }
-      _orderDetails = Map<String, dynamic>.from(order);
-      _isLoading = false;
-    } catch (e) {
-      _error = 'Failed to fetch order details: $e';
-      _isLoading = false;
-      debugPrint('Error fetching order details: $e');
-    }
-    notifyListeners();
-  }
 
   Future<Map<String, dynamic>> recordPayment({
     required int invoiceId,

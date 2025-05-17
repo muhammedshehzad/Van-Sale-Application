@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter_barcode_scanner/flutter_barcode_scanner.dart';
 import 'package:latest_van_sale_application/providers/data_provider.dart';
 import '../providers/order_picking_provider.dart';
@@ -535,8 +536,10 @@ class _ProductPickScreenState extends State<ProductPickScreen> {
           bool isQuantityValid() {
             final qty = double.tryParse(qtyController.text) ?? 0.0;
             if (qty < 0) return false; // Additional quantity cannot be negative
-            if (qty > totalAvailable) return false; // Cannot exceed available stock
-            if (qty > remainingOrderedQty) return false; // Cannot exceed remaining ordered quantity
+            if (qty > totalAvailable)
+              return false; // Cannot exceed available stock
+            if (qty > remainingOrderedQty)
+              return false; // Cannot exceed remaining ordered quantity
             return true;
           }
 
@@ -549,7 +552,8 @@ class _ProductPickScreenState extends State<ProductPickScreen> {
               final totalQty = existingPickedQty + qty;
               if (lotSerialNumbers.length != totalQty.toInt()) return false;
               for (int i = 0; i < totalQty.toInt(); i++) {
-                if (i >= lotSerialNumbers.length || lotSerialNumbers[i].isEmpty) {
+                if (i >= lotSerialNumbers.length ||
+                    lotSerialNumbers[i].isEmpty) {
                   return false;
                 }
               }
@@ -608,18 +612,17 @@ class _ProductPickScreenState extends State<ProductPickScreen> {
                           ),
                           hintText: 'Enter additional quantity',
                           helperText:
-                          'Ordered: ${orderedQty.toStringAsFixed(2)} | Picked: ${existingPickedQty.toStringAsFixed(2)} | Remaining: ${remainingOrderedQty.toStringAsFixed(2)}',
+                              'Ordered: ${orderedQty.toStringAsFixed(2)} | Picked: ${existingPickedQty.toStringAsFixed(2)} | Remaining: ${remainingOrderedQty.toStringAsFixed(2)}',
                           errorText: !isQuantityValid() &&
-                              qtyController.text.isNotEmpty
+                                  qtyController.text.isNotEmpty
                               ? qtyController.text.isEmpty
-                              ? 'Required'
-                              : double.tryParse(qtyController.text)! < 0
-                              ? 'Quantity cannot be negative'
-                              :
-                              double.tryParse(qtyController.text)! >
-                                  totalAvailable
-                              ? 'Exceeds available quantity'
-                              : 'Exceeds remaining ordered quantity'
+                                  ? 'Required'
+                                  : double.tryParse(qtyController.text)! < 0
+                                      ? 'Quantity cannot be negative'
+                                      : double.tryParse(qtyController.text)! >
+                                              totalAvailable
+                                          ? 'Exceeds available quantity'
+                                          : 'Exceeds remaining ordered quantity'
                               : null,
                         ),
                         keyboardType: TextInputType.number,
@@ -660,29 +663,30 @@ class _ProductPickScreenState extends State<ProductPickScreen> {
                 onPressed: !isQuantityValid() || !areLotsValid()
                     ? null
                     : () {
-                  final qty = double.tryParse(qtyController.text) ?? 0.0;
-                  debugPrint(
-                      'DEBUG: Add Quantity Save - additional qty: $qty, lotSerialNumbers: $lotSerialNumbers');
-                  setState(() {
-                    widget.pendingPickedQuantities[widget.moveLineId] = qty;
-                    widget.quantityControllers[widget.moveLineId] =
-                        qtyController;
-                    if (trackingType != 'none') {
-                      widget.line['lot_serial_numbers'] =
-                          List.from(lotSerialNumbers);
-                      pendingLotSerialNumbers[widget.moveLineId] =
-                          List.from(lotSerialNumbers);
-                      debugPrint(
-                          'DEBUG: Add Quantity Save - Updated widget.line[lot_serial_numbers]: ${widget.line['lot_serial_numbers']}');
-                      debugPrint(
-                          'DEBUG: Add Quantity Save - Updated pendingLotSerialNumbers[${widget.moveLineId}]: ${pendingLotSerialNumbers[widget.moveLineId]}');
-                      this.lotSerialNumbers = List.from(lotSerialNumbers);
-                    }
-                  });
-                  debugPrint(
-                      'DEBUG: Add Quantity Save - After setState, widget.line[lot_serial_numbers]: ${widget.line['lot_serial_numbers']}');
-                  Navigator.pop(context);
-                },
+                        final qty = double.tryParse(qtyController.text) ?? 0.0;
+                        debugPrint(
+                            'DEBUG: Add Quantity Save - additional qty: $qty, lotSerialNumbers: $lotSerialNumbers');
+                        setState(() {
+                          widget.pendingPickedQuantities[widget.moveLineId] =
+                              qty;
+                          widget.quantityControllers[widget.moveLineId] =
+                              qtyController;
+                          if (trackingType != 'none') {
+                            widget.line['lot_serial_numbers'] =
+                                List.from(lotSerialNumbers);
+                            pendingLotSerialNumbers[widget.moveLineId] =
+                                List.from(lotSerialNumbers);
+                            debugPrint(
+                                'DEBUG: Add Quantity Save - Updated widget.line[lot_serial_numbers]: ${widget.line['lot_serial_numbers']}');
+                            debugPrint(
+                                'DEBUG: Add Quantity Save - Updated pendingLotSerialNumbers[${widget.moveLineId}]: ${pendingLotSerialNumbers[widget.moveLineId]}');
+                            this.lotSerialNumbers = List.from(lotSerialNumbers);
+                          }
+                        });
+                        debugPrint(
+                            'DEBUG: Add Quantity Save - After setState, widget.line[lot_serial_numbers]: ${widget.line['lot_serial_numbers']}');
+                        Navigator.pop(context);
+                      },
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Theme.of(context).primaryColor,
                   foregroundColor: Colors.white,
@@ -696,6 +700,7 @@ class _ProductPickScreenState extends State<ProductPickScreen> {
       ),
     );
   }
+
   void _editSourceLocation() {
     widget.suggestAlternativeLocation(widget.productId, widget.moveLineId,
         (state) {
@@ -742,22 +747,6 @@ class _ProductPickScreenState extends State<ProductPickScreen> {
             leading: Container(
               padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
-                  color: Colors.blue.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(8)),
-              child:
-                  const Icon(Icons.info_outline, size: 20, color: Colors.blue),
-            ),
-            title:
-                const Text('Product Details', style: TextStyle(fontSize: 14)),
-            onTap: () {
-              Navigator.pop(context);
-              _showProductDetails();
-            },
-          ),
-          ListTile(
-            leading: Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
                   color: Colors.green.withOpacity(0.1),
                   borderRadius: BorderRadius.circular(8)),
               child: const Icon(Icons.refresh, size: 20, color: Colors.green),
@@ -791,59 +780,7 @@ class _ProductPickScreenState extends State<ProductPickScreen> {
     );
   }
 
-  void _showProductDetails() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(widget.line['product_name'],
-            style: const TextStyle(fontSize: 16)),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _buildProductDetailRow('Code', widget.line['product_code']),
-            _buildProductDetailRow(
-                'Available', widget.availableQty.toStringAsFixed(2)),
-            _buildProductDetailRow(
-                'Ordered', widget.line['ordered_qty'].toStringAsFixed(2)),
-            _buildProductDetailRow(
-                'Picked', widget.line['picked_qty'].toStringAsFixed(2)),
-            if (widget.line['tracking'] != 'none')
-              _buildProductDetailRow('Tracking', widget.line['tracking'],
-                  capitalize: true),
-            if (widget.line['lot_serial_numbers'] != null &&
-                (widget.line['lot_serial_numbers'] as List).isNotEmpty)
-              _buildProductDetailRow(
-                  widget.line['tracking'] == 'lot' ? 'Lot' : 'Serial',
-                  (widget.line['lot_serial_numbers'] as List).join(', ')),
-          ],
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Close', style: TextStyle(fontSize: 14))),
-        ],
-      ),
-    );
-  }
 
-  Widget _buildProductDetailRow(String label, String value,
-      {bool capitalize = false}) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4.0),
-      child: Row(
-        children: [
-          Text('$label: ',
-              style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
-                  color: Colors.grey[700])),
-          Expanded(
-              child: Text(capitalize ? value.toUpperCase() : value,
-                  style: const TextStyle(fontSize: 14))),
-        ],
-      ),
-    );
-  }
 
   void _refreshStock() async {
     setState(() => _isLoading = true);
@@ -872,7 +809,7 @@ class _ProductPickScreenState extends State<ProductPickScreen> {
 
     debugPrint(
         'DEBUG: _buildPickingActions - pickedQty: $pickedQty, pendingQty: $pendingQty, totalPickedQty: $totalPickedQty, orderedQty: $orderedQty, '
-            'isFullyPicked: $isFullyPicked, isPendingQtyValid: $isPendingQtyValid');
+        'isFullyPicked: $isFullyPicked, isPendingQtyValid: $isPendingQtyValid');
 
     bool areLotsValid() {
       debugPrint('DEBUG: areLotsValid - trackingType: $trackingType');
@@ -890,8 +827,10 @@ class _ProductPickScreenState extends State<ProductPickScreen> {
         if (lotSerialNumbers.isEmpty || lotSerialNumbers[0].isEmpty) {
           debugPrint(
               'DEBUG: areLotsValid - Lot validation failed: isEmpty: ${lotSerialNumbers.isEmpty}, '
-                  'firstIsEmpty: ${lotSerialNumbers.isNotEmpty ? lotSerialNumbers[0].isEmpty : true}');
-          _showErrorSnackBar('Lot number is required');
+              'firstIsEmpty: ${lotSerialNumbers.isNotEmpty ? lotSerialNumbers[0].isEmpty : true}');
+          SchedulerBinding.instance.addPostFrameCallback((_) {
+            _showErrorSnackBar('Lot number is required');
+          });
           return false;
         }
         debugPrint(
@@ -899,14 +838,16 @@ class _ProductPickScreenState extends State<ProductPickScreen> {
       }
 
       if (trackingType == 'serial') {
-        final requiredSerials = totalPickedQty.toInt(); // Validate total quantity
+        final requiredSerials = totalPickedQty.toInt();
         debugPrint(
             'DEBUG: areLotsValid - Serial validation - requiredSerials: $requiredSerials, '
-                'lotSerialNumbers length: ${lotSerialNumbers.length}, anyEmpty: ${lotSerialNumbers.any((s) => s.isEmpty)}');
+            'lotSerialNumbers length: ${lotSerialNumbers.length}, anyEmpty: ${lotSerialNumbers.any((s) => s.isEmpty)}');
         if (lotSerialNumbers.length != requiredSerials ||
             lotSerialNumbers.any((s) => s.isEmpty)) {
           debugPrint('DEBUG: areLotsValid - Serial validation failed');
-          _showErrorSnackBar('All serial numbers are required');
+          SchedulerBinding.instance.addPostFrameCallback((_) {
+            _showErrorSnackBar('All serial numbers are required');
+          });
           return false;
         }
         debugPrint('DEBUG: areLotsValid - Serial validation passed');
@@ -927,27 +868,27 @@ class _ProductPickScreenState extends State<ProductPickScreen> {
                   onPressed: !areLotsValid() || !isPendingQtyValid
                       ? null
                       : () async {
-                    debugPrint(
-                        'DEBUG: Confirm Pick pressed - lot_serial_numbers: ${widget.line['lot_serial_numbers']}');
-                    final lotSerialNumbers = List<String>.from(
-                        widget.line['lot_serial_numbers'] ?? []);
-                    debugPrint(
-                        'DEBUG: Confirm Pick - Passing lot_serial_numbers: $lotSerialNumbers, totalQty: $totalPickedQty');
-                    final success = await widget.confirmPick(
-                        widget.moveLineId, lotSerialNumbers);
-                    debugPrint('DEBUG: Confirm Pick - success: $success');
-                    if (success) {
-                      setState(() {
-                        // Update pickedQuantities locally
-                        widget.pickedQuantities[widget.moveLineId] =
-                            totalPickedQty;
-                        widget.pendingPickedQuantities[widget.moveLineId] =
-                        0.0;
-                        widget.quantityControllers.remove(widget.moveLineId);
-                      });
-                      Navigator.pop(context);
-                    }
-                  },
+                          debugPrint(
+                              'DEBUG: Confirm Pick pressed - lot_serial_numbers: ${widget.line['lot_serial_numbers']}');
+                          final lotSerialNumbers = List<String>.from(
+                              widget.line['lot_serial_numbers'] ?? []);
+                          debugPrint(
+                              'DEBUG: Confirm Pick - Passing lot_serial_numbers: $lotSerialNumbers, totalQty: $totalPickedQty');
+                          final success = await widget.confirmPick(
+                              widget.moveLineId, lotSerialNumbers);
+                          debugPrint('DEBUG: Confirm Pick - success: $success');
+                          if (success) {
+                            setState(() {
+                              widget.pickedQuantities[widget.moveLineId] =
+                                  totalPickedQty;
+                              widget.pendingPickedQuantities[
+                                  widget.moveLineId] = 0.0;
+                              widget.quantityControllers
+                                  .remove(widget.moveLineId);
+                            });
+                            Navigator.pop(context);
+                          }
+                        },
                   icon: const Icon(Icons.check, size: 18),
                   label: const Text('Confirm Pick'),
                   style: ElevatedButton.styleFrom(
@@ -977,27 +918,14 @@ class _ProductPickScreenState extends State<ProductPickScreen> {
                     foregroundColor: Theme.of(context).primaryColor,
                   ),
                 ),
-              ),
-              const SizedBox(width: 8),
-              Container(
-                height: 42,
-                width: 42,
-                decoration: BoxDecoration(
-                    border: Border.all(color: Colors.grey[300]!),
-                    borderRadius: BorderRadius.circular(4)),
-                child: IconButton(
-                  icon: const Icon(Icons.more_vert, size: 20),
-                  onPressed: () => _showMoreOptions(),
-                  color: Colors.grey[700],
-                  padding: EdgeInsets.zero,
-                ),
-              ),
+              )
             ],
           ),
         ],
       ),
     );
   }
+
   @override
   Widget build(BuildContext context) {
     final orderedQty = widget.line['ordered_qty'] as double;
@@ -1013,8 +941,27 @@ class _ProductPickScreenState extends State<ProductPickScreen> {
 
     return Scaffold(
       appBar: AppBar(
-          title: const Text('Product Picking', style: TextStyle(fontSize: 16)),
-          centerTitle: true,
+          actions: [
+            IconButton(
+              icon: const Icon(
+                Icons.more_vert,
+                size: 20,
+                color: Colors.white,
+              ),
+              onPressed: () => _showMoreOptions(),
+            )
+          ],
+          leading: IconButton(
+              onPressed: () {
+                Navigator.pop(context);
+              },
+              icon: Icon(
+                Icons.arrow_back,
+                color: Colors.white,
+              )),
+          backgroundColor: primaryColor,
+          title: const Text('Product Picking',
+              style: TextStyle(color: Colors.white)),
           elevation: 0),
       body: Column(
         children: [

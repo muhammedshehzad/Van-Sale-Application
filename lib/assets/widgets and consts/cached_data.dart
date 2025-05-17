@@ -43,38 +43,56 @@ class DataSyncManager with ChangeNotifier {
   }
 
   // Perform a full sync of all data
-  Future<void> performFullSync(BuildContext context) async {
+// In DataSyncManager class
+  Future<List<String>> performFullSync(BuildContext context) async {
+    List<String> errorMessages = [];
     try {
       final prefs = await SharedPreferences.getInstance();
 
       // Get providers
-      final salesProvider =
-          Provider.of<SalesOrderProvider>(context, listen: false);
-      final orderProvider =
-          Provider.of<OrderPickingProvider>(context, listen: false);
-      final saleOrderDetailProvider =
-          Provider.of<SaleOrderDetailProvider>(context, listen: false);
+      final salesProvider = Provider.of<SalesOrderProvider>(context, listen: false);
+      final orderProvider = Provider.of<OrderPickingProvider>(context, listen: false);
+      final saleOrderDetailProvider = Provider.of<SaleOrderDetailProvider>(context, listen: false);
 
-      // Fetch fresh data
-      await salesProvider.loadProducts();
-      await orderProvider.loadCustomers();
-      await saleOrderDetailProvider.fetchOrderDetails();
+      // Fetch products
+      try {
+        await salesProvider.loadProducts();
+      } catch (e) {
+        errorMessages.add('Failed to load products: $e');
+        print('Error loading products: $e');
+      }
 
-      // Cache the data
-      await _cacheData(
-          prefs, salesProvider, orderProvider, saleOrderDetailProvider);
+      // Fetch customers
+      try {
+        await orderProvider.loadCustomers();
+      } catch (e) {
+        errorMessages.add('Failed to load customers: $e');
+        print('Error loading customers: $e');
+      }
+
+      // Fetch order details
+      try {
+        await saleOrderDetailProvider.fetchOrderDetails();
+      } catch (e) {
+        errorMessages.add('Failed to load order details: $e');
+        print('Error loading order details: $e');
+      }
+
+      // Cache the data (even if some fetches failed)
+      await cacheData(prefs, salesProvider, orderProvider, saleOrderDetailProvider);
 
       // Update last sync time
-      await prefs.setString(
-          LAST_SYNC_TIME_KEY, DateTime.now().toIso8601String());
+      await prefs.setString(LAST_SYNC_TIME_KEY, DateTime.now().toIso8601String());
 
       notifyListeners(); // Notify listeners after sync
+      return errorMessages;
     } catch (e) {
-      print('Error during full sync: $e');
-      rethrow; // Rethrow to let the caller handle the error
+      print('Unexpected error during full sync: $e');
+      errorMessages.add('Unexpected error during sync: $e');
+      notifyListeners();
+      return errorMessages;
     }
   }
-
   // Load cached data
   Future<void> loadCachedData(BuildContext context) async {
     try {
@@ -118,7 +136,7 @@ class DataSyncManager with ChangeNotifier {
   }
 
   // Cache all data
-  Future<void> _cacheData(
+  Future<void> cacheData(
     SharedPreferences prefs,
     SalesOrderProvider salesProvider,
     OrderPickingProvider orderProvider,

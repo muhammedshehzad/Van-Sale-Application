@@ -7,6 +7,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:latest_van_sale_application/secondary_pages/product_details_page.dart';
 import 'package:odoo_rpc/odoo_rpc.dart';
 import 'package:latest_van_sale_application/assets/widgets%20and%20consts/page_transition.dart';
+import 'package:shimmer/shimmer.dart';
 import '../authentication/cyllo_session_model.dart';
 import '../providers/order_picking_provider.dart';
 
@@ -99,10 +100,10 @@ class _StockCheckPageState extends State<StockCheckPage> {
                 developer.log(
                     "Failed to process base64 image for product ${product['id']}: $e",
                     error: e);
-                imageUrl = 'https://via.placeholder.com/150';
+                imageUrl = 'https://dummyimage.com/150x150/000/fff';
               }
             } else {
-              imageUrl = 'https://via.placeholder.com/150';
+              imageUrl = 'https://dummyimage.com/150x150/000/fff';
             }
 
             templateMap[templateId] = {
@@ -1078,7 +1079,96 @@ class _StockCheckPageState extends State<StockCheckPage> {
               ),
               Expanded(
                 child: _isLoading
-                    ? Center(child: CircularProgressIndicator())
+                    ? Center(
+                        child: Shimmer.fromColors(
+                        baseColor: Colors.grey[300]!,
+                        highlightColor: Colors.grey[100]!,
+                        child: ListView.builder(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 16, vertical: 8),
+                          itemCount: 8,
+                          itemBuilder: (context, index) {
+                            return Card(
+                              color: Colors.white,
+                              elevation: 1,
+                              margin: const EdgeInsets.only(bottom: 12),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Padding(
+                                padding: const EdgeInsets.all(12),
+                                child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Container(
+                                      width: 60,
+                                      height: 60,
+                                      decoration: BoxDecoration(
+                                        color: Colors.white,
+                                        borderRadius: BorderRadius.circular(8),
+                                        border: Border.all(
+                                            color: Colors.grey[300]!, width: 1),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 12),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Container(
+                                            width: double.infinity,
+                                            height: 16,
+                                            color: Colors.white,
+                                          ),
+                                          const SizedBox(height: 4),
+                                          Container(
+                                            width: 150,
+                                            height: 12,
+                                            color: Colors.white,
+                                          ),
+                                          const SizedBox(height: 4),
+                                          Row(
+                                            children: [
+                                              Container(
+                                                width: 80,
+                                                height: 12,
+                                                color: Colors.white,
+                                              ),
+                                              const SizedBox(width: 8),
+                                              Container(
+                                                width: 60,
+                                                height: 12,
+                                                color: Colors.white,
+                                              ),
+                                            ],
+                                          ),
+                                          const SizedBox(height: 4),
+                                          Row(
+                                            children: [
+                                              Container(
+                                                width: 100,
+                                                height: 12,
+                                                color: Colors.white,
+                                              ),
+                                              const SizedBox(width: 8),
+                                              Container(
+                                                width: 80,
+                                                height: 12,
+                                                color: Colors.white,
+                                              ),
+                                            ],
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ))
                     : _filteredProductTemplates.isEmpty
                         ? Center(
                             child: Column(
@@ -1098,138 +1188,144 @@ class _StockCheckPageState extends State<StockCheckPage> {
                               ],
                             ),
                           )
-                        : ListView.builder(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 16, vertical: 8),
-                            itemCount: _filteredProductTemplates.length,
-                            itemBuilder: (context, index) {
-                              final template = _filteredProductTemplates[index];
-                              return GestureDetector(
-                                onTap: () async {
-                                  setState(() =>
-                                      _isActionLoading = true); // Show loading
-                                  if ((template['variants'] as List).length >
-                                      1) {
-                                    await _showVariantsDialog(
-                                        context, template);
-                                  } else {
-                                    final variant = template['variants'][0];
-                                    final client =
-                                        await SessionManager.getActiveClient();
-                                    if (client == null) {
+                        : RefreshIndicator(
+                            onRefresh: () async {
+                              setState(() => _isLoading = true);
+                              await _loadStockData();
+                            },
+                          child: ListView.builder(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 16, vertical: 8),
+                              itemCount: _filteredProductTemplates.length,
+                              itemBuilder: (context, index) {
+                                final template = _filteredProductTemplates[index];
+                                return GestureDetector(
+                                  onTap: () async {
+                                    setState(() =>
+                                        _isActionLoading = true); // Show loading
+                                    if ((template['variants'] as List).length >
+                                        1) {
+                                      await _showVariantsDialog(
+                                          context, template);
+                                    } else {
+                                      final variant = template['variants'][0];
+                                      final client =
+                                          await SessionManager.getActiveClient();
+                                      if (client == null) {
+                                        setState(() => _isActionLoading =
+                                            false); // Hide loading
+                                        ScaffoldMessenger.of(context)
+                                            .showSnackBar(
+                                          const SnackBar(
+                                            content:
+                                                Text('Session not initialized'),
+                                            backgroundColor: Colors.red,
+                                          ),
+                                        );
+                                        return;
+                                      }
+                                      final inventoryDetails =
+                                          await _fetchInventoryDetails(
+                                              client, variant['id']);
                                       setState(() => _isActionLoading =
                                           false); // Hide loading
-                                      ScaffoldMessenger.of(context)
-                                          .showSnackBar(
-                                        const SnackBar(
-                                          content:
-                                              Text('Session not initialized'),
-                                          backgroundColor: Colors.red,
-                                        ),
-                                      );
-                                      return;
-                                    }
-                                    final inventoryDetails =
-                                        await _fetchInventoryDetails(
-                                            client, variant['id']);
-                                    setState(() => _isActionLoading =
-                                        false); // Hide loading
-                                    await showDialog(
-                                      context: context,
-                                      builder: (dialogContext) => Dialog(
-                                        shape: RoundedRectangleBorder(
-                                          borderRadius:
-                                              BorderRadius.circular(16),
-                                        ),
-                                        elevation: 5,
-                                        backgroundColor: Colors.white,
-                                        insetPadding: EdgeInsets.zero,
-                                        child: FractionallySizedBox(
-                                          widthFactor: 0.9,
-                                          child: Container(
-                                            constraints: BoxConstraints(
-                                              maxHeight: MediaQuery.of(context)
-                                                      .size
-                                                      .height *
-                                                  0.75,
-                                              minHeight: 300,
-                                            ),
-                                            child: Column(
-                                              mainAxisSize: MainAxisSize.min,
-                                              children: [
-                                                Container(
-                                                  padding:
-                                                      const EdgeInsets.all(16),
-                                                  decoration: BoxDecoration(
-                                                    color: Theme.of(context)
-                                                        .primaryColor,
-                                                    borderRadius:
-                                                        const BorderRadius.only(
-                                                      topLeft:
-                                                          Radius.circular(16),
-                                                      topRight:
-                                                          Radius.circular(16),
+                                      await showDialog(
+                                        context: context,
+                                        builder: (dialogContext) => Dialog(
+                                          shape: RoundedRectangleBorder(
+                                            borderRadius:
+                                                BorderRadius.circular(16),
+                                          ),
+                                          elevation: 5,
+                                          backgroundColor: Colors.white,
+                                          insetPadding: EdgeInsets.zero,
+                                          child: FractionallySizedBox(
+                                            widthFactor: 0.9,
+                                            child: Container(
+                                              constraints: BoxConstraints(
+                                                maxHeight: MediaQuery.of(context)
+                                                        .size
+                                                        .height *
+                                                    0.75,
+                                                minHeight: 300,
+                                              ),
+                                              child: Column(
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: [
+                                                  Container(
+                                                    padding:
+                                                        const EdgeInsets.all(16),
+                                                    decoration: BoxDecoration(
+                                                      color: Theme.of(context)
+                                                          .primaryColor,
+                                                      borderRadius:
+                                                          const BorderRadius.only(
+                                                        topLeft:
+                                                            Radius.circular(16),
+                                                        topRight:
+                                                            Radius.circular(16),
+                                                      ),
+                                                    ),
+                                                    child: Row(
+                                                      children: [
+                                                        Expanded(
+                                                          child: Text(
+                                                            'Inventory for ${template["name"]}',
+                                                            style:
+                                                                const TextStyle(
+                                                              fontSize: 18,
+                                                              fontWeight:
+                                                                  FontWeight.bold,
+                                                              color: Colors.white,
+                                                            ),
+                                                            maxLines: 1,
+                                                            overflow: TextOverflow
+                                                                .ellipsis,
+                                                          ),
+                                                        ),
+                                                        IconButton(
+                                                          icon: const Icon(
+                                                              Icons.close,
+                                                              color:
+                                                                  Colors.white),
+                                                          onPressed: () =>
+                                                              Navigator.of(
+                                                                      dialogContext)
+                                                                  .pop(),
+                                                        ),
+                                                      ],
                                                     ),
                                                   ),
-                                                  child: Row(
-                                                    children: [
-                                                      Expanded(
-                                                        child: Text(
-                                                          'Inventory for ${template["name"]}',
-                                                          style:
-                                                              const TextStyle(
-                                                            fontSize: 18,
-                                                            fontWeight:
-                                                                FontWeight.bold,
-                                                            color: Colors.white,
-                                                          ),
-                                                          maxLines: 1,
-                                                          overflow: TextOverflow
-                                                              .ellipsis,
+                                                  Flexible(
+                                                    child: SingleChildScrollView(
+                                                      child: Padding(
+                                                        padding:
+                                                            const EdgeInsets.all(
+                                                                16),
+                                                        child:
+                                                            _buildInventoryDetailsCard(
+                                                          variant: variant,
+                                                          inventoryDetails:
+                                                              inventoryDetails,
                                                         ),
                                                       ),
-                                                      IconButton(
-                                                        icon: const Icon(
-                                                            Icons.close,
-                                                            color:
-                                                                Colors.white),
-                                                        onPressed: () =>
-                                                            Navigator.of(
-                                                                    dialogContext)
-                                                                .pop(),
-                                                      ),
-                                                    ],
-                                                  ),
-                                                ),
-                                                Flexible(
-                                                  child: SingleChildScrollView(
-                                                    child: Padding(
-                                                      padding:
-                                                          const EdgeInsets.all(
-                                                              16),
-                                                      child:
-                                                          _buildInventoryDetailsCard(
-                                                        variant: variant,
-                                                        inventoryDetails:
-                                                            inventoryDetails,
-                                                      ),
                                                     ),
                                                   ),
-                                                ),
-                                              ],
+                                                ],
+                                              ),
                                             ),
                                           ),
                                         ),
-                                      ),
-                                    );
-                                  }
-                                  setState(() =>
-                                      _isActionLoading = false); // Hide loading
-                                },
-                                child: _buildProductCard(template),
-                              );
-                            },
-                          ),
+                                      );
+                                    }
+                                    setState(() =>
+                                        _isActionLoading = false); // Hide loading
+                                  },
+                                  child: _buildProductCard(template),
+                                );
+                              },
+                            ),
+                        ),
               ),
             ],
           ),

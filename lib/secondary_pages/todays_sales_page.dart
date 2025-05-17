@@ -221,7 +221,6 @@ class _TodaysSalesPageState extends State<TodaysSalesPage> {
                           ),
                           if (provider.todaysOrders.isNotEmpty) ...[
                             const SizedBox(width: 8),
-                            // Order count badge - now properly constrained
                             Container(
                               padding: const EdgeInsets.symmetric(
                                 horizontal: 8,
@@ -295,7 +294,7 @@ class _TodaysSalesPageState extends State<TodaysSalesPage> {
         baseColor: Colors.grey[300]!,
         highlightColor: Colors.grey[100]!,
         child: ListView.builder(
-          itemCount: 3,
+          itemCount: 6,
           itemBuilder: (_, __) => Padding(
             padding: const EdgeInsets.only(bottom: 16.0),
             child: Container(

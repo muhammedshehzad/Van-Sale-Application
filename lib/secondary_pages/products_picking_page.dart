@@ -826,7 +826,19 @@ class _PickingPageState extends State<PickingPage>
                     final product = searchResults[index];
                     return ListTile(
                       title: Text(product['name'] ?? 'Unknown'),
-                      subtitle: Text('Barcode: ${product['barcode'] ?? 'N/A'}'),
+                      subtitle: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Barcode: ${product['barcode'] ?? 'N/A'}',
+                            style: TextStyle(fontSize: 12),
+                          ),
+                          Text('SKU: ${product['default_code'] ?? 'N/A'}',
+                              style: TextStyle(fontSize: 12)),
+                          Text('ID: ${product['id'] ?? 'N/A'}',
+                              style: TextStyle(fontSize: 12)),
+                        ],
+                      ),
                       onTap: () async {
                         Navigator.pop(dialogContext);
                         await _addNewProductById(product['id'] as int);
@@ -2442,6 +2454,9 @@ class _PickingPageState extends State<PickingPage>
     final todoItems = filteredPickingLines
         .where((line) => !(line['is_picked'] as bool))
         .toList();
+    final hasUnpickedItems =
+        filteredPickingLines.any((line) => !(line['is_picked'] as bool));
+    final isSearchActive = _searchController.text.isNotEmpty;
 
     return Column(
       children: [
@@ -2466,8 +2481,9 @@ class _PickingPageState extends State<PickingPage>
                     Expanded(
                       child: TextField(
                         controller: _searchController,
+                        focusNode: _barcodeFocusNode,
                         decoration: InputDecoration(
-                          hintText: 'Search by name or code',
+                          hintText: 'Search by name, code, or scan barcode',
                           hintStyle: TextStyle(color: Colors.grey[400]),
                           prefixIcon:
                               Icon(Icons.search, color: Colors.grey[500]),
@@ -2475,6 +2491,33 @@ class _PickingPageState extends State<PickingPage>
                           contentPadding:
                               const EdgeInsets.symmetric(vertical: 15),
                         ),
+                        onSubmitted: (value) {
+                          if (value.isNotEmpty) {
+                            // Check if the input resembles a barcode (e.g., length or format)
+                            if (value.length >= 8 &&
+                                value.contains(RegExp(r'^[0-9A-Za-z\-]+$'))) {
+                              _processBarcode(value);
+                              _searchController.clear();
+                              _barcodeFocusNode.requestFocus();
+                            } else {
+                              // Handle as search query
+                              setState(() {
+                                filteredPickingLines =
+                                    pickingLines.where((line) {
+                                  final name =
+                                      line['name']?.toString().toLowerCase() ??
+                                          '';
+                                  final code =
+                                      line['code']?.toString().toLowerCase() ??
+                                          '';
+                                  final query = value.toLowerCase();
+                                  return name.contains(query) ||
+                                      code.contains(query);
+                                }).toList();
+                              });
+                            }
+                          }
+                        },
                       ),
                     ),
                     Container(
@@ -2489,52 +2532,6 @@ class _PickingPageState extends State<PickingPage>
                       tooltip: 'Sort',
                       constraints: const BoxConstraints(minWidth: 40),
                       splashRadius: 24,
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 12),
-              Container(
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(8),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.05),
-                      blurRadius: 10,
-                      offset: const Offset(0, 2),
-                    ),
-                  ],
-                ),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: _barcodeController,
-                        focusNode: _barcodeFocusNode,
-                        decoration: InputDecoration(
-                          hintText: 'Scan or enter barcode',
-                          hintStyle: TextStyle(color: Colors.grey[400]),
-                          prefixIcon:
-                              Icon(Icons.qr_code, color: Colors.grey[500]),
-                          border: InputBorder.none,
-                          contentPadding:
-                              const EdgeInsets.symmetric(vertical: 15),
-                        ),
-                        onSubmitted: (value) {
-                          if (value.isNotEmpty) {
-                            _processBarcode(value);
-                            _barcodeController.clear();
-                            _barcodeFocusNode.requestFocus();
-                          }
-                        },
-                      ),
-                    ),
-                    Container(
-                      height: 30,
-                      width: 1,
-                      color: Colors.grey.withOpacity(0.3),
-                      margin: const EdgeInsets.symmetric(horizontal: 8),
                     ),
                     IconButton(
                       icon: Icon(Icons.qr_code_scanner,
@@ -2599,53 +2596,98 @@ class _PickingPageState extends State<PickingPage>
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(
-                        Icons.check_circle_outline,
-                        size: 64,
-                        color: Colors.green[300],
-                      ),
-                      const SizedBox(height: 16),
-                      const Text(
-                        'All items have been picked!',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w500,
+                      if (isSearchActive) ...[
+                        Icon(
+                          Icons.search_off,
+                          size: 64,
+                          color: Colors.grey[400],
                         ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        'The picking process is complete',
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: Colors.grey[600],
+                        const SizedBox(height: 16),
+                        const Text(
+                          'No results found',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w500,
+                          ),
                         ),
-                      ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Try a different search term',
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: Colors.grey[600],
+                          ),
+                        ),
+                      ] else if (!hasUnpickedItems) ...[
+                        Icon(
+                          Icons.check_circle_outline,
+                          size: 64,
+                          color: Colors.green[300],
+                        ),
+                        const SizedBox(height: 16),
+                        const Text(
+                          'All items have been picked!',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'The picking process is complete',
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: Colors.grey[600],
+                          ),
+                        ),
+                      ] else ...[
+                        Icon(
+                          Icons.list_alt,
+                          size: 64,
+                          color: Colors.grey[400],
+                        ),
+                        const SizedBox(height: 16),
+                        const Text(
+                          'No items to display',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 )
-              : ListView.builder(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  itemCount: todoItems.length,
-                  itemBuilder: (context, index) {
-                    final item = todoItems[index];
-                    return FutureBuilder<Widget>(
-                      future: buildProductCard(item),
-                      builder: (context, snapshot) {
-                        if (snapshot.connectionState ==
-                            ConnectionState.waiting) {
-                          return const Center(
-                              child: CircularProgressIndicator());
-                        }
-                        if (snapshot.hasError) {
-                          return const Card(
-                            child: ListTile(
-                              leading:
-                                  Icon(Icons.error_outline, color: Colors.red),
-                              title: Text('Error loading product'),
-                            ),
-                          );
-                        }
-                        return snapshot.data ?? const SizedBox();
+              : FutureBuilder<List<Widget>>(
+                  future:
+                      Future.wait(todoItems.asMap().entries.map((entry) async {
+                    final index = entry.key;
+                    final item = entry.value;
+                    return await buildProductCard(item);
+                  }).toList()),
+                  builder: (context, snapshot) {
+                    if (snapshot.connectionState == ConnectionState.waiting) {
+                      return const Center(child: CircularProgressIndicator());
+                    }
+                    if (snapshot.hasError) {
+                      return const Center(
+                        child: Card(
+                          child: ListTile(
+                            leading:
+                                Icon(Icons.error_outline, color: Colors.red),
+                            title: Text('Error loading products'),
+                          ),
+                        ),
+                      );
+                    }
+                    if (!snapshot.hasData || snapshot.data!.isEmpty) {
+                      return const Center(child: Text('No items to display'));
+                    }
+                    return ListView.builder(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      itemCount: snapshot.data!.length,
+                      itemBuilder: (context, index) {
+                        return snapshot.data![index];
                       },
                     );
                   },
@@ -2654,37 +2696,47 @@ class _PickingPageState extends State<PickingPage>
         if (!isProcessing && isInitialized)
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-            child: Row(
+            child: Stack(
+              clipBehavior: Clip.none,
               children: [
-                Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed:
-                        isProcessing ? null : _validateAndCompletePicking,
-                    icon: const Icon(Icons.check),
-                    label: const Text('Validate'),
-                    style: ElevatedButton.styleFrom(
-                      foregroundColor: Colors.white,
-                      backgroundColor: Colors.green,
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
+                ElevatedButton.icon(
+                  onPressed: isProcessing ? null : _validateAndCompletePicking,
+                  icon: const Icon(Icons.check, color: Colors.white),
+                  label: const Text('Validate'),
+                  style: ElevatedButton.styleFrom(
+                    foregroundColor: Colors.white,
+                    backgroundColor: Colors.green,
+                    padding: const EdgeInsets.symmetric(
+                        vertical: 16, horizontal: 16),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    minimumSize: const Size(double.infinity, 56),
+                  ),
+                ),
+                if (filteredPickingLines
+                    .where((line) => !(line['is_picked'] as bool))
+                    .isNotEmpty)
+                  Positioned(
+                    right: -6,
+                    top: -8,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 5),
+                      decoration: BoxDecoration(
+                        color: Colors.red,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        '${filteredPickingLines.where((line) => !(line['is_picked'] as bool)).length}',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                     ),
                   ),
-                ),
-                const SizedBox(width: 12),
-                Container(
-                  decoration: BoxDecoration(
-                    color: Colors.grey.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: IconButton(
-                    icon: const Icon(Icons.refresh),
-                    onPressed: isProcessing ? null : _initializePickingData,
-                    tooltip: 'Refresh',
-                    iconSize: 20,
-                  ),
-                ),
               ],
             ),
           )
@@ -2706,108 +2758,145 @@ class _PickingPageState extends State<PickingPage>
         throw Exception('Picking ID is null');
       }
 
-      final moveLineIds = pickingLines
-          .where((line) => line['id'] != null)
-          .map((line) => line['id'] as int)
-          .toList();
+      // Debug: Log picking details
+      debugPrint('Processing picking ID: $pickingId');
 
-      if (moveLineIds.isEmpty) {
-        throw Exception('No move lines to process');
-      }
-
-      // Check if all required quantities are picked
-      bool allPicked = true;
-      for (var line in pickingLines) {
-        final orderedQty = line['ordered_qty'] as double;
-        final pickedQty = pickedQuantities[line['id'] as int] ?? 0.0;
-        debugPrint(
-            'Line ${line['id']}: Ordered: $orderedQty, Picked: $pickedQty');
-        if (pickedQty < orderedQty) {
-          allPicked = false;
-          break;
-        }
-      }
-
-      if (!allPicked) {
-        throw Exception('Not all items have been fully picked');
-      }
-
-      // Debug: Fetch available fields for stock.move.line
+      // Fetch available fields for stock.move.line to determine quantity field
       final fields = await client.callKw({
         'model': 'stock.move.line',
         'method': 'fields_get',
         'args': [],
         'kwargs': {},
       });
-
-      // Determine the correct field name for quantity done
       final qtyField = fields.containsKey('qty_done') ? 'qty_done' : 'quantity';
 
-      // Update move lines with picked quantities
-      for (var moveLineId in moveLineIds) {
-        if (pickedQuantities.containsKey(moveLineId)) {
-          final quantity = pickedQuantities[moveLineId]!;
-          final serialLots = lotSerialNumbers[moveLineId] ?? [];
-          final line = pickingLines.firstWhere((l) => l['id'] == moveLineId);
-          final trackingType = line['tracking'] as String;
+      // Step 1: Update move lines with picked quantities
+      for (var line in pickingLines.where((line) => line['id'] != null)) {
+        final moveLineId = line['id'] as int;
+        final quantity = pickedQuantities[moveLineId] ?? 0.0;
+        final orderedQty = line['ordered_qty'] as double;
+        final serialLots = lotSerialNumbers[moveLineId] ?? [];
+        final trackingType = line['tracking'] as String;
 
-          final values = <String, dynamic>{
-            qtyField: quantity,
-          };
+        // Debug: Log quantities for each line
+        debugPrint(
+            'Line $moveLineId: Ordered: $orderedQty, Picked: $quantity, Tracking: $trackingType');
 
-          if (trackingType == 'lot' && serialLots.isNotEmpty) {
-            values['lot_name'] = serialLots[0];
-          } else if (trackingType == 'serial' && serialLots.isNotEmpty) {
-            values['lot_name'] = serialLots.join(',');
-          }
+        final values = <String, dynamic>{
+          qtyField: quantity,
+        };
 
-          final success = await client.callKw({
-            'model': 'stock.move.line',
-            'method': 'write',
-            'args': [
-              [moveLineId],
-              values,
-            ],
-            'kwargs': {},
-          });
+        if (trackingType == 'lot' && serialLots.isNotEmpty) {
+          values['lot_name'] = serialLots[0];
+        } else if (trackingType == 'serial' && serialLots.isNotEmpty) {
+          values['lot_name'] = serialLots.join(',');
+        }
 
-          if (!success) {
-            throw Exception('Failed to update move line $moveLineId');
-          }
+        final success = await client.callKw({
+          'model': 'stock.move.line',
+          'method': 'write',
+          'args': [
+            [moveLineId],
+            values,
+          ],
+          'kwargs': {},
+        });
+
+        if (!success) {
+          throw Exception('Failed to update move line $moveLineId');
         }
       }
 
-      // Ensure picking is in assigned state (quantities reserved)
+      // Step 2: Check if picking is fully picked
+      bool isFullyPicked = pickingLines.every((line) {
+        if (line['id'] == null) return true; // Skip lines without IDs
+        final orderedQty = line['ordered_qty'] as double;
+        final pickedQty = pickedQuantities[line['id'] as int] ?? 0.0;
+        debugPrint('Line ${line['id']}: Ordered: $orderedQty, Picked: $pickedQty');
+        return pickedQty >= orderedQty;
+      });
+
+      // Step 3: Ensure picking is in assigned state (reserve quantities)
       final currentState = widget.picking['state'] as String?;
       if (currentState != 'assigned') {
         await client.callKw({
           'model': 'stock.picking',
           'method': 'action_assign',
           'args': [
-            [pickingId]
+            [pickingId],
           ],
           'kwargs': {},
         });
+        debugPrint('Picking $pickingId assigned');
       }
 
-      // Refresh picking state
-      final pickingDetails =
-          await widget.provider.fetchPickingDetails(pickingId);
-      setState(() {
-        widget.picking['state'] = pickingDetails['state'];
-        isProcessing = false;
-        errorMessage = null;
-        pendingPickedQuantities.clear();
-        pendingLotSerialNumbers.clear();
-      });
+      // Step 4: Handle partial picking with backorder option if not fully picked
+      if (!isFullyPicked) {
+        final wizardId = await client.callKw({
+          'model': 'stock.backorder.confirmation',
+          'method': 'create',
+          'args': [{}],
+          'kwargs': {
+            'context': {'picking_id': pickingId},
+          },
+        });
 
-      // Refresh order details
-      final provider =
-          Provider.of<SaleOrderDetailProvider>(context, listen: false);
-      await provider.fetchOrderDetails();
+        if (!mounted) return;
 
-      if (mounted) {
+        // Show dialog to ask user about backorder creation
+        final createBackorder = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Create Backorder?'),
+            content: const Text(
+                'Some quantities could not be fulfilled. Would you like to create a backorder for the remaining items?'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('No'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Yes'),
+              ),
+            ],
+          ),
+        );
+
+        if (!mounted) return;
+
+        if (createBackorder == true) {
+          await client.callKw({
+            'model': 'stock.backorder.confirmation',
+            'method': 'process',
+            'args': [[wizardId]],
+            'kwargs': {},
+          });
+          _showSnackBar('Backorder created successfully', Colors.green);
+        } else {
+          await client.callKw({
+            'model': 'stock.backorder.confirmation',
+            'method': 'process_cancel_backorder',
+            'args': [[wizardId]],
+            'kwargs': {},
+          });
+          _showSnackBar('Picking reserved without backorder', Colors.green);
+        }
+      } else if (mounted) {
         _showSnackBar('Picking quantities reserved successfully', Colors.green);
+      }
+
+      // Step 5: Refresh picking and order details
+      if (mounted) {
+        final pickingDetails = await widget.provider.fetchPickingDetails(pickingId);
+        final provider = Provider.of<SaleOrderDetailProvider>(context, listen: false);
+        await provider.fetchOrderDetails();
+        setState(() {
+          widget.picking['state'] = pickingDetails['state'];
+          isProcessing = false;
+          errorMessage = null;
+        });
+        debugPrint('Refreshed picking state: ${pickingDetails['state']}');
         Navigator.pop(context, true);
       }
     } catch (e) {
@@ -2821,7 +2910,6 @@ class _PickingPageState extends State<PickingPage>
       }
     }
   }
-
   Future<String> _getAttributeNames(
       BuildContext context, List<int> attributeValueIds) async {
     try {
@@ -3364,10 +3452,44 @@ class _PickingPageState extends State<PickingPage>
         ),
         Expanded(
           child: doneItems.isEmpty
-              ? const Center(
-                  child: Text(
-                    'No items have been fully picked yet.',
-                    style: TextStyle(fontSize: 16),
+              ? Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        Icons.inventory_2_outlined,
+                        size: 64,
+                        color: Colors.grey[400],
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        'No Completed Items',
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.grey[800],
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Items will appear here once they are fully picked',
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: Colors.grey[600],
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 24),
+                      TextButton.icon(
+                        onPressed: () => _tabController.animateTo(1),
+                        icon: const Icon(Icons.assignment_outlined),
+                        label: const Text('Go to To-Do List'),
+                        style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 24, vertical: 12),
+                        ),
+                      ),
+                    ],
                   ),
                 )
               : ListView.builder(
@@ -3841,18 +3963,37 @@ class _PickingPageState extends State<PickingPage>
     return Scaffold(
       key: _scaffoldKey,
       appBar: AppBar(
-        title: Text(widget.picking['name'] ?? 'Picking'),
+        leading: IconButton(
+            onPressed: () {
+              Navigator.pop(context);
+            },
+            icon: Icon(
+              Icons.arrow_back,
+              color: Colors.white,
+            )),
+        backgroundColor: primaryColor,
+        title: Text(
+          widget.picking['name'] ?? 'Picking',
+          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+        ),
         bottom: TabBar(
           controller: _tabController,
+          labelColor: Colors.white,
+          unselectedLabelColor: Colors.white70,
+          indicatorColor: Colors.white,
+          labelStyle: TextStyle(fontWeight: FontWeight.w600),
           tabs: const [
-            Tab(text: 'Details'),
-            Tab(text: 'To Do'),
-            Tab(text: 'Done'),
+            Tab(icon: Icon(Icons.description_outlined), text: 'Details'),
+            Tab(icon: Icon(Icons.pending_actions_outlined), text: 'To Do'),
+            Tab(icon: Icon(Icons.task_alt_outlined), text: 'Done'),
           ],
         ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.refresh),
+            icon: const Icon(
+              Icons.refresh,
+              color: Colors.white,
+            ),
             onPressed: isProcessing ? null : _initializePickingData,
             tooltip: 'Refresh',
           ),
@@ -3868,25 +4009,6 @@ class _PickingPageState extends State<PickingPage>
                 _buildDoneTab(),
               ],
             ),
-      floatingActionButton: _tabController.index == 1
-          ? Padding(
-              padding: const EdgeInsets.only(left: 30.0, bottom: 70),
-              child: Align(
-                alignment: Alignment.bottomRight,
-                child: FloatingActionButton(
-                  backgroundColor: Theme.of(context).primaryColor,
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  elevation: 0,
-                  onPressed: isProcessing ? null : _scanBarcode,
-                  child: const Icon(Icons.qr_code_scanner),
-                  tooltip: 'Scan Barcode',
-                ),
-              ),
-            )
-          : null,
     );
   }
 }

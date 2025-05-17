@@ -1,11 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_barcode_scanner/flutter_barcode_scanner.dart';
 import 'package:intl/intl.dart';
-import 'package:latest_van_sale_application/main_page/main_page.dart';
-import 'package:latest_van_sale_application/secondary_pages/1/sale_orders.dart';
 import 'package:latest_van_sale_application/secondary_pages/invoice_creation_page.dart';
 import 'package:latest_van_sale_application/secondary_pages/sale_order_details_page.dart';
 import 'package:odoo_rpc/odoo_rpc.dart';
@@ -19,15 +16,13 @@ import '../../assets/widgets and consts/page_transition.dart';
 import '../../authentication/cyllo_session_model.dart';
 import '../../authentication/login_page.dart';
 import '../../providers/invoice_provider.dart';
-import '../../providers/order_picking_provider.dart';
 import '../../providers/sale_order_provider.dart';
-import '../pending_deliveries.dart';
+import '../deliveries_page.dart';
 import '../product_details_page.dart';
 import '../stock_check_page.dart';
 import '../todays_sales_page.dart';
 import 'invoice_list_page.dart';
 
-// Models for data structures
 class SaleOrder {
   final int id;
   final String name;
@@ -93,10 +88,10 @@ class DashboardStats {
   final String topSellingProduct;
   final int visitedCustomers;
   final int remainingCustomers;
-  late final int scheduledDeliveries;
-  late final int inTransitDeliveries;
-  late final int delivered;
-  late final int delayedDeliveries;
+  int scheduledDeliveries; // Changed from late final
+  int inTransitDeliveries; // Changed from late final
+  int delivered; // Changed from late final
+  int delayedDeliveries; // Changed from late final
 
   DashboardStats({
     required this.todaySales,
@@ -107,10 +102,10 @@ class DashboardStats {
     required this.topSellingProduct,
     required this.visitedCustomers,
     required this.remainingCustomers,
-    required this.scheduledDeliveries,
-    required this.inTransitDeliveries,
-    required this.delivered,
-    required this.delayedDeliveries,
+    this.scheduledDeliveries = 0, // Default to 0
+    this.inTransitDeliveries = 0, // Default to 0
+    this.delivered = 0, // Default to 0
+    this.delayedDeliveries = 0, // Default to 0
   });
 
   factory DashboardStats.fromJson(Map<String, dynamic> json) {
@@ -146,6 +141,23 @@ class DashboardStats {
       delayedDeliveries: 0,
     );
   }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'today_sales': todaySales,
+      'pending_deliveries': pendingDeliveries,
+      'unpaid_invoices': unpaidInvoices,
+      'total_revenue': totalRevenue,
+      'weekly_trend': weeklyTrend,
+      'top_selling_product': topSellingProduct,
+      'visited_customers': visitedCustomers,
+      'remaining_customers': remainingCustomers,
+      'scheduled_deliveries': scheduledDeliveries,
+      'in_transit_deliveries': inTransitDeliveries,
+      'delivered': delivered,
+      'delayed_deliveries': delayedDeliveries,
+    };
+  }
 }
 
 // New model for revenue details
@@ -171,6 +183,41 @@ class OdooService {
   CylloSessionModel? _session;
 
   OdooService();
+
+  Future<List<Product>> getLowStockProducts({int threshold = 10}) async {
+    try {
+      final result = await callKW(
+        model: 'product.product',
+        method: 'search_read',
+        args: [
+          [
+            ['type', '=', 'product'], // Stockable products only
+            ['qty_available', '<=', threshold]
+          ]
+        ],
+        kwargs: {
+          'fields': [
+            'id',
+            'name',
+            'qty_available',
+            'list_price',
+            'product_variant_count',
+            'default_code'
+          ],
+          'order': 'qty_available asc',
+        },
+      );
+      if (result is List) {
+        return result.where((item) => item is Map<String, dynamic>).map((json) {
+          return Product.fromJson(json as Map<String, dynamic>);
+        }).toList();
+      }
+      return [];
+    } catch (e) {
+      debugPrint('Error fetching low stock products: $e');
+      return [];
+    }
+  }
 
   Future<String?> getUserImage() async {
     debugPrint('Fetching user image...');
@@ -222,7 +269,7 @@ class OdooService {
           DateTime(today.year, today.month, today.day + 1).toIso8601String();
       final now = DateTime.now().toIso8601String();
 
-      // Scheduled Deliveries: Confirmed or assigned deliveries scheduled for today
+      // Scheduled Deliveries: Deliveries planned for today, not yet started
       final scheduled = await callKW(
         model: 'stock.picking',
         method: 'search_count',
@@ -238,8 +285,9 @@ class OdooService {
           ]
         ],
       );
+      debugPrint('Scheduled deliveries count: $scheduled');
 
-      // In Transit Deliveries: Deliveries marked as in progress
+      // In Transit Deliveries: Deliveries that have started
       final inTransit = await callKW(
         model: 'stock.picking',
         method: 'search_count',
@@ -247,10 +295,11 @@ class OdooService {
           [
             ['scheduled_date', '>=', startOfDay],
             ['scheduled_date', '<', endOfDay],
-            ['state', '=', 'in_progress'], // Adjust based on Odoo configuration
+            ['state', '=', 'assigned'], // Replace with 'in_progress' if custom
           ]
         ],
       );
+      debugPrint('In-transit deliveries count: $inTransit');
 
       // Delivered: Deliveries completed today
       final delivered = await callKW(
@@ -264,6 +313,7 @@ class OdooService {
           ]
         ],
       );
+      debugPrint('Delivered count: $delivered');
 
       // Delayed Deliveries: Scheduled deliveries not completed and past due
       final delayed = await callKW(
@@ -281,23 +331,26 @@ class OdooService {
           ]
         ],
       );
+      debugPrint('Delayed deliveries count: $delayed');
 
-      // Assign values to stats, with fallback to 0 if response is invalid
+      // Assign values to stats
       stats.scheduledDeliveries = scheduled is int ? scheduled : 0;
       stats.inTransitDeliveries = inTransit is int ? inTransit : 0;
       stats.delivered = delivered is int ? delivered : 0;
       stats.delayedDeliveries = delayed is int ? delayed : 0;
 
-      debugPrint('Delivery Status: Scheduled: ${stats.scheduledDeliveries}, '
+      debugPrint('Delivery Status Updated: '
+          'Scheduled: ${stats.scheduledDeliveries}, '
           'In Transit: ${stats.inTransitDeliveries}, '
           'Delivered: ${stats.delivered}, '
           'Delayed: ${stats.delayedDeliveries}');
     } catch (e) {
       debugPrint('Error fetching delivery status: $e');
-      stats.scheduledDeliveries = 0;
-      stats.inTransitDeliveries = 0;
-      stats.delivered = 0;
-      stats.delayedDeliveries = 0;
+      // Only reset fields if they haven't been set
+      stats.scheduledDeliveries = stats.scheduledDeliveries;
+      stats.inTransitDeliveries = stats.inTransitDeliveries;
+      stats.delivered = stats.delivered;
+      stats.delayedDeliveries = stats.delayedDeliveries;
     }
   }
 
@@ -420,79 +473,7 @@ class OdooService {
               'delivery_status',
               'in',
               ['pending', 'partial', 'in_progress', 'incomplete']
-            ]
-          ]
-        ],
-        kwargs: {},
-      );
-
-      // Deliveries to be completed (scheduled)
-      final deliveriesToBeCompletedResult = await callKW(
-        model: 'sale.order',
-        method: 'search_count',
-        args: [
-          [
-            [
-              'state',
-              'in',
-              ['sale', 'done']
             ],
-            [
-              'delivery_status',
-              'in',
-              ['pending', 'partial', 'in_progress', 'incomplete']
-            ]
-          ]
-        ],
-        kwargs: {},
-      );
-
-      // In-transit deliveries
-      final inTransitDeliveriesResult = await callKW(
-        model: 'sale.order',
-        method: 'search_count',
-        args: [
-          [
-            [
-              'state',
-              'in',
-              ['sale', 'done']
-            ],
-            ['delivery_status', '=', 'in_progress']
-          ]
-        ],
-        kwargs: {},
-      );
-
-      // Delivered orders
-      final deliveredResult = await callKW(
-        model: 'sale.order',
-        method: 'search_count',
-        args: [
-          [
-            [
-              'state',
-              'in',
-              ['sale', 'done']
-            ],
-            ['delivery_status', '=', 'delivered']
-          ]
-        ],
-        kwargs: {},
-      );
-
-      // Delayed deliveries (you can customize the logic based on business rules)
-      final delayedDeliveriesResult = await callKW(
-        model: 'sale.order',
-        method: 'search_count',
-        args: [
-          [
-            [
-              'state',
-              'in',
-              ['sale', 'done']
-            ],
-            ['delivery_status', '=', 'late']
           ]
         ],
         kwargs: {},
@@ -604,17 +585,21 @@ class OdooService {
 
       return DashboardStats(
         todaySales: todaySales,
-        pendingDeliveries: pendingDeliveriesResult ?? 0,
-        unpaidInvoices: unpaidInvoicesResult ?? 0,
+        pendingDeliveries:
+            pendingDeliveriesResult is int ? pendingDeliveriesResult : 0,
+        unpaidInvoices: unpaidInvoicesResult is int ? unpaidInvoicesResult : 0,
         totalRevenue: totalRevenue,
         weeklyTrend: weeklyTrend,
         topSellingProduct: 'N/A',
         visitedCustomers: visitedCustomers,
         remainingCustomers: remainingCustomers,
-        scheduledDeliveries: deliveriesToBeCompletedResult ?? 0,
-        inTransitDeliveries: inTransitDeliveriesResult ?? 0,
-        delivered: deliveredResult ?? 0,
-        delayedDeliveries: delayedDeliveriesResult ?? 0,
+        scheduledDeliveries: 0,
+        // Will be set by fetchDeliveryStatus
+        inTransitDeliveries: 0,
+        // Will be set by fetchDeliveryStatus
+        delivered: 0,
+        // Will be set by fetchDeliveryStatus
+        delayedDeliveries: 0, // Will be set by fetchDeliveryStatus
       );
     } catch (e) {
       debugPrint('Error fetching dashboard stats: $e');
@@ -861,33 +846,34 @@ class DashboardPage extends StatefulWidget {
 class _DashboardPageState extends State<DashboardPage>
     with SingleTickerProviderStateMixin {
   final OdooService _odooService = OdooService();
+  bool _isRefreshing = false;
   late Future<bool> _initFuture;
   DashboardStats? _cachedStats;
   List<Customer>? _cachedCustomers;
   List<SaleOrder>? _cachedOrders;
   String _username = "";
   bool _isInitialLoad = true;
-  bool _isMounted = false; // Add a flag to track mounted state
+  bool _isMounted = false;
+  String? _userImageBase64;
+  bool _hasClearedCache = false; // New flag to prevent multiple cache clears
+  List<Product>? _lowStockProducts; // New variable for low stock products
 
   @override
   void initState() {
     super.initState();
-    _isMounted = true; // Set to true when the widget is created
-    _loadCachedData();
-    _loadUsername();
+    _isMounted = true;
     _initFuture = _initializeService();
   }
 
   @override
   void dispose() {
-    _isMounted = false; // Set to false when the widget is disposed
+    _isMounted = false;
     super.dispose();
   }
 
   Future<void> _loadUsername() async {
     final prefs = await SharedPreferences.getInstance();
     if (_isMounted) {
-      // Check if mounted before calling setState
       setState(() {
         _username = prefs.getString('userName') ?? "User";
       });
@@ -897,6 +883,18 @@ class _DashboardPageState extends State<DashboardPage>
   Future<void> _loadCachedData() async {
     final prefs = await SharedPreferences.getInstance();
     try {
+      final lastCacheDate = prefs.getString('last_cache_date');
+      final today = DateTime.now().toIso8601String().split('T')[0];
+      if (lastCacheDate != today && !_hasClearedCache) {
+        await prefs.remove('cached_dashboard_stats');
+        await prefs.remove('cached_customers');
+        await prefs.remove('cached_sale_orders');
+        await prefs.remove('cached_low_stock_products'); // Clear new cache
+        await prefs.setString('last_cache_date', today);
+        _hasClearedCache = true;
+        debugPrint('Cleared stale cache for date: $today');
+      }
+
       final statsJson = prefs.getString('cached_dashboard_stats');
       if (statsJson != null) {
         _cachedStats = DashboardStats.fromJson(jsonDecode(statsJson));
@@ -915,8 +913,14 @@ class _DashboardPageState extends State<DashboardPage>
             .map((json) => SaleOrder.fromJson(json as Map<String, dynamic>))
             .toList();
       }
+      final lowStockProductsJson = prefs.getString('cached_low_stock_products');
+      if (lowStockProductsJson != null) {
+        final productsList = jsonDecode(lowStockProductsJson) as List;
+        _lowStockProducts = productsList
+            .map((json) => Product.fromJson(json as Map<String, dynamic>))
+            .toList();
+      }
       if (_isMounted) {
-        // Check if mounted before calling setState
         setState(() {});
       }
     } catch (e) {
@@ -928,32 +932,21 @@ class _DashboardPageState extends State<DashboardPage>
     required DashboardStats stats,
     required List<Customer> customers,
     required List<SaleOrder> orders,
+    required List<Product> lowStockProducts, // Added parameter
   }) async {
     final prefs = await SharedPreferences.getInstance();
     try {
-      await prefs.setString(
-          'cached_dashboard_stats', jsonEncode(stats.toJson()));
+      final statsJson = jsonEncode(stats.toJson());
+      await prefs.setString('cached_dashboard_stats', statsJson);
       await prefs.setString('cached_customers',
           jsonEncode(customers.map((c) => c.toJson()).toList()));
       await prefs.setString('cached_sale_orders',
           jsonEncode(orders.map((o) => o.toJson()).toList()));
+      await prefs.setString('cached_low_stock_products',
+          jsonEncode(lowStockProducts.map((p) => p.toJson()).toList()));
+      debugPrint('Saved cached stats: $statsJson');
     } catch (e) {
       debugPrint('Error saving cached data: $e');
-    }
-  }
-
-  Future<void> _loadUserImage() async {
-    final imageBase64 = await _odooService.getUserImage();
-    if (imageBase64 != null) {
-      try {
-        base64Decode(imageBase64);
-      } catch (e) {
-        debugPrint('Base64 decoding failed: $e');
-      }
-    }
-    if (_isMounted) {
-      // Check if mounted before calling setState
-      setState(() {});
     }
   }
 
@@ -961,11 +954,11 @@ class _DashboardPageState extends State<DashboardPage>
     try {
       final initialized = await _odooService.initFromStorage();
       if (initialized) {
-        await _loadUserImage();
-        _refreshData();
+        await _loadUsername();
+        await _loadCachedData();
+        await _refreshData();
       }
       if (_isMounted) {
-        // Check if mounted before calling setState
         setState(() {
           _isInitialLoad = false;
         });
@@ -974,7 +967,6 @@ class _DashboardPageState extends State<DashboardPage>
     } catch (e) {
       debugPrint('Initialization error: $e');
       if (_isMounted) {
-        // Check if mounted before calling setState
         setState(() {
           _isInitialLoad = false;
         });
@@ -984,34 +976,51 @@ class _DashboardPageState extends State<DashboardPage>
   }
 
   Future<void> _refreshData() async {
+    if (_isRefreshing) return;
+    setState(() {
+      _isRefreshing = true;
+    });
     try {
       final stats = await _odooService.getDashboardStats();
+      await _odooService.fetchDeliveryStatus(stats);
       final customers = await _odooService.getTodayCustomers();
       final orders = await _odooService.getRecentSaleOrders();
-      await _saveCachedData(stats: stats, customers: customers, orders: orders);
+      final lowStockProducts =
+          await _odooService.getLowStockProducts(); // Fetch new data
+      await _saveCachedData(
+        stats: stats,
+        customers: customers,
+        orders: orders,
+        lowStockProducts: lowStockProducts,
+      );
       if (_isMounted) {
-        // Check if mounted before calling setState
         setState(() {
           _cachedStats = stats;
           _cachedCustomers = customers;
           _cachedOrders = orders;
-        });
-        // Force rebuild to ensure UI reflects latest data
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (_isMounted) {
-            setState(() {});
-          }
+          _lowStockProducts = lowStockProducts;
+          _isRefreshing = false;
         });
       }
     } catch (e) {
       debugPrint('Error refreshing data: $e');
+      if (_isMounted) {
+        setState(() {
+          _isRefreshing = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Failed to refresh dashboard. Please try again.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
 
   Future<void> _handleRefresh() async {
     await _refreshData();
     if (mounted) {
-      // Use the built-in mounted check here as it's within a UI interaction
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Dashboard refreshed')),
       );
@@ -1222,7 +1231,7 @@ class _DashboardPageState extends State<DashboardPage>
               ),
             ],
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 16),
           _buildRecentSalesShimmer(),
         ],
       ),
@@ -1490,8 +1499,6 @@ class _DashboardPageState extends State<DashboardPage>
     );
   }
 
-// In the Quick Actions ListView, update the Scan Product button
-// Replace the existing _buildQuickActionButton call for Scan Product
   void showCreateOrderSheetGeneral(BuildContext context) {
     showDialog(
       context: context,
@@ -1555,16 +1562,38 @@ class _DashboardPageState extends State<DashboardPage>
                         CircleAvatar(
                           backgroundColor: Colors.white,
                           radius: 25,
-                          child: Text(
-                            _username.isNotEmpty
-                                ? _username.substring(0, 1).toUpperCase()
-                                : "U",
-                            style: const TextStyle(
-                              color: Color(0xFFC13030),
-                              fontWeight: FontWeight.bold,
-                              fontSize: 20,
-                            ),
-                          ),
+                          child: _userImageBase64 != null
+                              ? ClipOval(
+                                  child: Image.memory(
+                                    base64Decode(_userImageBase64!),
+                                    width: 50,
+                                    height: 50,
+                                    fit: BoxFit.cover,
+                                    errorBuilder:
+                                        (context, error, stackTrace) => Text(
+                                      _username.isNotEmpty
+                                          ? _username
+                                              .substring(0, 1)
+                                              .toUpperCase()
+                                          : "U",
+                                      style: const TextStyle(
+                                        color: Color(0xFFC13030),
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 20,
+                                      ),
+                                    ),
+                                  ),
+                                )
+                              : Text(
+                                  _username.isNotEmpty
+                                      ? _username.substring(0, 1).toUpperCase()
+                                      : "U",
+                                  style: const TextStyle(
+                                    color: Color(0xFFC13030),
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 20,
+                                  ),
+                                ),
                         ),
                         const SizedBox(width: 16),
                         Column(
@@ -1724,8 +1753,6 @@ class _DashboardPageState extends State<DashboardPage>
                   )
                 : _buildStatsShimmer(),
             const SizedBox(height: 16),
-            _buildDeliveryStatusCard(),
-            const SizedBox(height: 24),
             const Text(
               'Quick Actions',
               style: TextStyle(
@@ -1792,6 +1819,8 @@ class _DashboardPageState extends State<DashboardPage>
                 ],
               ),
             ),
+            const SizedBox(height: 16),
+            LowStockAlertSection(lowStockProducts: _lowStockProducts ?? []),
             const SizedBox(height: 16),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -2087,57 +2116,8 @@ class _DashboardPageState extends State<DashboardPage>
       ),
     );
   }
-
-  Widget _buildDeliveryStatusCard() {
-    if (_cachedStats == null) {
-      return const SizedBox(); // or a loading/shimmer widget
-    }
-
-    return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Delivery Status',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 8),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                _buildStatusItem('Scheduled',
-                    '${_cachedStats!.scheduledDeliveries}', primaryLightColor),
-                _buildStatusItem('In Transit',
-                    '${_cachedStats!.inTransitDeliveries}', primaryLightColor),
-                _buildStatusItem('Delivered', '${_cachedStats!.delivered}',
-                    primaryLightColor),
-                _buildStatusItem('Delayed',
-                    '${_cachedStats!.delayedDeliveries}', primaryLightColor),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildStatusItem(String label, String value, Color color) {
-    return Column(
-      children: [
-        Text(value,
-            style: TextStyle(
-                fontSize: 16, fontWeight: FontWeight.bold, color: color)),
-        Text(label, style: TextStyle(fontSize: 12, color: Colors.grey[600])),
-      ],
-    );
-  }
 }
 
-// New Revenue Details Dialog
 class RevenueDetailsDialog extends StatefulWidget {
   final OdooService odooService;
 
@@ -2602,5 +2582,537 @@ extension SaleOrderExtension on SaleOrder {
       'invoice_status': invoiceStatus,
       'partner_id': partnerId,
     };
+  }
+}
+
+class LowStockAlertSection extends StatelessWidget {
+  final List<Product>? lowStockProducts;
+
+  const LowStockAlertSection({
+    Key? key,
+    required this.lowStockProducts,
+  }) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    // Sort products by vanInventory in ascending order
+    final sortedProducts = lowStockProducts?.map((p) => p).toList()
+      ?..sort((a, b) => a.vanInventory.compareTo(b.vanInventory));
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Text(
+              'Low Stock Alerts',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        _buildAlertContent(context, sortedProducts!),
+      ],
+    );
+  }
+
+  Widget _buildAlertContent(
+      BuildContext context, List<Product> sortedProducts) {
+    final hasProducts = sortedProducts.isNotEmpty;
+    final theme = Theme.of(context);
+    final primaryColor = theme.primaryColor;
+
+    return Card(
+      elevation: 3,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(
+          color: primaryColor.withOpacity(0.3),
+          width: 1,
+        ),
+      ),
+      child: Column(
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
+            decoration: BoxDecoration(
+              color: primaryColor.withOpacity(0.1),
+              borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(12),
+                topRight: Radius.circular(12),
+              ),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.warning_amber_rounded,
+                  color: primaryColor,
+                  size: 20,
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  hasProducts ? 'Items needing attention' : 'Stock Status',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    color: primaryColor,
+                  ),
+                ),
+                const Spacer(),
+                if (hasProducts && sortedProducts.length > 5)
+                  TextButton(
+                    onPressed: () {
+                      _showAllLowStockProducts(context, sortedProducts);
+                    },
+                    child: Text(
+                      'View All',
+                      style: TextStyle(color: primaryColor),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          hasProducts
+              ? _buildProductList(context, sortedProducts)
+              : _buildEmptyState(context),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEmptyState(BuildContext context) {
+    final theme = Theme.of(context);
+    final primaryColor = theme.primaryColor;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 16),
+      alignment: Alignment.center,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.check_circle_outline,
+            color: primaryColor,
+            size: 48,
+          ),
+          const SizedBox(height: 16),
+          Text(
+            'All inventory levels are good',
+            style: TextStyle(
+              fontSize: 16,
+              color: Colors.grey[700],
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'No items are currently low on stock',
+            style: TextStyle(color: Colors.grey[600]),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildProductList(BuildContext context, List<Product> sortedProducts) {
+    final displayCount = sortedProducts.length > 5 ? 5 : sortedProducts.length;
+    final theme = Theme.of(context);
+    final primaryColor = theme.primaryColor;
+
+    return Container(
+      decoration: const BoxDecoration(
+        borderRadius: BorderRadius.only(
+          bottomLeft: Radius.circular(12),
+          bottomRight: Radius.circular(12),
+        ),
+      ),
+      child: ListView.separated(
+        shrinkWrap: true,
+        padding: EdgeInsets.zero,
+        physics: const NeverScrollableScrollPhysics(),
+        itemCount: displayCount,
+        separatorBuilder: (_, __) => Divider(
+          height: 1,
+          thickness: 1,
+          color: Colors.grey[200],
+        ),
+        itemBuilder: (context, index) =>
+            _buildProductTile(context, sortedProducts[index]),
+      ),
+    );
+  }
+
+  Widget _buildProductTile(BuildContext context, Product product) {
+    final theme = Theme.of(context);
+    final primaryColor = theme.primaryColor;
+
+    // Determine severity level based on inventory count
+    Color severityColor;
+    IconData severityIcon;
+
+    if (product.vanInventory <= 0) {
+      severityColor = Colors.red;
+      severityIcon = Icons.error_outline;
+    } else if (product.vanInventory < 5) {
+      severityColor = Colors.orange;
+      severityIcon = Icons.warning_amber_rounded;
+    } else {
+      severityColor = Colors.amber;
+      severityIcon = Icons.info_outline;
+    }
+
+    return InkWell(
+      onTap: () => _navigateToProductDetails(context, product),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: ListTile(
+          leading: Container(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+              color: primaryColor.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: product.imageUrl != null && product.imageUrl!.isNotEmpty
+                ? ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: Image.network(
+                      product.imageUrl!,
+                      fit: BoxFit.cover,
+                      errorBuilder: (context, error, stackTrace) => Icon(
+                        Icons.inventory,
+                        color: primaryColor,
+                      ),
+                    ),
+                  )
+                : Icon(
+                    Icons.inventory,
+                    color: primaryColor,
+                  ),
+          ),
+          title: Text(
+            product.name,
+            style: const TextStyle(
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          subtitle: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const SizedBox(height: 4),
+              Row(
+                children: [
+                  Icon(
+                    severityIcon,
+                    color: severityColor,
+                    size: 16,
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    'Stock: ${product.vanInventory}',
+                    style: TextStyle(
+                      color: severityColor,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          trailing: IconButton(
+            icon: Icon(
+              Icons.arrow_forward_ios,
+              size: 16,
+              color: Colors.grey[400],
+            ),
+            onPressed: () => _navigateToProductDetails(context, product),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _navigateToProductDetails(BuildContext context, Product product) {
+    Navigator.push(
+      context,
+      SlidingPageTransitionRL(
+        page: ProductDetailsPage(productId: product.id.toString()),
+      ),
+    );
+  }
+
+  void _showAllLowStockProducts(
+      BuildContext context, List<Product> sortedProducts) {
+    showDialog(
+      context: context,
+      builder: (context) => AllLowStockProductsDialog(
+        lowStockProducts: sortedProducts,
+        onViewProduct: (product) {
+          Navigator.pop(context);
+          _navigateToProductDetails(context, product);
+        },
+      ),
+    );
+  }
+}
+
+class AllLowStockProductsDialog extends StatefulWidget {
+  final List<Product> lowStockProducts;
+  final Function(Product) onViewProduct;
+
+  const AllLowStockProductsDialog({
+    Key? key,
+    required this.lowStockProducts,
+    required this.onViewProduct,
+  }) : super(key: key);
+
+  @override
+  State<AllLowStockProductsDialog> createState() =>
+      _AllLowStockProductsDialogState();
+}
+
+class _AllLowStockProductsDialogState extends State<AllLowStockProductsDialog> {
+  String _searchQuery = '';
+  List<Product> _filteredProducts = [];
+
+  @override
+  void initState() {
+    super.initState();
+    // Sort products by vanInventory in ascending order
+    _filteredProducts = List<Product>.from(widget.lowStockProducts)
+      ..sort((a, b) => a.vanInventory.compareTo(b.vanInventory));
+  }
+
+  void _filterProducts(String query) {
+    setState(() {
+      _searchQuery = query;
+      if (query.isEmpty) {
+        _filteredProducts = List<Product>.from(widget.lowStockProducts)
+          ..sort((a, b) => a.vanInventory.compareTo(b.vanInventory));
+      } else {
+        _filteredProducts = widget.lowStockProducts
+            .where((product) =>
+                product.name.toLowerCase().contains(query.toLowerCase()) ||
+                (product.id?.toString() ?? '').contains(query))
+            .toList()
+          ..sort((a, b) => a.vanInventory.compareTo(b.vanInventory));
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final primaryColor = theme.primaryColor;
+    final screenWidth = MediaQuery.of(context).size.width;
+
+    return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Container(
+        width: double.maxFinite,
+        constraints: const BoxConstraints(maxWidth: 600, maxHeight: 600),
+        child: Column(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: primaryColor,
+                borderRadius: const BorderRadius.only(
+                  topLeft: Radius.circular(16),
+                  topRight: Radius.circular(16),
+                ),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'Low Stock Products (${widget.lowStockProducts.length})',
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close, color: Colors.white),
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: TextField(
+                onChanged: _filterProducts,
+                decoration: InputDecoration(
+                  hintText: 'Search products...',
+                  prefixIcon: Icon(Icons.search, color: primaryColor),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    borderSide: BorderSide(color: Colors.grey[300]!),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    borderSide: BorderSide(color: primaryColor, width: 2),
+                  ),
+                  contentPadding: const EdgeInsets.symmetric(vertical: 0),
+                  filled: true,
+                  fillColor: Colors.grey[100],
+                ),
+              ),
+            ),
+            Expanded(
+              child: _filteredProducts.isEmpty
+                  ? Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.search_off,
+                            size: 48,
+                            color: Colors.grey[400],
+                          ),
+                          const SizedBox(height: 16),
+                          Text(
+                            'No products found',
+                            style: TextStyle(
+                              fontSize: 16,
+                              color: Colors.grey[600],
+                            ),
+                          ),
+                        ],
+                      ),
+                    )
+                  : ListView.separated(
+                      padding: EdgeInsets.fromLTRB(
+                        screenWidth * 0.02,
+                        0,
+                        screenWidth * 0.02,
+                        screenWidth * 0.02,
+                      ),
+                      itemCount: _filteredProducts.length,
+                      separatorBuilder: (_, __) => Divider(
+                        height: 1,
+                        color: Colors.grey[300],
+                      ),
+                      itemBuilder: (context, index) {
+                        final product = _filteredProducts[index];
+
+                        Color severityColor;
+                        String severityText;
+                        if (product.vanInventory <= 0) {
+                          severityColor = Colors.red;
+                          severityText = 'Out of stock';
+                        } else if (product.vanInventory < 5) {
+                          severityColor = Colors.orange;
+                          severityText = 'Critical';
+                        } else {
+                          severityColor = Colors.amber;
+                          severityText = 'Low';
+                        }
+
+                        return Container(
+                          padding: EdgeInsets.symmetric(
+                            horizontal: screenWidth * 0.04,
+                            vertical: screenWidth * 0.02,
+                          ),
+                          child: InkWell(
+                            onTap: () => widget.onViewProduct(product),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.center,
+                              children: [
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Row(
+                                        children: [
+                                          Tooltip(
+                                            message: severityText,
+                                            child: Container(
+                                              width: screenWidth * 0.02,
+                                              height: screenWidth * 0.02,
+                                              decoration: BoxDecoration(
+                                                color: severityColor,
+                                                shape: BoxShape.circle,
+                                              ),
+                                            ),
+                                          ),
+                                          SizedBox(
+                                            width: 6,
+                                          ),
+                                          Expanded(
+                                            child: Text(
+                                              product.name,
+                                              style: TextStyle(
+                                                fontWeight: FontWeight.w600,
+                                                fontSize: screenWidth * 0.04,
+                                              ),
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      SizedBox(height: screenWidth * 0.015),
+                                      Row(
+                                        children: [
+                                          SizedBox(
+                                            width: 14,
+                                          ),
+                                          Text(
+                                            'Stock: ${product.vanInventory}',
+                                            style: TextStyle(
+                                              color: Colors.grey[700],
+                                              fontSize: screenWidth * 0.035,
+                                            ),
+                                          ),
+                                          SizedBox(width: screenWidth * 0.04),
+                                          Text(
+                                            'SKU: ${product.defaultCode}',
+                                            style: TextStyle(
+                                              color: Colors.grey[600],
+                                              fontSize: screenWidth * 0.035,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+            ),
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.grey[100],
+                borderRadius: const BorderRadius.only(
+                  bottomLeft: Radius.circular(16),
+                  bottomRight: Radius.circular(16),
+                ),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    _searchQuery.isEmpty
+                        ? 'Showing all ${_filteredProducts.length} items'
+                        : 'Found ${_filteredProducts.length} items',
+                    style: TextStyle(color: Colors.grey[700]),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }

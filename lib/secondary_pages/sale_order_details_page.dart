@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 import 'package:latest_van_sale_application/secondary_pages/products_picking_page.dart';
 import 'package:latest_van_sale_application/secondary_pages/sale_order_page.dart';
 import 'package:provider/provider.dart';
+import 'package:shimmer/shimmer.dart';
 
 import '../assets/widgets and consts/cached_data.dart';
 import '../assets/widgets and consts/order_tracking.dart';
@@ -80,95 +81,6 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
     };
   }
 
-  Widget _buildStatIndicator(
-      BuildContext context, String label, String value, Color color) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text('$label: ',
-            style: TextStyle(color: Colors.grey[600], fontSize: 12)),
-        Text(value,
-            style: TextStyle(
-                color: color, fontSize: 12, fontWeight: FontWeight.bold)),
-      ],
-    );
-  }
-
-  Future<void> _handleBackorder(Map<String, dynamic> picking) async {
-    if (!mounted) return;
-    final client = await SessionManager.getActiveClient();
-    if (client == null) return;
-
-    final provider =
-        Provider.of<SaleOrderDetailProvider>(context, listen: false);
-
-    try {
-      final backorderId = picking['backorder_id'];
-      if (backorderId == false) {
-        final moves = await client.callKw({
-          'model': 'stock.move',
-          'method': 'search_read',
-          'args': [
-            [
-              ['picking_id', '=', picking['id']]
-            ],
-            ['product_id', 'product_uom_qty', 'quantity'],
-          ],
-          'kwargs': {},
-        });
-
-        final hasUnfulfilled = moves.any((move) =>
-            (move['product_uom_qty'] as double) >
-            (move['quantity'] as double? ?? 0.0));
-
-        if (hasUnfulfilled && mounted) {
-          final createBackorder = await showDialog<bool>(
-            context: context,
-            builder: (context) => AlertDialog(
-              title: const Text('Create Backorder?'),
-              content: const Text(
-                  'Some quantities could not be fulfilled. Would you like to create a backorder for the remaining items?'),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context, false),
-                  child: const Text('No'),
-                ),
-                TextButton(
-                  onPressed: () => Navigator.pop(context, true),
-                  child: const Text('Yes'),
-                ),
-              ],
-            ),
-          );
-
-          if (createBackorder == true && mounted) {
-            await client.callKw({
-              'model': 'stock.picking',
-              'method': 'action_create_backorder',
-              'args': [
-                [picking['id']]
-              ],
-              'kwargs': {},
-            });
-            if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Backorder created successfully')),
-              );
-            }
-            await provider.fetchOrderDetails();
-          }
-        }
-      }
-    } catch (e) {
-      if (mounted) {
-        debugPrint('$e');
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error handling backorder: $e')),
-        );
-      }
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final dataProvider = Provider.of<DataProvider>(context);
@@ -199,8 +111,86 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
             ),
             body: SafeArea(
               child: provider.isLoading
-                  ? const Center(
-                      child: CircularProgressIndicator(color: primaryColor))
+                  ? Center(
+                      child: Shimmer.fromColors(
+                      baseColor: Colors.grey[300]!,
+                      highlightColor: Colors.grey[100]!,
+                      child: SingleChildScrollView(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // Header
+                            Container(
+                              width: double.infinity,
+                              height: 120,
+                              color: Colors.white,
+                            ),
+                            // TabBar
+                            Container(
+                              width: double.infinity,
+                              height: 50,
+                              margin: const EdgeInsets.symmetric(
+                                  horizontal: 16, vertical: 8),
+                              color: Colors.white,
+                            ),
+                            // Order Info Tab
+                            Padding(
+                              padding: const EdgeInsets.all(16.0),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  // Order Information Card
+                                  Container(
+                                    width: double.infinity,
+                                    height: 300,
+                                    margin: const EdgeInsets.only(bottom: 12),
+                                    color: Colors.white,
+                                  ),
+                                  // Order Tracking
+                                  Container(
+                                    width: double.infinity,
+                                    height: 100,
+                                    margin: const EdgeInsets.only(bottom: 12),
+                                    color: Colors.white,
+                                  ),
+                                  // Order Lines Title
+                                  Container(
+                                    width: 150,
+                                    height: 20,
+                                    margin: const EdgeInsets.only(bottom: 8),
+                                    color: Colors.white,
+                                  ),
+                                  // Order Lines
+                                  ...List.generate(
+                                    3,
+                                    (index) => Container(
+                                      width: double.infinity,
+                                      height: 120,
+                                      margin: const EdgeInsets.only(bottom: 12),
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                  // Pricing Summary
+                                  Container(
+                                    width: double.infinity,
+                                    height: 150,
+                                    margin: const EdgeInsets.only(bottom: 12),
+                                    color: Colors.white,
+                                  ),
+                                  // Action Button
+                                  Container(
+                                    width: double.infinity,
+                                    height: 50,
+                                    margin: const EdgeInsets.only(bottom: 12),
+                                    color: Colors.white,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ))
                   : provider.error != null
                       ? Center(
                           child: Padding(
@@ -569,21 +559,6 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                               itemCount: orderLines.length,
                               itemBuilder: (context, index) {
                                 final line = orderLines[index];
-
-                                // Print full details of the order line
-                                // debugPrint('Order Line ${line['id']}: ${{
-                                //   'product_id': line['product_id'],
-                                //   'name': line['name'],
-                                //   'product_uom_qty': line['product_uom_qty'],
-                                //   'price_unit': line['price_unit'],
-                                //   'price_subtotal': line['price_subtotal'],
-                                //   'qty_delivered': line['qty_delivered'],
-                                //   'qty_invoiced': line['qty_invoiced'],
-                                //   'discount': line['discount'],
-                                //   'display_type': line['display_type'],
-                                // }}');
-
-                                // Skip lines with no ordered quantity
                                 final quantity = line['product_uom_qty'] is num
                                     ? (line['product_uom_qty'] as num)
                                         .toDouble()
@@ -794,74 +769,7 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                             ),
                           ),
                           const SizedBox(height: 10),
-                          // if (hasPendingDeliveries &&
-                          //     currentState != 'done') ...[
-                          //   const SizedBox(height: 16),
-                          //   SizedBox(
-                          //     width: double.infinity,
-                          //     child: ElevatedButton.icon(
-                          //       icon: const Icon(Icons.local_shipping,
-                          //           color: Colors.white),
-                          //       label: const Text('Start Picking',
-                          //           style: TextStyle(color: Colors.white)),
-                          //       onPressed: () async {
-                          //         final incompletePicking = pickings.firstWhere(
-                          //           (picking) =>
-                          //               picking['state'] != 'done' &&
-                          //               picking['state'] != 'cancel',
-                          //           orElse: () => {},
-                          //         );
-                          //         if (incompletePicking.isNotEmpty) {
-                          //           final result = await Navigator.push(
-                          //             context,
-                          //             SlidingPageTransitionRL(
-                          //               page: PickingPage(
-                          //                 picking: incompletePicking,
-                          //                 warehouseId: warehouseId,
-                          //                 provider: dataProvider,
-                          //               ),
-                          //             ),
-                          //           );
-                          //           if (result == true && mounted) {
-                          //             await provider.fetchOrderDetails();
-                          //             if (mounted) {
-                          //               await _handleBackorder(
-                          //                   incompletePicking);
-                          //               final allDone = pickings
-                          //                   .every((p) => p['state'] == 'done');
-                          //               if (allDone && mounted) {
-                          //                 // Navigator.push(
-                          //                 //   context,
-                          //                 //   SlidingPageTransitionRL(
-                          //                 //     page: DeliveryPage(
-                          //                 //       orderData: orderData,
-                          //                 //       provider: provider,
-                          //                 //     ),
-                          //                 //   ),
-                          //                 // );
-                          //               }
-                          //             }
-                          //           }
-                          //         } else {
-                          //           ScaffoldMessenger.of(context).showSnackBar(
-                          //             const SnackBar(
-                          //                 content: Text(
-                          //                     'No pickings available to process')),
-                          //           );
-                          //         }
-                          //       },
-                          //       style: ElevatedButton.styleFrom(
-                          //         backgroundColor: primaryColor,
-                          //         shape: RoundedRectangleBorder(
-                          //             borderRadius: BorderRadius.circular(8)),
-                          //         padding:
-                          //             const EdgeInsets.symmetric(vertical: 16),
-                          //       ),
-                          //     ),
-                          //   ),
-                          // ],
                           if (orderData['state'] == 'draft') ...[
-                            const SizedBox(height: 16),
                             SizedBox(
                               width: double.infinity,
                               child: ElevatedButton.icon(
@@ -1014,6 +922,7 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                                           fontStyle: FontStyle.italic,
                                         ),
                                       ),
+                                      const SizedBox(height: 16),
                                     ],
                                   ),
                                 ),
@@ -1588,24 +1497,10 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                                                                 await provider
                                                                     .fetchOrderDetails();
                                                                 if (mounted) {
-                                                                  await _handleBackorder(
-                                                                      picking);
-                                                                  final allDone =
-                                                                      pickings.every((p) =>
-                                                                          p['state'] ==
-                                                                          'done');
-                                                                  if (allDone &&
-                                                                      mounted) {
-                                                                    // Navigator.push(
-                                                                    //   context,
-                                                                    //   SlidingPageTransitionRL(
-                                                                    //     page: DeliveryPage(
-                                                                    //       orderData: orderData,
-                                                                    //       provider: provider,
-                                                                    //     ),
-                                                                    //   ),
-                                                                    // );
-                                                                  }
+                                                                  BackorderHandlerWidget(
+                                                                    picking:
+                                                                        picking,
+                                                                  );
                                                                 }
                                                               }
                                                             },
@@ -1693,41 +1588,46 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                                         const SizedBox(height: 16),
                                         !invoices.isEmpty
                                             ? const CircularProgressIndicator()
-                                            : SizedBox(
-                                                width: double.infinity,
-                                                child: ElevatedButton.icon(
-                                                  icon: const Icon(Icons.add,
-                                                      color: Colors.white),
-                                                  label: const Text(
-                                                    'Create Draft Invoice',
-                                                    style: TextStyle(
-                                                        color: Colors.white),
-                                                  ),
-                                                  onPressed: () async {
-                                                    Navigator.push(
-                                                      context,
-                                                      SlidingPageTransitionRL(
-                                                        page:
-                                                            InvoiceCreationPage(
+                                            : orderData['state'] == 'draft' ||
+                                                    orderData['state'] ==
+                                                        'cancel'
+                                                ? const SizedBox.shrink()
+                                                : SizedBox(
+                                                    width: double.infinity,
+                                                    child: ElevatedButton.icon(
+                                                      icon: const Icon(
+                                                          Icons.add,
+                                                          color: Colors.white),
+                                                      label: const Text(
+                                                        'Create Draft Invoice',
+                                                        style: TextStyle(
+                                                            color:
+                                                                Colors.white),
+                                                      ),
+                                                      onPressed: () async {
+                                                        Navigator.push(
+                                                          context,
+                                                          SlidingPageTransitionRL(
+                                                            page: InvoiceCreationPage(
                                                                 saleOrderData:
                                                                     orderData),
+                                                          ),
+                                                        );
+                                                      },
+                                                      style: ElevatedButton
+                                                          .styleFrom(
+                                                        backgroundColor:
+                                                            Theme.of(context)
+                                                                .primaryColor,
+                                                        shape:
+                                                            RoundedRectangleBorder(
+                                                          borderRadius:
+                                                              BorderRadius
+                                                                  .circular(8),
+                                                        ),
                                                       ),
-                                                    );
-                                                  },
-                                                  style:
-                                                      ElevatedButton.styleFrom(
-                                                    backgroundColor:
-                                                        Theme.of(context)
-                                                            .primaryColor,
-                                                    shape:
-                                                        RoundedRectangleBorder(
-                                                      borderRadius:
-                                                          BorderRadius.circular(
-                                                              8),
                                                     ),
                                                   ),
-                                                ),
-                                              ),
                                       ],
                                     ),
                                   ),
@@ -1943,6 +1843,20 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                                                           invoiceId:
                                                               invoice['id']
                                                                   .toString(),
+                                                          onInvoiceUpdated:
+                                                              () async {
+                                                            await provider
+                                                                .fetchOrderDetails();
+                                                            if (mounted) {
+                                                              ScaffoldMessenger
+                                                                      .of(context)
+                                                                  .showSnackBar(
+                                                                const SnackBar(
+                                                                    content: Text(
+                                                                        'Invoice updated successfully')),
+                                                              );
+                                                            }
+                                                          },
                                                         ),
                                                       ),
                                                     );
@@ -1967,24 +1881,25 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                                       );
                                     },
                                   ),
-                                  IconButton(
-                                    icon: Text(
-                                      'Create Another Invoice',
-                                      style: TextStyle(
-                                          color: primaryColor,
-                                          fontSize: 15,
-                                          fontWeight: FontWeight.bold),
+                                  if (invoices.any((invoice) =>
+                                          invoice['state'] == 'cancel') ||
+                                      invoices.every((invoice) =>
+                                          invoice['state'] == 'draft'))
+                                    TextButton(
+                                      onPressed: () async {
+                                        Navigator.push(
+                                          context,
+                                          SlidingPageTransitionRL(
+                                            page: InvoiceCreationPage(
+                                                saleOrderData: orderData),
+                                          ),
+                                        );
+                                      },
+                                      child: const Text(
+                                        'Create Draft Invoice',
+                                        style: TextStyle(color: primaryColor),
+                                      ),
                                     ),
-                                    onPressed: () {
-                                      Navigator.push(
-                                        context,
-                                        SlidingPageTransitionRL(
-                                          page: InvoiceCreationPage(
-                                              saleOrderData: orderData),
-                                        ),
-                                      );
-                                    },
-                                  )
                                 ],
                               ),
                           ]),

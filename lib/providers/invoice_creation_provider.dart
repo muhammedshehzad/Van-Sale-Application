@@ -3,7 +3,6 @@ import 'package:intl/intl.dart';
 import '../authentication/cyllo_session_model.dart';
 import 'dart:convert';
 
-// Utility to convert numbers to words (unchanged)
 String _numberToWords(double amount) {
   final units = [
     '',
@@ -56,7 +55,7 @@ String _numberToWords(double amount) {
     } else if (dollars < 100) {
       words = '${tens[dollars ~/ 10]} ${units[dollars % 10]}';
     } else {
-      words = '$dollars'; // Simplified for large numbers
+      words = '$dollars';
     }
     words += ' Dollars';
   }
@@ -76,12 +75,9 @@ String _numberToWords(double amount) {
   return words.trim();
 }
 
-// Utility to convert numbers to words (unchanged)
-
 class InvoiceCreationProvider extends ChangeNotifier {
   bool _isLoading = false;
   String _errorMessage = '';
-  Map<String, dynamic> _saleOrderData = {};
   List<Map<String, dynamic>> _invoiceLines = [];
   List<Map<String, dynamic>> _availableProducts = [];
   List<Map<String, dynamic>> _availableCustomers = [];
@@ -91,9 +87,16 @@ class InvoiceCreationProvider extends ChangeNotifier {
   List<Map<String, dynamic>> _availableSalespersons = [];
   List<Map<String, dynamic>> _availableTaxes = [];
   List<Map<String, dynamic>> _availableAnalyticAccounts = [];
+  Map<String, dynamic>? _saleOrderData;
+
+  Map<String, dynamic>? get saleOrderData => _saleOrderData;
+  List<Map<String, dynamic>> _availablePaymentMethods = [];
+
+  List<Map<String, dynamic>> get availablePaymentMethods =>
+      _availablePaymentMethods;
   String _currency = 'USD';
   NumberFormat _currencyFormat =
-  NumberFormat.currency(symbol: '\$', decimalDigits: 2);
+      NumberFormat.currency(symbol: '\$', decimalDigits: 2);
   int? _customerId;
   DateTime _invoiceDate = DateTime.now();
   DateTime _dueDate = DateTime.now().add(Duration(days: 30));
@@ -102,12 +105,9 @@ class InvoiceCreationProvider extends ChangeNotifier {
   int? _fiscalPositionId;
   int? _salespersonId;
 
-  // Getters (unchanged)
   bool get isLoading => _isLoading;
 
   String get errorMessage => _errorMessage;
-
-  Map<String, dynamic> get saleOrderData => _saleOrderData;
 
   List<Map<String, dynamic>> get invoiceLines => _invoiceLines;
 
@@ -149,19 +149,18 @@ class InvoiceCreationProvider extends ChangeNotifier {
 
   int? get salespersonId => _salespersonId;
 
-  // Computed properties (unchanged)
   double get amountUntaxed => _invoiceLines.fold(
-    0.0,
+        0.0,
         (sum, line) => sum + (line['price_subtotal'] as double? ?? 0.0),
-  );
+      );
 
   double get amountTax => _invoiceLines.fold(
-    0.0,
+        0.0,
         (sum, line) =>
-    sum +
-        ((line['price_total'] as double? ?? 0.0) -
-            (line['price_subtotal'] as double? ?? 0.0)),
-  );
+            sum +
+            ((line['price_total'] as double? ?? 0.0) -
+                (line['price_subtotal'] as double? ?? 0.0)),
+      );
 
   double get amountTotal => amountUntaxed + amountTax;
 
@@ -172,7 +171,7 @@ class InvoiceCreationProvider extends ChangeNotifier {
       final subtotal = line['price_subtotal'] as double? ?? 0.0;
       for (var taxId in taxIds) {
         final tax = _availableTaxes.firstWhere(
-              (t) => t['id'] == taxId,
+          (t) => t['id'] == taxId,
           orElse: () => {'id': taxId, 'name': 'Unknown Tax', 'amount': 0.0},
         );
         final taxAmount = subtotal * (tax['amount'] as double? ?? 0.0) / 100;
@@ -195,55 +194,15 @@ class InvoiceCreationProvider extends ChangeNotifier {
   String get customerName {
     if (_customerId == null) return 'Unknown';
     final customer = _availableCustomers.firstWhere(
-          (c) => c['id'] == _customerId,
+      (c) => c['id'] == _customerId,
       orElse: () => {'name': 'Unknown'},
     );
     return customer['name'].toString();
   }
 
-  // Initialize with sale order data (unchanged)
   void initialize(Map<String, dynamic>? saleOrderData) {
-    _saleOrderData = Map<String, dynamic>.from(saleOrderData ?? {});
-    _currency = saleOrderData != null &&
-        saleOrderData['currency_id'] is List &&
-        saleOrderData['currency_id'].length > 1
-        ? saleOrderData['currency_id'][1].toString()
-        : 'USD';
-    _currencyFormat = NumberFormat.currency(
-      symbol: _currency == 'USD' ? '\$' : _currency,
-      decimalDigits: 2,
-    );
-    _customerId = saleOrderData != null && saleOrderData['partner_id'] is List
-        ? saleOrderData['partner_id'][0]
-        : null;
-    _salespersonId = saleOrderData != null && saleOrderData['user_id'] is List
-        ? saleOrderData['user_id'][0]
-        : null;
-
-    // Pre-populate invoice lines from sale order lines
-    final orderLines = saleOrderData != null
-        ? List<Map<String, dynamic>>.from(saleOrderData['line_details'] ?? [])
-        : [];
-    _invoiceLines = orderLines
-        .where((line) =>
-    line['product_uom_qty'] > 0 && line['display_type'] == false)
-        .map((line) {
-      final productId = line['product_id'] is List ? line['product_id'][0] : 0;
-      final productName =
-      line['product_id'] is List ? line['product_id'][1] : line['name'];
-      return {
-        'product_id': [productId, productName],
-        'name': line['name'],
-        'description': line['name'],
-        'quantity': line['product_uom_qty'] as double,
-        'price_unit': line['price_unit'] as double,
-        'price_subtotal': line['price_subtotal'] as double,
-        'price_total': line['price_subtotal'] as double,
-        'discount': line['discount'] as double? ?? 0.0,
-        'tax_ids': line['tax_ids'] is List ? line['tax_ids'] : [],
-      };
-    }).toList();
-
+    _saleOrderData = saleOrderData;
+    _updateFromSaleOrder(saleOrderData);
     fetchAvailableProducts();
     fetchAvailableCustomers();
     fetchJournals();
@@ -255,7 +214,87 @@ class InvoiceCreationProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  // Fetch methods (unchanged, for brevity)
+  void updateSaleOrder(Map<String, dynamic> saleOrderData) {
+    _saleOrderData = saleOrderData;
+    _updateFromSaleOrder(saleOrderData);
+    debugPrint(
+        'Sale order updated: ${saleOrderData['name']} with ${saleOrderData['line_details']?.length ?? 0} lines');
+    notifyListeners();
+  }
+
+  void _updateFromSaleOrder(Map<String, dynamic>? saleOrderData) {
+    if (saleOrderData == null) return;
+
+    _currency = saleOrderData['currency_id'] is List &&
+            saleOrderData['currency_id'].length > 1
+        ? saleOrderData['currency_id'][1].toString()
+        : 'USD';
+    _currencyFormat = NumberFormat.currency(
+      symbol: _currency == 'USD' ? '\$' : _currency,
+      decimalDigits: 2,
+    );
+
+    _customerId = saleOrderData['partner_id'] is List
+        ? saleOrderData['partner_id'][0]
+        : null;
+    _salespersonId =
+        saleOrderData['user_id'] is List ? saleOrderData['user_id'][0] : null;
+    _paymentTermId = saleOrderData['payment_term_id'] is List
+        ? saleOrderData['payment_term_id'][0]
+        : null;
+    _fiscalPositionId = saleOrderData['fiscal_position_id'] is List
+        ? saleOrderData['fiscal_position_id'][0]
+        : null;
+
+    _journalId =
+        _availableJournals.isNotEmpty ? _availableJournals[0]['id'] : null;
+
+    try {
+      _invoiceDate = saleOrderData['date_order'] != null
+          ? DateTime.parse(saleOrderData['date_order'])
+          : DateTime.now();
+      _dueDate = saleOrderData['validity_date'] != null
+          ? DateTime.parse(saleOrderData['validity_date'])
+          : DateTime.now().add(Duration(days: 30));
+    } catch (e) {
+      _invoiceDate = DateTime.now();
+      _dueDate = DateTime.now().add(Duration(days: 30));
+    }
+
+    final orderLinesRaw = saleOrderData['line_details'] ?? [];
+    final orderLines = orderLinesRaw is List
+        ? orderLinesRaw
+            .where((line) => line is Map)
+            .map((line) => Map<String, dynamic>.from(line as Map))
+            .toList()
+        : <Map<String, dynamic>>[];
+
+    _invoiceLines = orderLines
+        .where((line) => (line['product_uom_qty'] as num? ?? 0) > 0)
+        .map((line) {
+      final productId = line['product_id'] is List ? line['product_id'][0] : 0;
+      final productName =
+          line['product_id'] is List ? line['product_id'][1] : line['name'];
+      return {
+        'product_id': [productId, productName ?? 'Unknown'],
+        'name': line['name']?.toString() ?? 'Unknown',
+        'description': line['name']?.toString() ?? '',
+        'quantity': (line['product_uom_qty'] as num?)?.toDouble() ?? 1.0,
+        'price_unit': (line['price_unit'] as num?)?.toDouble() ?? 0.0,
+        'price_subtotal': (line['price_subtotal'] as num?)?.toDouble() ?? 0.0,
+        'price_total': (line['price_subtotal'] as num?)?.toDouble() ?? 0.0,
+        'discount': (line['discount'] as num?)?.toDouble() ?? 0.0,
+        'tax_ids': line['tax_id'] is List ? line['tax_id'] : [],
+        'default_code': line['default_code']?.toString() ?? 'N/A',
+        'barcode': line['barcode']?.toString(),
+        'selected_attributes': [], // Add if attributes are needed
+      };
+    }).toList();
+
+    debugPrint('Updated invoice lines: $_invoiceLines'); // Debugging
+    notifyListeners();
+  }
+
   Future<void> fetchAvailableProducts() async {
     _isLoading = true;
     _errorMessage = '';
@@ -270,7 +309,16 @@ class InvoiceCreationProvider extends ChangeNotifier {
         'method': 'search_read',
         'args': [
           [],
-          ['id', 'name', 'list_price', 'taxes_id', 'default_code', 'barcode', 'image_1920', 'product_template_attribute_value_ids'],
+          [
+            'id',
+            'name',
+            'list_price',
+            'taxes_id',
+            'default_code',
+            'barcode',
+            'image_1920',
+            'product_template_attribute_value_ids'
+          ],
         ],
         'kwargs': {'limit': 100},
       });
@@ -284,7 +332,8 @@ class InvoiceCreationProvider extends ChangeNotifier {
           'default_code': product['default_code'],
           'barcode': product['barcode'],
           'image_1920': product['image_1920'],
-          'product_template_attribute_value_ids': product['product_template_attribute_value_ids'] ?? [],
+          'product_template_attribute_value_ids':
+              product['product_template_attribute_value_ids'] ?? [],
         };
       }).toList();
     } catch (e) {
@@ -294,6 +343,7 @@ class InvoiceCreationProvider extends ChangeNotifier {
     _isLoading = false;
     notifyListeners();
   }
+
   Future<void> fetchAvailableCustomers() async {
     try {
       final client = await SessionManager.getActiveClient();
@@ -323,6 +373,36 @@ class InvoiceCreationProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> fetchPaymentMethods() async {
+    try {
+      final client = await SessionManager.getActiveClient();
+      if (client == null) throw Exception('No active session');
+
+      final result = await client.callKw({
+        'model': 'account.payment.method',
+        'method': 'search_read',
+        'args': [
+          [
+            ['payment_type', '=', 'inbound'],
+          ],
+          ['id', 'name', 'code'],
+        ],
+        'kwargs': {'limit': 50},
+      });
+
+      _availablePaymentMethods = result.map<Map<String, dynamic>>((method) {
+        return {
+          'id': method['id'],
+          'name': method['name'],
+          'code': method['code'],
+        };
+      }).toList();
+    } catch (e) {
+      _errorMessage = 'Failed to load payment methods: $e';
+    }
+    notifyListeners();
+  }
+
   Future<void> fetchJournals() async {
     try {
       final client = await SessionManager.getActiveClient();
@@ -347,7 +427,7 @@ class InvoiceCreationProvider extends ChangeNotifier {
         };
       }).toList();
       _journalId =
-      _availableJournals.isNotEmpty ? _availableJournals[0]['id'] : null;
+          _availableJournals.isNotEmpty ? _availableJournals[0]['id'] : null;
     } catch (e) {
       _errorMessage = 'Failed to load journals: $e';
     }
@@ -492,7 +572,6 @@ class InvoiceCreationProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  // Update methods (unchanged)
   void updateCustomer(int customerId) {
     _customerId = customerId;
     notifyListeners();
@@ -538,7 +617,7 @@ class InvoiceCreationProvider extends ChangeNotifier {
       'quantity': quantity,
       'price_unit': priceUnit,
       'price_subtotal': priceUnit * quantity,
-      'price_total': priceUnit * quantity, // Taxes will be adjusted later if needed
+      'price_total': priceUnit * quantity,
       'discount': 0.0,
       'tax_ids': product['taxes_id'] ?? [],
       'analytic_account_id': null,
@@ -552,10 +631,10 @@ class InvoiceCreationProvider extends ChangeNotifier {
 
   void updateInvoiceLine(int index,
       {double? quantity,
-        double? discount,
-        String? description,
-        List<dynamic>? taxIds,
-        int? analyticAccountId}) {
+      double? discount,
+      String? description,
+      List<dynamic>? taxIds,
+      int? analyticAccountId}) {
     if (index >= 0 && index < _invoiceLines.length) {
       final line = Map<String, dynamic>.from(_invoiceLines[index]);
       if (quantity != null) line['quantity'] = quantity;
@@ -573,7 +652,7 @@ class InvoiceCreationProvider extends ChangeNotifier {
       double taxAmount = 0.0;
       for (var taxId in line['tax_ids'] as List<dynamic>) {
         final tax = _availableTaxes.firstWhere(
-              (t) => t['id'] == taxId,
+          (t) => t['id'] == taxId,
           orElse: () => {'amount': 0.0},
         );
         taxAmount += line['price_subtotal'] * (tax['amount'] as double) / 100;
@@ -592,7 +671,6 @@ class InvoiceCreationProvider extends ChangeNotifier {
     }
   }
 
-  // Create draft invoice with debug logging (unchanged)
   Future<Map<String, dynamic>?> createDraftInvoice(int saleOrderId) async {
     _isLoading = true;
     _errorMessage = '';
@@ -612,6 +690,51 @@ class InvoiceCreationProvider extends ChangeNotifier {
         throw Exception('No active session');
       }
       debugPrint('Active client obtained successfully');
+
+      // Fetch sale order to get its name for invoice origin check
+      final saleOrderData = await client.callKw({
+        'model': 'sale.order',
+        'method': 'read',
+        'args': [
+          [saleOrderId],
+          ['name'],
+        ],
+        'kwargs': {},
+      });
+      if (saleOrderData.isEmpty) {
+        throw Exception('Sale order with ID $saleOrderId not found');
+      }
+      final saleOrderName = saleOrderData[0]['name'] as String;
+
+      // Check if an invoice already exists for this sale order
+      final existingInvoices = await client.callKw({
+        'model': 'account.move',
+        'method': 'search_read',
+        'args': [
+          [
+            ['invoice_origin', '=', saleOrderName],
+            ['move_type', '=', 'out_invoice'],
+            ['state', '!=', 'cancel'], // Exclude cancelled invoices
+          ],
+          ['id', 'name', 'state'],
+        ],
+        'kwargs': {'limit': 1},
+      });
+
+      if (existingInvoices.isNotEmpty) {
+        final existingInvoice = existingInvoices[0];
+        _errorMessage =
+            'An invoice already exists for this sale order: ${existingInvoice['name']} (State: ${existingInvoice['state']})';
+        _isLoading = false;
+        notifyListeners();
+        debugPrint(_errorMessage);
+        return {
+          'already_exists': true,
+          'id': existingInvoice['id'],
+          'name': existingInvoice['name'],
+          'state': existingInvoice['state'],
+        };
+      }
 
       // Dynamically determine payment term field for sale.order
       String? saleOrderPaymentTermField;
@@ -682,7 +805,7 @@ class InvoiceCreationProvider extends ChangeNotifier {
       if (saleOrderPaymentTermField != null) {
         saleOrderFields.add(saleOrderPaymentTermField);
       }
-      final saleOrderData = await client.callKw({
+      final saleOrderDataFull = await client.callKw({
         'model': 'sale.order',
         'method': 'read',
         'args': [
@@ -691,37 +814,37 @@ class InvoiceCreationProvider extends ChangeNotifier {
         ],
         'kwargs': {},
       });
-      if (saleOrderData.isEmpty) {
+      if (saleOrderDataFull.isEmpty) {
         throw Exception('Sale order with ID $saleOrderId not found');
       }
 
       // Fetch sale order lines
-      final saleOrder = saleOrderData[0];
+      final saleOrder = saleOrderDataFull[0];
       final orderLineIds = saleOrder['order_line'] as List<dynamic>? ?? [];
       final orderLines = orderLineIds.isNotEmpty
           ? await client.callKw({
-        'model': 'sale.order.line',
-        'method': 'read',
-        'args': [
-          orderLineIds,
-          [
-            'product_id',
-            'name',
-            'product_uom_qty',
-            'price_unit',
-            'discount',
-            'tax_id',
-            'price_subtotal',
-          ],
-        ],
-        'kwargs': {},
-      })
+              'model': 'sale.order.line',
+              'method': 'read',
+              'args': [
+                orderLineIds,
+                [
+                  'product_id',
+                  'name',
+                  'product_uom_qty',
+                  'price_unit',
+                  'discount',
+                  'tax_id',
+                  'price_subtotal',
+                ],
+              ],
+              'kwargs': {},
+            })
           : [];
 
       // Prepare invoice lines from sale order lines
       final invoiceLines = orderLines.map((line) {
         final productId =
-        line['product_id'] is List ? line['product_id'][0] : null;
+            line['product_id'] is List ? line['product_id'][0] : null;
         if (productId == null) {
           throw Exception(
               'Invalid product in sale order line: ${line['name']}');
@@ -737,16 +860,14 @@ class InvoiceCreationProvider extends ChangeNotifier {
             'discount': line['discount'] as double? ?? 0.0,
             'tax_ids': line['tax_id'] is List
                 ? [
-              [6, 0, line['tax_id']]
-            ]
+                    [6, 0, line['tax_id']]
+                  ]
                 : [
-              [6, 0, []]
-            ],
-            // Ensure tax_ids is always a valid Many2many command
+                    [6, 0, []]
+                  ],
             'sale_line_ids': [
               [4, line['id']]
             ],
-            // Link to sale order line
           }
         ];
       }).toList();
@@ -843,9 +964,23 @@ class InvoiceCreationProvider extends ChangeNotifier {
       // Create draft invoice
       debugPrint('Creating draft invoice...');
       final draftInvoice = await createDraftInvoice(saleOrderId);
-      if (draftInvoice == null || draftInvoice['id'] == null) {
+      if (draftInvoice == null) {
         throw Exception('Failed to create draft invoice');
       }
+
+      // Check if invoice already exists
+      if (draftInvoice['already_exists'] == true) {
+        _isLoading = false;
+        notifyListeners();
+        return {
+          'success': false,
+          'already_exists': true,
+          'invoiceId': draftInvoice['id'],
+          'invoiceName': draftInvoice['name'],
+          'state': draftInvoice['state'],
+        };
+      }
+
       final invoiceId = draftInvoice['id'] as int;
       debugPrint('Validating invoice ID: $invoiceId');
 
@@ -908,14 +1043,12 @@ class InvoiceCreationProvider extends ChangeNotifier {
       return {'success': false, 'invoiceId': null, 'invoiceName': null};
     }
   }
-
   void resetForm() {
-    _invoiceLines.clear();
+    _invoiceLines = [];
     _customerId = null;
     _invoiceDate = DateTime.now();
     _dueDate = DateTime.now().add(Duration(days: 30));
-    _journalId =
-    _availableJournals.isNotEmpty ? _availableJournals[0]['id'] : null;
+    _journalId = null;
     _paymentTermId = null;
     _fiscalPositionId = null;
     _salespersonId = null;

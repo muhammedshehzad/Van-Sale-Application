@@ -65,14 +65,14 @@ class _InvoiceListPageState extends State<InvoiceListPage> {
       if (!_initialLoadComplete && !_isFetching) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) {
-            _loadInvoices();
+            loadInvoices();
           }
         });
       }
     } else if (!_initialLoadComplete && !_isFetching) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
-          _loadInvoices();
+          loadInvoices();
         }
       });
     }
@@ -85,7 +85,7 @@ class _InvoiceListPageState extends State<InvoiceListPage> {
     super.dispose();
   }
 
-  void _loadInvoices() {
+  void loadInvoices() {
     if (_isFetching) {
       debugPrint(
           'InvoiceListPage: Skipping fetchInvoices, already in progress');
@@ -130,6 +130,12 @@ class _InvoiceListPageState extends State<InvoiceListPage> {
       return invoices;
     }
 
+    // Define valid invoice statuses (adjust based on your InvoiceProvider's logic)
+    final validStatuses = ['draft', 'open', 'paid', 'cancelled', 'posted'];
+
+    // Check if the search query matches a valid status
+    final isStatusSearch = validStatuses.contains(_searchQuery.toLowerCase());
+
     return invoices.where((invoice) {
       final invoiceNumber = invoice['name'] != false
           ? (invoice['name'] as String).toLowerCase()
@@ -153,6 +159,12 @@ class _InvoiceListPageState extends State<InvoiceListPage> {
           )
           .toLowerCase();
 
+      // If the search query is a valid status, filter by status only
+      if (isStatusSearch) {
+        return state == _searchQuery.toLowerCase();
+      }
+
+      // Otherwise, search across invoice number, date, and state
       return invoiceNumber.contains(_searchQuery) ||
           invoiceDate.contains(_searchQuery) ||
           state.contains(_searchQuery);
@@ -297,7 +309,7 @@ class _InvoiceListPageState extends State<InvoiceListPage> {
             ElevatedButton(
               onPressed: () {
                 debugPrint('InvoiceListPage: Retry button pressed');
-                _loadInvoices();
+                loadInvoices();
               },
               style: ElevatedButton.styleFrom(
                 backgroundColor: primaryColor,
@@ -319,7 +331,7 @@ class _InvoiceListPageState extends State<InvoiceListPage> {
   Widget _buildContentArea(InvoiceProvider provider) {
     return RefreshIndicator(
       onRefresh: () async {
-        _loadInvoices();
+        loadInvoices();
       },
       child: SingleChildScrollView(
         padding: const EdgeInsets.symmetric(horizontal: 16.0),
@@ -441,7 +453,7 @@ class _InvoiceListPageState extends State<InvoiceListPage> {
                   ),
                   onPressed: () {
                     debugPrint('InvoiceListPage: Retry fetching invoices');
-                    _loadInvoices();
+                    loadInvoices();
                   },
                   style: ElevatedButton.styleFrom(
                     backgroundColor: primaryColor,
