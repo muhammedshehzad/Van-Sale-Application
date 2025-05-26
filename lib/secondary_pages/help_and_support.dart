@@ -16,9 +16,9 @@ class HelpSupportPage extends StatefulWidget {
 }
 
 class _HelpSupportPageState extends State<HelpSupportPage> {
-  String _companyEmail = 'it.support@yourcompany.com';
-  String _companyPhone = '+1234567890';
-  String _companyName = 'Your Company';
+  String _companyEmail = '';
+  String _companyPhone = '';
+  String _companyName = '';
   String _agentEmail = '';
   bool _isLoading = true;
   String? _errorMessage;

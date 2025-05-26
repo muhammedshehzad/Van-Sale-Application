@@ -18,10 +18,11 @@ class OrderConfirmationPage extends StatelessWidget {
   final String? orderNotes;
   final DateTime orderDate;
   final double shippingCost;
-  final String? customerReference; // Added
-  final DateTime? deliveryDate; // Added
-  final double discountPercentage; // Added
-  final double discountAmount; // Added
+  final String? customerReference;
+  final DateTime? deliveryDate;
+  final double discountPercentage;
+  final double discountAmount;
+  final DeliveryAddress? deliveryAddress; // Add this
 
   OrderConfirmationPage({
     Key? key,
@@ -37,62 +38,82 @@ class OrderConfirmationPage extends StatelessWidget {
     this.deliveryDate,
     this.discountPercentage = 0.0,
     this.discountAmount = 0.0,
+    this.deliveryAddress, // Replace String? deliveryAddress with DeliveryAddress?
   })  : orderDate = orderDate ?? DateTime.now(),
-        super(key: key);
+        super(key: key) {
+    developer.log(
+        'Received in OrderConfirmationPage: discountPercentage=$discountPercentage, deliveryDate=$deliveryDate');
+  }
 
   @override
   Widget build(BuildContext context) {
-    developer.log('OrderConfirmationPage passed data:');
-    developer.log('  orderId: $orderId');
-    developer.log(
-        '  items: ${items.map((item) => "${item.product.name} (Qty: ${item.quantity}, Subtotal: ${item.subtotal})").toList()}');
-    developer.log('  totalAmount: $totalAmount');
-    developer.log('  customer: ${customer?.toString() ?? "null"}');
-    developer.log('  paymentMethod: $paymentMethod');
-    developer.log('  orderNotes: $orderNotes');
-    developer.log('  orderDate: $orderDate');
-    developer.log('  shippingCost: $shippingCost');
-    developer.log('  customerReference: $customerReference');
-    developer.log('  deliveryDate: $deliveryDate');
-    developer.log('  discountPercentage: $discountPercentage');
-    developer.log('  discountAmount: $discountAmount');
-
+    const taxRate = 0.0;
+    final subtotalAfterDiscount =
+        items.fold(0.0, (sum, item) => sum + item.subtotal);
+    final subtotalBeforeDiscount =
+        subtotalAfterDiscount / (1 - discountPercentage / 100);
+    final calculatedDiscountAmount =
+        subtotalBeforeDiscount - subtotalAfterDiscount;
+    final tax = subtotalAfterDiscount * taxRate;
+    final totalWithTaxAndShipping = subtotalAfterDiscount + tax + shippingCost;
+    final discountAmount = subtotalBeforeDiscount * (discountPercentage / 100);
+    final subtotal = totalAmount - shippingCost;
     final currencyFormat = NumberFormat.currency(symbol: '\$');
+    final estimatedDeliveryFormat = DateFormat('MMM dd, yyyy');
+
+    developer.log('OrderConfirmationPage calculations:',
+        name: 'OrderConfirmationPage');
+    developer.log(
+        '  Subtotal before discount: ${currencyFormat.format(subtotalBeforeDiscount)}');
+    developer.log(
+        '  Discount ($discountPercentage%): ${currencyFormat.format(calculatedDiscountAmount)}');
+    developer.log(
+        '  Subtotal after discount: ${currencyFormat.format(subtotalAfterDiscount)}');
+    developer.log('  Tax (7%): ${currencyFormat.format(tax)}');
+    developer.log('  Shipping Cost: ${currencyFormat.format(shippingCost)}');
+    developer.log('  Total: ${currencyFormat.format(totalWithTaxAndShipping)}');
+
     final salesOrderProvider =
         Provider.of<SalesOrderProvider>(context, listen: false);
     final primaryColor = Theme.of(context).primaryColor;
     final dateFormat = DateFormat('MMM dd, yyyy • hh:mm a');
-    final estimatedDeliveryFormat = DateFormat('MMM dd, yyyy');
-
-    const taxRate = 0.07;
-    final subtotal = totalAmount - shippingCost;
-    final tax = (subtotal - discountAmount) * taxRate;
 
     final addressParts = <String>[];
-    if (customer?.street != null && customer!.street!.isNotEmpty) {
-      addressParts.add(customer!.street!);
-    }
-    if (customer?.street2 != null && customer!.street2!.isNotEmpty) {
-      addressParts.add(customer!.street2!);
-    }
-    if (customer?.city != null && customer!.city!.isNotEmpty) {
-      addressParts.add(customer!.city!);
-    }
-    if (customer?.zip != null && customer!.zip!.isNotEmpty) {
-      addressParts.add(customer!.zip!);
-    }
-    if (customer?.stateId != null && customer!.stateId!.isNotEmpty) {
-      addressParts.add(customer!.stateId!);
-    }
-    if (customer?.countryId != null && customer!.countryId!.isNotEmpty) {
-      addressParts.add(customer!.countryId!);
+    if (deliveryAddress != null) {
+      if (deliveryAddress!.street.isNotEmpty)
+        addressParts.add(deliveryAddress!.street);
+      if (deliveryAddress!.city.isNotEmpty)
+        addressParts.add(deliveryAddress!.city);
+      // Add other fields like zip, state, country if available in DeliveryAddress
+    } else if (customer != null) {
+      if (customer!.street != null && customer!.street!.isNotEmpty) {
+        addressParts.add(customer!.street!);
+      }
+      if (customer!.street2 != null && customer!.street2!.isNotEmpty) {
+        addressParts.add(customer!.street2!);
+      }
+      if (customer!.city != null && customer!.city!.isNotEmpty) {
+        addressParts.add(customer!.city!);
+      }
+      if (customer!.zip != null && customer!.zip!.isNotEmpty) {
+        addressParts.add(customer!.zip!);
+      }
+      if (customer!.stateId != null && customer!.stateId!.isNotEmpty) {
+        addressParts.add(customer!.stateId!);
+      }
+      if (customer!.countryId != null && customer!.countryId!.isNotEmpty) {
+        addressParts.add(customer!.countryId!);
+      }
     }
     final formattedAddress =
         addressParts.isNotEmpty ? addressParts.join(', ') : null;
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Order Confirmed',style: TextStyle(color: Colors.white),),
+        title: const Text(
+          'Order Confirmed',
+          style: TextStyle(color: Colors.white),
+        ),
         automaticallyImplyLeading: false,
         elevation: 0,
         backgroundColor: primaryColor,
@@ -101,6 +122,14 @@ class OrderConfirmationPage extends StatelessWidget {
           fontSize: 20,
           fontWeight: FontWeight.bold,
         ),
+        actions: [
+          IconButton(
+              onPressed: () {},
+              icon: Icon(
+                Icons.refresh_outlined,
+                color: Colors.white,
+              ))
+        ],
       ),
       body: Container(
         color: Colors.grey[100],
@@ -574,26 +603,28 @@ class OrderConfirmationPage extends StatelessWidget {
                               ),
                             ),
                           const SizedBox(height: 8),
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text(
-                                'Tax (7%)',
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  color: Colors.grey[700],
+                          if (tax > 0)
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Text(
+                                  'Tax',
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    color: Colors.grey[700],
+                                  ),
                                 ),
-                              ),
-                              Text(
-                                currencyFormat.format(tax),
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  color: Colors.grey[800],
-                                  fontWeight: FontWeight.w500,
+                                Text(
+                                  currencyFormat.format(tax),
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    color: Colors.grey[800],
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                  overflow: TextOverflow.ellipsis,
                                 ),
-                              ),
-                            ],
-                          ),
+                              ],
+                            ),
                           const Padding(
                             padding: EdgeInsets.symmetric(vertical: 8),
                             child: Divider(),
@@ -617,7 +648,8 @@ class OrderConfirmationPage extends StatelessWidget {
                                 ],
                               ),
                               Text(
-                                currencyFormat.format(totalAmount),
+                                currencyFormat.format(double.parse(
+                                    totalAmount.toStringAsFixed(2))),
                                 style: TextStyle(
                                   fontSize: 16,
                                   fontWeight: FontWeight.bold,
@@ -773,31 +805,39 @@ class OrderConfirmationPage extends StatelessWidget {
   Future<void> _printReceipt(BuildContext context) async {
     final currencyFormat = NumberFormat.currency(symbol: '\$');
     final dateFormat = DateFormat('MMM dd, yyyy • hh:mm a');
-    const taxRate = 0.07;
+    const taxRate = 0;
     final subtotal = totalAmount - shippingCost;
     final tax = (subtotal - discountAmount) * taxRate;
 
     final addressParts = <String>[];
-    if (customer?.street != null && customer!.street!.isNotEmpty) {
-      addressParts.add(customer!.street!);
-    }
-    if (customer?.street2 != null && customer!.street2!.isNotEmpty) {
-      addressParts.add(customer!.street2!);
-    }
-    if (customer?.city != null && customer!.city!.isNotEmpty) {
-      addressParts.add(customer!.city!);
-    }
-    if (customer?.zip != null && customer!.zip!.isNotEmpty) {
-      addressParts.add(customer!.zip!);
-    }
-    if (customer?.stateId != null && customer!.stateId!.isNotEmpty) {
-      addressParts.add(customer!.stateId!);
-    }
-    if (customer?.countryId != null && customer!.countryId!.isNotEmpty) {
-      addressParts.add(customer!.countryId!);
+    if (deliveryAddress != null) {
+      if (deliveryAddress!.street.isNotEmpty)
+        addressParts.add(deliveryAddress!.street);
+      if (deliveryAddress!.city.isNotEmpty)
+        addressParts.add(deliveryAddress!.city);
+      // Add other fields like zip, state, country if available in DeliveryAddress
+    } else if (customer != null) {
+      if (customer!.street != null && customer!.street!.isNotEmpty) {
+        addressParts.add(customer!.street!);
+      }
+      if (customer!.street2 != null && customer!.street2!.isNotEmpty) {
+        addressParts.add(customer!.street2!);
+      }
+      if (customer!.city != null && customer!.city!.isNotEmpty) {
+        addressParts.add(customer!.city!);
+      }
+      if (customer!.zip != null && customer!.zip!.isNotEmpty) {
+        addressParts.add(customer!.zip!);
+      }
+      if (customer!.stateId != null && customer!.stateId!.isNotEmpty) {
+        addressParts.add(customer!.stateId!);
+      }
+      if (customer!.countryId != null && customer!.countryId!.isNotEmpty) {
+        addressParts.add(customer!.countryId!);
+      }
     }
     final formattedAddress =
-        addressParts.isNotEmpty ? addressParts.join(', ') : 'N/A';
+        addressParts.isNotEmpty ? addressParts.join(', ') : null;
 
     final primaryColor = PdfColor.fromHex('#A12424');
     final accentColor = PdfColor.fromHex('#F5F5F5');
@@ -1049,7 +1089,7 @@ class OrderConfirmationPage extends StatelessWidget {
                           pw.Divider(color: borderColor),
                           pw.SizedBox(height: 6),
                           pw.Text(
-                            formattedAddress,
+                            formattedAddress!,
                             style: const pw.TextStyle(fontSize: 12),
                           ),
                           if (deliveryDate != null)
@@ -1300,20 +1340,21 @@ class OrderConfirmationPage extends StatelessWidget {
                               ],
                             ),
                           pw.SizedBox(height: 8),
-                          pw.Row(
-                            mainAxisAlignment:
-                                pw.MainAxisAlignment.spaceBetween,
-                            children: [
-                              pw.Text(
-                                'Tax (7%)',
-                                style: const pw.TextStyle(fontSize: 12),
-                              ),
-                              pw.Text(
-                                currencyFormat.format(tax),
-                                style: const pw.TextStyle(fontSize: 12),
-                              ),
-                            ],
-                          ),
+                          if (tax > 0)
+                            pw.Row(
+                              mainAxisAlignment:
+                                  pw.MainAxisAlignment.spaceBetween,
+                              children: [
+                                pw.Text(
+                                  'Tax',
+                                  style: const pw.TextStyle(fontSize: 12),
+                                ),
+                                pw.Text(
+                                  currencyFormat.format(tax),
+                                  style: const pw.TextStyle(fontSize: 12),
+                                ),
+                              ],
+                            ),
                           pw.Divider(color: borderColor),
                           pw.Row(
                             mainAxisAlignment:

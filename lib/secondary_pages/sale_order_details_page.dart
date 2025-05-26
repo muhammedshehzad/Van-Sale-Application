@@ -3,9 +3,11 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:latest_van_sale_application/secondary_pages/products_picking_page.dart';
 import 'package:latest_van_sale_application/secondary_pages/sale_order_page.dart';
+import 'package:printing/printing.dart';
 import 'package:provider/provider.dart';
 import 'package:shimmer/shimmer.dart';
-
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
 import '../assets/widgets and consts/cached_data.dart';
 import '../assets/widgets and consts/order_tracking.dart';
 import '../assets/widgets and consts/page_transition.dart';
@@ -77,7 +79,9 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
 
     return {
       for (var product in result)
-        (product['id'] as int): product['image_1920'] as String?
+        (product['id'] as int): product['image_1920'] == false
+            ? null
+            : product['image_1920'] as String?
     };
   }
 
@@ -93,15 +97,19 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
             appBar: AppBar(
               title: Text(
                 'Order ${widget.orderData['name']}',
-                style: const TextStyle(
-                    fontWeight: FontWeight.bold, color: Colors.white),
+                style: const TextStyle(color: Colors.white),
               ),
               elevation: 0,
               actions: [
-                IconButton(
-                  icon: const Icon(Icons.more_vert),
-                  onPressed: provider.toggleActions,
-                ),
+                provider.isLoading
+                    ? SizedBox()
+                    : IconButton(
+                        icon: const Icon(
+                          Icons.more_vert,
+                          color: Colors.white,
+                        ),
+                        onPressed: provider.toggleActions,
+                      )
               ],
               leading: IconButton(
                 icon: const Icon(Icons.arrow_back, color: Colors.white),
@@ -111,86 +119,7 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
             ),
             body: SafeArea(
               child: provider.isLoading
-                  ? Center(
-                      child: Shimmer.fromColors(
-                      baseColor: Colors.grey[300]!,
-                      highlightColor: Colors.grey[100]!,
-                      child: SingleChildScrollView(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            // Header
-                            Container(
-                              width: double.infinity,
-                              height: 120,
-                              color: Colors.white,
-                            ),
-                            // TabBar
-                            Container(
-                              width: double.infinity,
-                              height: 50,
-                              margin: const EdgeInsets.symmetric(
-                                  horizontal: 16, vertical: 8),
-                              color: Colors.white,
-                            ),
-                            // Order Info Tab
-                            Padding(
-                              padding: const EdgeInsets.all(16.0),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  // Order Information Card
-                                  Container(
-                                    width: double.infinity,
-                                    height: 300,
-                                    margin: const EdgeInsets.only(bottom: 12),
-                                    color: Colors.white,
-                                  ),
-                                  // Order Tracking
-                                  Container(
-                                    width: double.infinity,
-                                    height: 100,
-                                    margin: const EdgeInsets.only(bottom: 12),
-                                    color: Colors.white,
-                                  ),
-                                  // Order Lines Title
-                                  Container(
-                                    width: 150,
-                                    height: 20,
-                                    margin: const EdgeInsets.only(bottom: 8),
-                                    color: Colors.white,
-                                  ),
-                                  // Order Lines
-                                  ...List.generate(
-                                    3,
-                                    (index) => Container(
-                                      width: double.infinity,
-                                      height: 120,
-                                      margin: const EdgeInsets.only(bottom: 12),
-                                      color: Colors.white,
-                                    ),
-                                  ),
-                                  // Pricing Summary
-                                  Container(
-                                    width: double.infinity,
-                                    height: 150,
-                                    margin: const EdgeInsets.only(bottom: 12),
-                                    color: Colors.white,
-                                  ),
-                                  // Action Button
-                                  Container(
-                                    width: double.infinity,
-                                    height: 50,
-                                    margin: const EdgeInsets.only(bottom: 12),
-                                    color: Colors.white,
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ))
+                  ? SaleOrderDetailShimmer()
                   : provider.error != null
                       ? Center(
                           child: Padding(
@@ -242,6 +171,606 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
         },
       ),
     );
+  }
+
+  Future<void> generateSaleOrderPdf(BuildContext context) async {
+    final provider =
+        Provider.of<SaleOrderDetailProvider>(context, listen: false);
+    final orderData = provider.orderDetails!;
+    final pdf = pw.Document(
+      theme: pw.ThemeData.withFont(
+        base: pw.Font.helvetica(),
+        bold: pw.Font.helveticaBold(),
+        italic: pw.Font.helveticaOblique(),
+      ),
+    );
+
+    try {
+      final dateFormat = DateFormat('MMM dd, yyyy');
+      final currentDateTime = DateTime.now();
+      final formattedCurrentDate = dateFormat.format(currentDateTime);
+      final primaryColor = PdfColor.fromHex('#A12424');
+      final accentColor = PdfColor.fromHex('#F5F5F5');
+      final borderColor = PdfColor.fromHex('#DDDDDD');
+
+      final client = await SessionManager.getActiveClient();
+      final companyId =
+          orderData['company_id'] is List ? orderData['company_id'][0] : null;
+
+      final companyResult = await client?.callKw({
+        'model': 'res.company',
+        'method': 'search_read',
+        'args': [
+          [
+            ['id', '=', companyId]
+          ],
+          ['name', 'street', 'email', 'phone', 'website'],
+        ],
+        'kwargs': {},
+      });
+
+      final companyData = companyResult?[0] ?? {};
+      final companyName = companyData['name'] ?? 'Company Name Not Available';
+      final companyAddress = companyData['street'] ?? 'Address Not Available';
+      final companyEmail = companyData['email'] ?? 'Email Not Available';
+      final companyPhone = companyData['phone'] ?? 'Phone Not Available';
+      final companyWebsite = companyData['website'] ?? 'Website Not Available';
+      final orderNumber = orderData['name'] as String;
+      final customer = orderData['partner_id'] is List
+          ? (orderData['partner_id'] as List)[1] as String
+          : 'Unknown';
+      final invoiceAddress = orderData['partner_invoice_id'] is List
+          ? (orderData['partner_invoice_id'] as List)[1] as String
+          : customer;
+      final shippingAddress = orderData['partner_shipping_id'] is List
+          ? (orderData['partner_shipping_id'] as List)[1] as String
+          : customer;
+      final salesperson =
+          orderData['user_id'] is List && orderData['user_id'].length > 1
+              ? (orderData['user_id'] as List)[1] as String
+              : 'Not assigned';
+      final salesTeam =
+          orderData['team_id'] is List && orderData['team_id'].length > 1
+              ? (orderData['team_id'] as List)[1] as String
+              : 'No Sales Team';
+      final warehouse = orderData['warehouse_id'] is List &&
+              orderData['warehouse_id'].length > 1
+          ? (orderData['warehouse_id'] as List)[1] as String
+          : 'Default';
+      final dateOrder = DateTime.parse(orderData['date_order'] as String);
+      final validityDate = orderData['validity_date'] != false
+          ? DateTime.parse(orderData['validity_date'] as String)
+          : null;
+      final commitmentDate = orderData['commitment_date'] != false
+          ? DateTime.parse(orderData['commitment_date'] as String)
+          : null;
+      final expectedDate = orderData['expected_date'] != false
+          ? DateTime.parse(orderData['expected_date'] as String)
+          : null;
+      final paymentTerm = orderData['payment_term_id'] is List &&
+              orderData['payment_term_id'].length > 1
+          ? (orderData['payment_term_id'] as List)[1] as String
+          : 'Standard';
+      final orderStatus =
+          provider.formatStateMessage(orderData['state'] as String);
+      final orderLines =
+          List<Map<String, dynamic>>.from(orderData['line_details'] ?? []);
+      final amountUntaxed = orderData['amount_untaxed'] as double;
+      final amountTax = orderData['amount_tax'] as double;
+      final amountTotal = orderData['amount_total'] as double;
+
+      pdf.addPage(
+        pw.MultiPage(
+          pageFormat: PdfPageFormat.a4,
+          margin: const pw.EdgeInsets.all(40),
+          header: (pw.Context context) {
+            return pw.Column(
+              crossAxisAlignment: pw.CrossAxisAlignment.start,
+              children: [
+                pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  crossAxisAlignment: pw.CrossAxisAlignment.start,
+                  children: [
+                    pw.Column(
+                      crossAxisAlignment: pw.CrossAxisAlignment.start,
+                      children: [
+                        pw.Text(
+                          companyName.toUpperCase(),
+                          style: pw.TextStyle(
+                            fontSize: 16,
+                            fontWeight: pw.FontWeight.bold,
+                            color: primaryColor,
+                          ),
+                        ),
+                        pw.SizedBox(height: 4),
+                        pw.Text(
+                          companyAddress,
+                          style: const pw.TextStyle(fontSize: 11),
+                        ),
+                        pw.Text(
+                          'Email: $companyEmail',
+                          style: const pw.TextStyle(fontSize: 11),
+                        ),
+                        pw.Text(
+                          'Phone: $companyPhone',
+                          style: const pw.TextStyle(fontSize: 11),
+                        ),
+                        pw.Text(
+                          'Website: $companyWebsite',
+                          style: const pw.TextStyle(fontSize: 11),
+                        ),
+                      ],
+                    ),
+                    pw.Column(
+                      crossAxisAlignment: pw.CrossAxisAlignment.end,
+                      children: [
+                        pw.Text(
+                          'SALE ORDER',
+                          style: pw.TextStyle(
+                            fontSize: 20,
+                            fontWeight: pw.FontWeight.bold,
+                            color: primaryColor,
+                          ),
+                        ),
+                        pw.SizedBox(height: 4),
+                        pw.Text(
+                          'Order #: $orderNumber',
+                          style: const pw.TextStyle(fontSize: 12),
+                        ),
+                        pw.Text(
+                          'Date: ${dateFormat.format(dateOrder)}',
+                          style: const pw.TextStyle(fontSize: 12),
+                        ),
+                        pw.Text(
+                          'Generated on: $formattedCurrentDate',
+                          style: const pw.TextStyle(fontSize: 12),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+                pw.SizedBox(height: 10),
+                pw.Divider(color: borderColor, thickness: 1),
+              ],
+            );
+          },
+          footer: (pw.Context context) {
+            final pageNumber = context.pageNumber;
+            final totalPages = context.pagesCount;
+            return pw.Column(
+              children: [
+                pw.Divider(color: borderColor, thickness: 1),
+                pw.SizedBox(height: 5),
+                pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  children: [
+                    pw.Text(
+                      'Thank you for your business!',
+                      style: pw.TextStyle(
+                        fontSize: 10,
+                        fontWeight: pw.FontWeight.bold,
+                        color: primaryColor,
+                      ),
+                    ),
+                    pw.Text(
+                      'Page $pageNumber of $totalPages',
+                      style: const pw.TextStyle(fontSize: 10),
+                    ),
+                  ],
+                ),
+              ],
+            );
+          },
+          build: (pw.Context context) {
+            return [
+              pw.Row(
+                crossAxisAlignment: pw.CrossAxisAlignment.start,
+                children: [
+                  pw.Expanded(
+                    child: pw.Column(
+                      crossAxisAlignment: pw.CrossAxisAlignment.start,
+                      children: [
+                        pw.Text(
+                          'Bill To',
+                          style: pw.TextStyle(
+                            fontSize: 12,
+                            fontWeight: pw.FontWeight.bold,
+                            color: primaryColor,
+                          ),
+                        ),
+                        pw.SizedBox(height: 4),
+                        pw.Text(
+                          customer,
+                          style: const pw.TextStyle(fontSize: 11),
+                        ),
+                        pw.Text(
+                          invoiceAddress,
+                          style: const pw.TextStyle(fontSize: 11),
+                        ),
+                      ],
+                    ),
+                  ),
+                  pw.Expanded(
+                    child: pw.Column(
+                      crossAxisAlignment: pw.CrossAxisAlignment.start,
+                      children: [
+                        pw.Text(
+                          'Ship To',
+                          style: pw.TextStyle(
+                            fontSize: 12,
+                            fontWeight: pw.FontWeight.bold,
+                            color: primaryColor,
+                          ),
+                        ),
+                        pw.SizedBox(height: 4),
+                        pw.Text(
+                          customer,
+                          style: const pw.TextStyle(fontSize: 11),
+                        ),
+                        pw.Text(
+                          shippingAddress,
+                          style: const pw.TextStyle(fontSize: 11),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              pw.SizedBox(height: 20),
+              pw.Text(
+                'Order Details',
+                style: pw.TextStyle(
+                  fontSize: 14,
+                  fontWeight: pw.FontWeight.bold,
+                  color: primaryColor,
+                ),
+              ),
+              pw.SizedBox(height: 6),
+              pw.Container(
+                padding: const pw.EdgeInsets.all(10),
+                decoration: pw.BoxDecoration(
+                  border: pw.Border.all(color: borderColor),
+                  borderRadius:
+                      const pw.BorderRadius.all(pw.Radius.circular(6)),
+                ),
+                child: pw.Column(
+                  crossAxisAlignment: pw.CrossAxisAlignment.start,
+                  children: [
+                    pw.Row(
+                      mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                      children: [
+                        pw.Text(
+                          'Salesperson: $salesperson',
+                          style: const pw.TextStyle(fontSize: 11),
+                        ),
+                        pw.Text(
+                          'Sales Team: $salesTeam',
+                          style: const pw.TextStyle(fontSize: 11),
+                        ),
+                      ],
+                    ),
+                    pw.SizedBox(height: 4),
+                    pw.Text(
+                      'Warehouse: $warehouse',
+                      style: const pw.TextStyle(fontSize: 11),
+                    ),
+                    pw.SizedBox(height: 4),
+                    pw.Text(
+                      'Payment Terms: $paymentTerm',
+                      style: const pw.TextStyle(fontSize: 11),
+                    ),
+                    pw.SizedBox(height: 4),
+                    pw.Text(
+                      'Status: $orderStatus',
+                      style: const pw.TextStyle(fontSize: 11),
+                    ),
+                    if (validityDate != null)
+                      pw.Text(
+                        'Validity Date: ${dateFormat.format(validityDate)}',
+                        style: const pw.TextStyle(fontSize: 11),
+                      ),
+                    if (commitmentDate != null)
+                      pw.Text(
+                        'Commitment Date: ${dateFormat.format(commitmentDate)}',
+                        style: const pw.TextStyle(fontSize: 11),
+                      ),
+                    if (expectedDate != null)
+                      pw.Text(
+                        'Expected Date: ${dateFormat.format(expectedDate)}',
+                        style: const pw.TextStyle(fontSize: 11),
+                      ),
+                    if (orderData['client_order_ref'] != false)
+                      pw.Text(
+                        'Customer Reference: ${orderData['client_order_ref']}',
+                        style: const pw.TextStyle(fontSize: 11),
+                      ),
+                  ],
+                ),
+              ),
+              pw.SizedBox(height: 20),
+              pw.Text(
+                'Order Lines',
+                style: pw.TextStyle(
+                  fontSize: 14,
+                  fontWeight: pw.FontWeight.bold,
+                  color: primaryColor,
+                ),
+              ),
+              pw.SizedBox(height: 6),
+              pw.Table(
+                border: pw.TableBorder.all(color: borderColor),
+                columnWidths: {
+                  0: const pw.FlexColumnWidth(3),
+                  1: const pw.FlexColumnWidth(1),
+                  2: const pw.FlexColumnWidth(1),
+                  3: const pw.FlexColumnWidth(1),
+                  4: const pw.FlexColumnWidth(1),
+                },
+                children: [
+                  pw.TableRow(
+                    decoration: pw.BoxDecoration(color: primaryColor),
+                    children: [
+                      pw.Padding(
+                        padding: const pw.EdgeInsets.all(6),
+                        child: pw.Text(
+                          'Description',
+                          style: pw.TextStyle(
+                            fontWeight: pw.FontWeight.bold,
+                            color: PdfColors.white,
+                            fontSize: 11,
+                          ),
+                        ),
+                      ),
+                      pw.Padding(
+                        padding: const pw.EdgeInsets.all(6),
+                        child: pw.Text(
+                          'Qty',
+                          style: pw.TextStyle(
+                            fontWeight: pw.FontWeight.bold,
+                            color: PdfColors.white,
+                            fontSize: 11,
+                          ),
+                          textAlign: pw.TextAlign.center,
+                        ),
+                      ),
+                      pw.Padding(
+                        padding: const pw.EdgeInsets.all(6),
+                        child: pw.Text(
+                          'Unit Price',
+                          style: pw.TextStyle(
+                            fontWeight: pw.FontWeight.bold,
+                            color: PdfColors.white,
+                            fontSize: 11,
+                          ),
+                          textAlign: pw.TextAlign.right,
+                        ),
+                      ),
+                      pw.Padding(
+                        padding: const pw.EdgeInsets.all(6),
+                        child: pw.Text(
+                          'Discount',
+                          style: pw.TextStyle(
+                            fontWeight: pw.FontWeight.bold,
+                            color: PdfColors.white,
+                            fontSize: 11,
+                          ),
+                          textAlign: pw.TextAlign.right,
+                        ),
+                      ),
+                      pw.Padding(
+                        padding: const pw.EdgeInsets.all(6),
+                        child: pw.Text(
+                          'Subtotal',
+                          style: pw.TextStyle(
+                            fontWeight: pw.FontWeight.bold,
+                            color: PdfColors.white,
+                            fontSize: 11,
+                          ),
+                          textAlign: pw.TextAlign.right,
+                        ),
+                      ),
+                    ],
+                  ),
+                  ...orderLines.asMap().entries.map((entry) {
+                    final index = entry.key;
+                    final line = entry.value;
+                    if (line['display_type'] == 'line_section' ||
+                        line['display_type'] == 'line_note') {
+                      return pw.TableRow(
+                        decoration: pw.BoxDecoration(color: accentColor),
+                        children: [
+                          pw.Padding(
+                            padding: const pw.EdgeInsets.all(6),
+                            child: pw.Text(
+                              line['name'] as String,
+                              style: pw.TextStyle(
+                                fontSize: 11,
+                                fontWeight: pw.FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                          pw.Padding(
+                            padding: const pw.EdgeInsets.all(6),
+                            child: pw.Text(''),
+                          ),
+                          pw.Padding(
+                            padding: const pw.EdgeInsets.all(6),
+                            child: pw.Text(''),
+                          ),
+                          pw.Padding(
+                            padding: const pw.EdgeInsets.all(6),
+                            child: pw.Text(''),
+                          ),
+                          pw.Padding(
+                            padding: const pw.EdgeInsets.all(6),
+                            child: pw.Text(''),
+                          ),
+                        ],
+                      );
+                    }
+
+                    final productName = line['product_id'] is List &&
+                            line['product_id'].length > 1
+                        ? (line['product_id'] as List)[1] as String
+                        : line['name'] as String;
+                    final quantity =
+                        (line['product_uom_qty'] as num?)?.toDouble() ?? 0.0;
+                    final unitPrice = line['price_unit'] as double? ?? 0.0;
+                    final subtotal = line['price_subtotal'] as double? ?? 0.0;
+                    final discount = line['discount'] as double? ?? 0.0;
+
+                    return pw.TableRow(
+                      decoration: index % 2 == 0
+                          ? null
+                          : pw.BoxDecoration(color: accentColor),
+                      children: [
+                        pw.Padding(
+                          padding: const pw.EdgeInsets.all(6),
+                          child: pw.Text(
+                            productName,
+                            style: const pw.TextStyle(fontSize: 11),
+                          ),
+                        ),
+                        pw.Padding(
+                          padding: const pw.EdgeInsets.all(6),
+                          child: pw.Text(
+                            quantity.toStringAsFixed(
+                                quantity.truncateToDouble() == quantity
+                                    ? 0
+                                    : 2),
+                            style: const pw.TextStyle(fontSize: 11),
+                            textAlign: pw.TextAlign.center,
+                          ),
+                        ),
+                        pw.Padding(
+                          padding: const pw.EdgeInsets.all(6),
+                          child: pw.Text(
+                            provider.currencyFormat.format(unitPrice),
+                            style: const pw.TextStyle(fontSize: 11),
+                            textAlign: pw.TextAlign.right,
+                          ),
+                        ),
+                        pw.Padding(
+                          padding: const pw.EdgeInsets.all(6),
+                          child: pw.Text(
+                            discount > 0
+                                ? '${discount.toStringAsFixed(1)}%'
+                                : '-',
+                            style: const pw.TextStyle(fontSize: 11),
+                            textAlign: pw.TextAlign.right,
+                          ),
+                        ),
+                        pw.Padding(
+                          padding: const pw.EdgeInsets.all(6),
+                          child: pw.Text(
+                            provider.currencyFormat.format(subtotal),
+                            style: const pw.TextStyle(fontSize: 11),
+                            textAlign: pw.TextAlign.right,
+                          ),
+                        ),
+                      ],
+                    );
+                  }),
+                ],
+              ),
+              pw.SizedBox(height: 20),
+              pw.Align(
+                alignment: pw.Alignment.centerRight,
+                child: pw.Container(
+                  width: 250,
+                  child: pw.Table(
+                    border: pw.TableBorder.all(color: borderColor),
+                    children: [
+                      pw.TableRow(
+                        children: [
+                          pw.Padding(
+                            padding: const pw.EdgeInsets.all(6),
+                            child: pw.Text(
+                              'Subtotal',
+                              style: pw.TextStyle(
+                                fontSize: 11,
+                                fontWeight: pw.FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                          pw.Padding(
+                            padding: const pw.EdgeInsets.all(6),
+                            child: pw.Text(
+                              provider.currencyFormat.format(amountUntaxed),
+                              style: const pw.TextStyle(fontSize: 11),
+                              textAlign: pw.TextAlign.right,
+                            ),
+                          ),
+                        ],
+                      ),
+                      pw.TableRow(
+                        children: [
+                          pw.Padding(
+                            padding: const pw.EdgeInsets.all(6),
+                            child: pw.Text(
+                              'Taxes',
+                              style: pw.TextStyle(
+                                fontSize: 11,
+                                fontWeight: pw.FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                          pw.Padding(
+                            padding: const pw.EdgeInsets.all(6),
+                            child: pw.Text(
+                              provider.currencyFormat.format(amountTax),
+                              style: const pw.TextStyle(fontSize: 11),
+                              textAlign: pw.TextAlign.right,
+                            ),
+                          ),
+                        ],
+                      ),
+                      pw.TableRow(
+                        decoration: pw.BoxDecoration(color: primaryColor),
+                        children: [
+                          pw.Padding(
+                            padding: const pw.EdgeInsets.all(6),
+                            child: pw.Text(
+                              'Total',
+                              style: pw.TextStyle(
+                                fontSize: 11,
+                                fontWeight: pw.FontWeight.bold,
+                                color: PdfColors.white,
+                              ),
+                            ),
+                          ),
+                          pw.Padding(
+                            padding: const pw.EdgeInsets.all(6),
+                            child: pw.Text(
+                              provider.currencyFormat.format(amountTotal),
+                              style: pw.TextStyle(
+                                fontSize: 11,
+                                fontWeight: pw.FontWeight.bold,
+                                color: PdfColors.white,
+                              ),
+                              textAlign: pw.TextAlign.right,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ];
+          },
+        ),
+      );
+
+      final orderCode = orderNumber.replaceAll(RegExp(r'[^\w\s-]'), '_');
+      final safeFilename = 'SO_$orderCode.pdf';
+
+      await Printing.sharePdf(bytes: await pdf.save(), filename: safeFilename);
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to generate PDF: $e')),
+      );
+    }
   }
 
   Future<Map<String, dynamic>> getPickingProgress(int pickingId) async {
@@ -827,6 +1356,8 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                                       orderData['amount_total'] as double;
                                   final String orderId =
                                       orderData['name'] as String;
+                                  final int existingOrderId =
+                                      orderData['id'] as int; // Odoo ID
 
                                   final customerId =
                                       orderData['partner_id'] is List
@@ -846,7 +1377,7 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                                           : null;
 
                                   if (initialCustomer != null) {
-                                    Navigator.push(
+                                    final result = await Navigator.push(
                                       context,
                                       SlidingPageTransitionRL(
                                         page: SaleOrderPage(
@@ -857,12 +1388,23 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                                           initialCustomer: initialCustomer,
                                           onClearSelections: () {},
                                           productAttributes: null,
+                                          isNewOrder: false,
+                                          existingOrderId: existingOrderId,
                                         ),
                                       ),
-                                    );
+                                    ).then((result) {
+                                      if (result == true) {
+                                        Provider.of<SaleOrderDetailProvider>(
+                                                context,
+                                                listen: false)
+                                            .fetchOrderDetails();
+                                      }
+                                    });
+
+                                    // Refresh the page when returning from SaleOrderPage
                                   } else {
                                     ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(
+                                      const SnackBar(
                                           content: Text(
                                               'Customer information is missing.')),
                                     );
@@ -1416,8 +1958,10 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                                                           ),
                                                           label: const Text(
                                                               'View Details'),
-                                                          onPressed: () {
-                                                            Navigator.push(
+                                                          onPressed: () async {
+                                                            final result =
+                                                                await Navigator
+                                                                    .push(
                                                               context,
                                                               SlidingPageTransitionRL(
                                                                 page:
@@ -1428,7 +1972,28 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                                                                       provider,
                                                                 ),
                                                               ),
-                                                            );
+                                                            ).then((result) {
+                                                              if (result ==
+                                                                  true) {
+                                                                Provider.of<SaleOrderDetailProvider>(
+                                                                        context,
+                                                                        listen:
+                                                                            false)
+                                                                    .fetchOrderDetails();
+                                                              }
+                                                            });
+                                                            if (result ==
+                                                                    true &&
+                                                                mounted) {
+                                                              await provider
+                                                                  .fetchOrderDetails();
+                                                              if (mounted) {
+                                                                BackorderHandlerWidget(
+                                                                  picking:
+                                                                      picking,
+                                                                );
+                                                              }
+                                                            }
                                                           },
                                                           style: ElevatedButton
                                                               .styleFrom(
@@ -1490,7 +2055,16 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                                                                         dataProvider,
                                                                   ),
                                                                 ),
-                                                              );
+                                                              ).then((result) {
+                                                                if (result ==
+                                                                    true) {
+                                                                  Provider.of<SaleOrderDetailProvider>(
+                                                                          context,
+                                                                          listen:
+                                                                              false)
+                                                                      .fetchOrderDetails();
+                                                                }
+                                                              });
                                                               if (result ==
                                                                       true &&
                                                                   mounted) {
@@ -1612,7 +2186,15 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                                                                 saleOrderData:
                                                                     orderData),
                                                           ),
-                                                        );
+                                                        ).then((result) {
+                                                          if (result == true) {
+                                                            Provider.of<SaleOrderDetailProvider>(
+                                                                    context,
+                                                                    listen:
+                                                                        false)
+                                                                .fetchOrderDetails();
+                                                          }
+                                                        });
                                                       },
                                                       style: ElevatedButton
                                                           .styleFrom(
@@ -1859,7 +2441,14 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                                                           },
                                                         ),
                                                       ),
-                                                    );
+                                                    ).then((result) {
+                                                      if (result == true) {
+                                                        Provider.of<SaleOrderDetailProvider>(
+                                                                context,
+                                                                listen: false)
+                                                            .fetchOrderDetails();
+                                                      }
+                                                    });
                                                   },
                                                   style:
                                                       ElevatedButton.styleFrom(
@@ -1893,7 +2482,14 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                                             page: InvoiceCreationPage(
                                                 saleOrderData: orderData),
                                           ),
-                                        );
+                                        ).then((result) {
+                                          if (result == true) {
+                                            Provider.of<SaleOrderDetailProvider>(
+                                                    context,
+                                                    listen: false)
+                                                .fetchOrderDetails();
+                                          }
+                                        });
                                       },
                                       child: const Text(
                                         'Create Draft Invoice',
@@ -1916,7 +2512,7 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
             right: 0,
             child: Card(
               elevation: 4,
-              margin: const EdgeInsets.only(top: 56, right: 12),
+              margin: const EdgeInsets.only(top: 0, right: 12),
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(8)),
               child: Container(
@@ -1927,23 +2523,52 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                   children: [
                     _buildActionMenuItem(Icons.print, 'Print Order', () {
                       provider.toggleActions();
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                          content: Text('Print not implemented')));
+                      generateSaleOrderPdf(context);
                     }),
                     _buildActionMenuItem(Icons.email, 'Send by Email', () {
                       provider.toggleActions();
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                          content: Text('Email not implemented')));
+                      ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Emailllll')));
                     }),
                     _buildActionMenuItem(Icons.file_copy, 'Duplicate Order',
-                        () {
+                        () async {
+                      debugPrint('Duplicate Order action triggered');
                       provider.toggleActions();
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                          content: Text('Duplicate not implemented')));
+                      try {
+                        final newOrderDetails =
+                            await provider.duplicateSaleOrder(
+                                provider.orderDetails!['id'] as int);
+                        debugPrint(
+                            'Duplicate order action completed successfully: ${newOrderDetails['name']}');
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                              content: Text('Order duplicated successfully')),
+                        );
+
+                        Navigator.pushReplacement(
+                          context,
+                          SlidingPageTransitionRL(
+                            page:
+                                SaleOrderDetailPage(orderData: newOrderDetails),
+                          ),
+                        ).then((result) {
+                          if (result == true) {
+                            Provider.of<SaleOrderDetailProvider>(context,
+                                    listen: false)
+                                .fetchOrderDetails();
+                          }
+                        });
+                      } catch (e) {
+                        debugPrint('Error in duplicate order action: $e');
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                              content: Text('Failed to duplicate order: $e')),
+                        );
+                      }
                     }),
                     if (currentState != 'cancel' &&
                         currentState != 'done' &&
-                        showCancelOption)
+                        currentState != 'draft')
                       _buildActionMenuItem(Icons.delete, 'Cancel Order', () {
                         provider.toggleActions();
                         showDialog(
@@ -1977,6 +2602,51 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                                       SnackBar(
                                           content: Text(
                                               'Failed to cancel order: $e')),
+                                    );
+                                  }
+                                },
+                                child: const Text('Yes'),
+                              ),
+                            ],
+                          ),
+                        );
+                      }, textColor: Colors.red, iconColor: Colors.red),
+
+// Usage within your widget's build method
+                    if (currentState == 'draft' || currentState == 'cancel')
+                      _buildActionMenuItem(Icons.delete, 'Delete Order', () {
+                        provider.toggleActions();
+                        showDialog(
+                          context: context,
+                          builder: (context) => AlertDialog(
+                            title: const Text('Delete Order'),
+                            content: const Text(
+                                'Are you sure you want to delete this order? This action cannot be undone.'),
+                            actions: [
+                              TextButton(
+                                onPressed: () {
+                                  Navigator.pop(context);
+                                },
+                                child: const Text('No'),
+                              ),
+                              TextButton(
+                                onPressed: () async {
+                                  try {
+                                    await provider.deleteSaleOrder(
+                                        provider.orderDetails!['id'] as int);
+                                    Navigator.pop(context);
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                          content: Text(
+                                              'Order deleted successfully')),
+                                    );
+                                    Navigator.pop(context);
+                                  } catch (e) {
+                                    Navigator.pop(context);
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                          content: Text(
+                                              'Failed to delete order: $e')),
                                     );
                                   }
                                 },
@@ -2042,6 +2712,171 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class SaleOrderDetailShimmer extends StatefulWidget {
+  const SaleOrderDetailShimmer({Key? key}) : super(key: key);
+
+  @override
+  State<SaleOrderDetailShimmer> createState() => _SaleOrderDetailShimmerState();
+}
+
+class _SaleOrderDetailShimmerState extends State<SaleOrderDetailShimmer>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<double> _animation;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      duration: const Duration(milliseconds: 1500),
+      vsync: this,
+    )..repeat();
+    _animation = Tween<double>(begin: -2.0, end: 2.0).animate(
+      CurvedAnimation(parent: _controller, curve: Curves.linear),
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.grey[100],
+      body: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(16.0),
+              decoration: BoxDecoration(
+                color: Colors.grey[300],
+                borderRadius: const BorderRadius.only(
+                  bottomLeft: Radius.circular(16.0),
+                  bottomRight: Radius.circular(16.0),
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      _buildShimmerBox(width: 120, height: 20),
+                      _buildShimmerBox(width: 80, height: 20, radius: 8),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  _buildShimmerBox(width: 150, height: 16),
+                  const SizedBox(height: 8),
+                  _buildShimmerBox(width: 100, height: 14),
+                ],
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceAround,
+                children: [
+                  _buildShimmerBox(width: 80, height: 30, radius: 4),
+                  _buildShimmerBox(width: 80, height: 30, radius: 4),
+                  _buildShimmerBox(width: 80, height: 30, radius: 4),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _buildShimmerBox(width: 120, height: 18),
+                  const SizedBox(height: 12),
+                  ...List.generate(
+                    3,
+                    (index) => _buildGenericShimmerCard(),
+                  ),
+                  const SizedBox(height: 12),
+                  _buildShimmerBox(
+                      width: double.infinity, height: 50, radius: 8),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildGenericShimmerCard() {
+    return Card(
+      elevation: 2,
+      margin: const EdgeInsets.only(bottom: 12),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                _buildShimmerBox(width: 150, height: 16),
+                _buildShimmerBox(width: 80, height: 20, radius: 8),
+              ],
+            ),
+            const SizedBox(height: 12),
+            _buildShimmerBox(width: 200, height: 14),
+            const SizedBox(height: 8),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                _buildShimmerBox(width: 100, height: 13),
+                _buildShimmerBox(width: 100, height: 13),
+              ],
+            ),
+            const SizedBox(height: 8),
+            _buildShimmerBox(width: double.infinity, height: 1),
+            const SizedBox(height: 8),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                _buildShimmerBox(width: 120, height: 14),
+                _buildShimmerBox(width: 80, height: 14),
+              ],
+            ),
+            const SizedBox(height: 12),
+            _buildShimmerBox(width: double.infinity, height: 40, radius: 8),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildShimmerBox({
+    required double width,
+    required double height,
+    double radius = 4.0,
+  }) {
+    return Shimmer.fromColors(
+      baseColor: Colors.grey[300]!,
+      highlightColor: Colors.grey[100]!,
+      child: Container(
+        width: width,
+        height: height,
+        decoration: BoxDecoration(
+          color: Colors.grey[300],
+          borderRadius: BorderRadius.circular(radius),
+        ),
       ),
     );
   }

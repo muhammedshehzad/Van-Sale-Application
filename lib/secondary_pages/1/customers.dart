@@ -1,26 +1,21 @@
 import 'dart:convert';
 import 'dart:developer';
 import 'dart:io' show Platform;
-import 'package:animated_custom_dropdown/custom_dropdown.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
-import 'package:latest_van_sale_application/assets/widgets%20and%20consts/create_customer_page.dart';
+import 'package:latest_van_sale_application/secondary_pages/create_customer_page.dart';
 import 'package:latest_van_sale_application/assets/widgets%20and%20consts/page_transition.dart';
-import 'package:odoo_rpc/odoo_rpc.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
 import 'package:shimmer/shimmer.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:url_launcher/url_launcher_string.dart';
 import '../../assets/widgets and consts/create_order_directly_page.dart';
-import '../../assets/widgets and consts/order_utils.dart';
 import '../../authentication/cyllo_session_model.dart';
 import '../../providers/order_picking_provider.dart';
 import '../../providers/sale_order_provider.dart';
 import '../customer_details_page.dart';
 import '../customer_history_page.dart';
-import '../order_confirmation_page.dart';
 
 class CustomersList extends StatefulWidget {
   const CustomersList({Key? key}) : super(key: key);
@@ -30,26 +25,19 @@ class CustomersList extends StatefulWidget {
 }
 
 class _CustomersListState extends State<CustomersList> {
-  String? _selectedPaymentMethod;
   final TextEditingController _notesController = TextEditingController();
   final TextEditingController _searchController = TextEditingController();
   List<Customer> _filteredCustomers = [];
-  List<Product> _products = [];
   List<Product> _selectedProducts = [];
   Map<String, int> _quantities = {};
-  double _totalAmount = 0.0;
-  Map<String, List<Map<String, dynamic>>> _productAttributes = {};
-  bool _isInitialLoad = true; // Track initial load state
   bool _isLoading = false;
-  String? _draftOrderId;
 
   @override
   void initState() {
     super.initState();
     _searchController.addListener(_filterCustomers);
-    // Set initial loading state
     setState(() {
-      _isLoading = true; // Use local flag to force shimmer on first load
+      _isLoading = true;
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final orderPickingProvider =
@@ -64,7 +52,6 @@ class _CustomersListState extends State<CustomersList> {
       } else {
         setState(() {
           _isLoading = false;
-          _isInitialLoad = false;
           _filteredCustomers = List.from(orderPickingProvider.customers);
         });
       }
@@ -167,12 +154,11 @@ class _CustomersListState extends State<CustomersList> {
             'default_code',
             'image_1920',
             'attribute_line_ids',
-            'product_tmpl_id', // Added for variant filtering
+            'product_tmpl_id',
           ],
         },
       });
 
-      // Group products by product_tmpl_id and select the first variant
       final Map<int, dynamic> mainVariants = {};
       for (var productData in result as List) {
         final templateId = productData['product_tmpl_id'] is List
@@ -191,7 +177,6 @@ class _CustomersListState extends State<CustomersList> {
           attributes = _parseAttributes(productData['attribute_line_ids']);
         }
 
-        // Log product data for debugging
         log("Product ${productData['id']}: name=${productData['name']}, default_code=${productData['default_code']} (type: ${productData['default_code'].runtimeType}), image_1920=");
 
         return Product(
@@ -201,21 +186,16 @@ class _CustomersListState extends State<CustomersList> {
           defaultCode: productData['default_code'] is String
               ? productData['default_code'] as String
               : '',
-          // Default to empty string
           imageUrl: productData['image_1920'] is String
               ? productData['image_1920'] as String
               : null,
           vanInventory: 1,
-          // Hardcoded as in original
           attributes: attributes,
           variantCount: productData['product_variant_count'] as int? ?? 0,
         );
       }).toList();
 
       setState(() {
-        _products = fetchedProducts
-          ..sort(
-              (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
         _isLoading = false;
       });
 
@@ -249,81 +229,6 @@ class _CustomersListState extends State<CustomersList> {
         extraCost: {'Red': 2.0, 'Blue': 3.0},
       ),
     ];
-  }
-
-  Future<int?> _findExistingDraftOrder(String orderId) async {
-    try {
-      final client = await SessionManager.getActiveClient();
-      if (client == null) {
-        throw Exception('No active Odoo session found. Please log in again.');
-      }
-
-      final result = await client.callKw({
-        'model': 'sale.order',
-        'method': 'search',
-        'args': [
-          [
-            ['name', '=', orderId],
-            ['state', '=', 'draft'],
-          ]
-        ],
-        'kwargs': {},
-      });
-
-      if (result is List && result.isNotEmpty) {
-        return result[0] as int; // Return the Odoo ID of the existing draft
-      }
-      return null;
-    } catch (e) {
-      log('Error searching for draft order: $e');
-      return null;
-    }
-  }
-
-  Future<int?> _getPaymentTermId(dynamic client, String? paymentMethod) async {
-    try {
-      if (paymentMethod == null) {
-        return null; // Fallback to Odoo's default payment term
-      }
-
-      String termName;
-      switch (paymentMethod) {
-        case 'Cash':
-          termName = 'Immediate Payment';
-          break;
-        case 'Credit Card':
-          termName = 'Immediate Payment';
-          break;
-        case 'Invoice':
-          termName = '30 Days';
-          break;
-        default:
-          termName = 'Immediate Payment';
-      }
-
-      final result = await client.callKw({
-        'model': 'account.payment.term',
-        'method': 'search_read',
-        'args': [
-          [
-            ['name', 'ilike', termName]
-          ],
-        ],
-        'kwargs': {
-          'fields': ['id'],
-          'limit': 1,
-        },
-      });
-
-      if (result is List && result.isNotEmpty) {
-        return result[0]['id'];
-      }
-
-      return null; // Fallback to Odoo's default
-    } catch (e) {
-      log('Error fetching payment term: $e');
-      return null;
-    }
   }
 
   @override
@@ -427,7 +332,6 @@ class _CustomersListState extends State<CustomersList> {
     if (lat != null && lng != null && lat != 0.0 && lng != 0.0) {
       _launchMaps(context, lat, lng, customer.name);
     } else {
-      // Prompt to geolocalize
       showDialog(
         context: context,
         builder: (context) => AlertDialog(
@@ -463,7 +367,6 @@ class _CustomersListState extends State<CustomersList> {
         throw Exception('No active Odoo session found. Please log in again.');
       }
 
-      // Call the geo_localize method on res.partner for this customer
       final result = await client.callKw({
         'model': 'res.partner',
         'method': 'geo_localize',
@@ -471,12 +374,11 @@ class _CustomersListState extends State<CustomersList> {
           [int.parse(customer.id)]
         ],
         'kwargs': {
-          'context': {'force_geo_localize': true}, // Force geolocalization
+          'context': {'force_geo_localize': true},
         },
       });
 
       if (result == true) {
-        // Fetch updated customer details to get new latitude, longitude, and date_localization
         final customerResult = await client.callKw({
           'model': 'res.partner',
           'method': 'search_read',
@@ -502,7 +404,6 @@ class _CustomersListState extends State<CustomersList> {
             longitude: updatedData['partner_longitude']?.toDouble() ?? 0.0,
           );
 
-          // Update the customer in OrderPickingProvider
           final orderPickingProvider =
               Provider.of<OrderPickingProvider>(context, listen: false);
           final index = orderPickingProvider.customers
@@ -525,7 +426,6 @@ class _CustomersListState extends State<CustomersList> {
             ),
           );
 
-          // Automatically open maps with the updated coordinates
           if (updatedCustomer.latitude != 0.0 &&
               updatedCustomer.longitude != 0.0) {
             _launchMaps(context, updatedCustomer.latitude!,
@@ -569,7 +469,6 @@ class _CustomersListState extends State<CustomersList> {
 
   Future<void> _launchMaps(
       BuildContext context, double lat, double lng, String label) async {
-    // Validate coordinates
     if (lat == 0.0 || lng == 0.0) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -581,10 +480,9 @@ class _CustomersListState extends State<CustomersList> {
       return;
     }
 
-    // Google Maps URL with pin and query
     final String googleMapsUrl =
         'https://www.google.com/maps/search/?api=1&query=$lat,$lng&z=15';
-    // Apple Maps URL with pin, label, and zoom
+
     final String encodedLabel = Uri.encodeComponent(label);
     final String appleMapsUrl =
         'https://maps.apple.com/?q=$encodedLabel&ll=$lat,$lng&z=15';
@@ -617,12 +515,10 @@ class _CustomersListState extends State<CustomersList> {
   Widget buildCustomersList() {
     return Consumer<OrderPickingProvider>(
       builder: (context, orderPickingProvider, child) {
-        // Show shimmer if local _isLoading is true or provider is loading with no customers
         final bool showShimmer = _isLoading ||
             (orderPickingProvider.isLoadingCustomers &&
                 orderPickingProvider.customers.isEmpty);
 
-        // Update filtered customers only when not loading and data is available
         if (!showShimmer &&
             _searchController.text.isEmpty &&
             orderPickingProvider.customers.isNotEmpty &&
@@ -684,35 +580,22 @@ class _CustomersListState extends State<CustomersList> {
               Expanded(
                 child: _filteredCustomers.isEmpty &&
                         !orderPickingProvider.isLoadingCustomers &&
-                        !_isLoading &&
-                        orderPickingProvider.customers.isEmpty
+                        !_isLoading
                     ? Center(
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
                             Icon(Icons.person_off,
-                                size: 64, color: Colors.grey[400]),
-                            const SizedBox(height: 16),
+                                size: 48, color: Colors.grey[400]),
+                            const SizedBox(height: 8),
                             Text(
-                              'No customers found',
+                              _searchController.text.isNotEmpty
+                                  ? 'No customers found for "${_searchController.text}"'
+                                  : 'No customers found',
                               style: TextStyle(
-                                  color: Colors.grey[600], fontSize: 16),
-                            ),
-                            const SizedBox(height: 16),
-                            ElevatedButton(
-                              onPressed: () {
-                                Navigator.push(
-                                    context,
-                                    SlidingPageTransitionRL(
-                                        page: const CreateCustomerPage()));
-                              },
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: primaryColor,
-                                foregroundColor: Colors.white,
-                                shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(10)),
-                              ),
-                              child: const Text('Create New Customer'),
+                                  color: Colors.grey[600],
+                                  fontStyle: FontStyle.italic),
+                              textAlign: TextAlign.center,
                             ),
                           ],
                         ),
@@ -731,9 +614,22 @@ class _CustomersListState extends State<CustomersList> {
                                 Navigator.push(
                                   context,
                                   SlidingPageTransitionRL(
-                                      page: CustomerDetailsPage(
-                                          customer: customer)),
-                                );
+                                    page:
+                                        CustomerDetailsPage(customer: customer),
+                                  ),
+                                ).then((_) {
+                                  final orderPickingProvider =
+                                      Provider.of<OrderPickingProvider>(context,
+                                          listen: false);
+                                  orderPickingProvider
+                                      .loadCustomers()
+                                      .then((_) {
+                                    setState(() {
+                                      _filteredCustomers = List.from(
+                                          orderPickingProvider.customers);
+                                    });
+                                  });
+                                });
                               },
                               borderRadius: BorderRadius.circular(10),
                               child: Padding(
@@ -743,7 +639,8 @@ class _CustomersListState extends State<CustomersList> {
                                   children: [
                                     CircleAvatar(
                                       radius: 30,
-                                      backgroundColor: Colors.red[50],
+                                      backgroundColor:
+                                          Colors.blueGrey.withOpacity(.2),
                                       child: customer.imageUrl != null &&
                                               customer.imageUrl!.isNotEmpty
                                           ? ClipOval(
@@ -967,8 +864,7 @@ class _CustomersListState extends State<CustomersList> {
   void showCreateOrderSheet(BuildContext context, Customer customer) {
     _selectedProducts.clear();
     _quantities.clear();
-    _totalAmount = 0.0;
-    FocusScope.of(context).unfocus(); // Add this line
+    FocusScope.of(context).unfocus();
     Navigator.push(
       context,
       SlidingPageTransitionRL(

@@ -1,15 +1,13 @@
 import 'dart:convert';
 import 'dart:typed_data';
-import 'dart:developer' as developer;
 import 'package:flutter/material.dart';
 import 'package:flutter_barcode_scanner/flutter_barcode_scanner.dart';
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:latest_van_sale_application/secondary_pages/product_details_page.dart';
 import 'package:odoo_rpc/odoo_rpc.dart';
-import 'package:latest_van_sale_application/assets/widgets%20and%20consts/page_transition.dart';
 import 'package:shimmer/shimmer.dart';
+import 'dart:developer' as developer;
+
 import '../authentication/cyllo_session_model.dart';
-import '../providers/order_picking_provider.dart';
 
 class StockCheckPage extends StatefulWidget {
   @override
@@ -19,7 +17,7 @@ class StockCheckPage extends StatefulWidget {
 class _StockCheckPageState extends State<StockCheckPage> {
   bool _isLoading = false;
   bool _isScanning = false;
-  bool _isActionLoading = false; // New state for action-specific loading
+  bool _isActionLoading = false;
   List<Map<String, dynamic>> _productTemplates = [];
   List<Map<String, dynamic>> _filteredProductTemplates = [];
   TextEditingController _searchController = TextEditingController();
@@ -40,7 +38,6 @@ class _StockCheckPageState extends State<StockCheckPage> {
 
   Future<void> _loadStockData() async {
     setState(() => _isLoading = true);
-
     try {
       final client = await SessionManager.getActiveClient();
       if (client == null) {
@@ -58,8 +55,10 @@ class _StockCheckPageState extends State<StockCheckPage> {
             [
               'type',
               'in',
-              ['product', 'consu']
-            ],
+              [
+                'product',
+              ] //i removed consu, if need later add here
+            ]
           ]
         ],
         'kwargs': {
@@ -97,13 +96,9 @@ class _StockCheckPageState extends State<StockCheckPage> {
                     ? base64String
                     : 'data:image/png;base64,$base64String';
               } catch (e) {
-                developer.log(
-                    "Failed to process base64 image for product ${product['id']}: $e",
-                    error: e);
+                developer.log("Failed to process base64 image: $e", error: e);
                 imageUrl = 'https://dummyimage.com/150x150/000/fff';
               }
-            } else {
-              imageUrl = 'https://dummyimage.com/150x150/000/fff';
             }
 
             templateMap[templateId] = {
@@ -159,9 +154,8 @@ class _StockCheckPageState extends State<StockCheckPage> {
           _productTemplates = templates;
           _filteredProductTemplates = templates;
         });
-
         developer.log(
-            "Fetched and sorted ${_productTemplates.length} product templates with ${_productTemplates.fold(0, (sum, t) => sum + (t['variant_count'] as int))} variants");
+            "Fetched ${_productTemplates.length} product templates with ${_productTemplates.fold(0, (sum, t) => sum + (t['variant_count'] as int))} variants");
       } else {
         setState(() {
           _productTemplates = [];
@@ -173,9 +167,8 @@ class _StockCheckPageState extends State<StockCheckPage> {
       developer.log("Error loading stock data: $e", error: e);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Error loading stock data: $e'),
-          backgroundColor: Colors.red,
-        ),
+            content: Text('Error loading stock data: $e'),
+            backgroundColor: Colors.red),
       );
     } finally {
       setState(() => _isLoading = false);
@@ -191,13 +184,11 @@ class _StockCheckPageState extends State<StockCheckPage> {
         true,
         ScanMode.BARCODE,
       );
-
       if (barcode != '-1') {
         setState(() {
           _searchController.text = barcode;
           _filterProductTemplates();
         });
-
         if (_filteredProductTemplates.isEmpty) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -211,96 +202,232 @@ class _StockCheckPageState extends State<StockCheckPage> {
       developer.log("Error scanning barcode: $e", error: e);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Error scanning barcode: $e'),
-          backgroundColor: Colors.red,
-        ),
+            content: Text('Error scanning barcode: $e'),
+            backgroundColor: Colors.red),
       );
     } finally {
       setState(() => _isScanning = false);
     }
   }
 
-  Future<Map<String, dynamic>> _fetchInventoryDetails(
-      OdooClient client, int productId) async {
+  Future<Map<String, dynamic>> _fetchInventoryDetails(OdooClient client, int productId) async {
     try {
+      developer.log("Fetching inventory for productId: $productId");
+
+      // Fetch all valid internal stock locations
+      final stockLocationsResult = await client.callKw({
+        'model': 'stock.location',
+        'method': 'search_read',
+        'args': [
+          [
+            ['usage', '=', 'internal'],
+            ['complete_name', 'not like', '%/Input'],
+            ['complete_name', 'not like', '%/Output'],
+          ]
+        ],
+        'kwargs': {
+          'fields': ['complete_name', 'id', 'usage'],
+        },
+      });
+      List<String> validStockLocations = stockLocationsResult
+          .map<String>((loc) => loc['complete_name'] as String)
+          .toList();
+      developer.log("Valid stock locations: $validStockLocations");
+
+      // Fetch stock quants
       final stockQuantResult = await client.callKw({
         'model': 'stock.quant',
         'method': 'search_read',
         'args': [
           [
             ['product_id', '=', productId],
+            ['location_id.usage', '=', 'internal'],
             ['quantity', '>', 0],
+            ['location_id.complete_name', 'in', validStockLocations],
           ]
         ],
         'kwargs': {
-          'fields': [
-            'location_id',
-            'quantity',
-            'reserved_quantity',
-          ],
+          'fields': ['location_id', 'quantity', 'reserved_quantity'],
         },
       });
 
       List<Map<String, dynamic>> stockDetails = [];
+      double totalInStock = 0.0;
+      double totalAvailable = 0.0;
       for (var quant in stockQuantResult) {
-        final locationId = quant['location_id'] is List
+        final locationName = quant['location_id'] is List && quant['location_id'].length > 1
+            ? quant['location_id'][1]
+            : 'Unknown';
+        final locationId = quant['location_id'] is List && quant['location_id'].length > 0
             ? quant['location_id'][0]
-            : quant['location_id'];
-        final locationName =
-            quant['location_id'] is List ? quant['location_id'][1] : 'Unknown';
-
+            : 'Unknown';
+        final quantity = (quant['quantity'] as num?)?.toDouble() ?? 0.0;
+        final reserved = (quant['reserved_quantity'] as num?)?.toDouble() ?? 0.0;
+        final available = quantity - reserved;
         stockDetails.add({
           'warehouse': locationName,
-          'quantity': (quant['quantity'] as num).toDouble(),
-          'reserved': (quant['reserved_quantity'] as num).toDouble(),
-          'available':
-              (quant['quantity'] as num) - (quant['reserved_quantity'] as num),
+          'quantity': quantity,
+          'reserved_quantity': reserved,
+          'available': available,
         });
+        totalInStock += quantity;
+        totalAvailable += available;
+        developer.log("Quant: product_id=$productId, location_id=$locationId, location=$locationName, quantity=$quantity, reserved=$reserved, available=$available");
+      }
+      developer.log("Raw stockQuantResult: $stockQuantResult");
+      developer.log("Processed stockDetails: $stockDetails");
+      developer.log("Calculated Total In Stock: $totalInStock, Total Available: $totalAvailable");
+
+      // Fetch expected stock from product (for validation)
+      final productResult = await client.callKw({
+        'model': 'product.product',
+        'method': 'read',
+        'args': [
+          [productId],
+        ],
+        'kwargs': {
+          'fields': ['qty_available'],
+        },
+      });
+      final expectedStock = productResult.isNotEmpty
+          ? (productResult[0]['qty_available'] as num?)?.toDouble() ?? 0.0
+          : 0.0;
+      developer.log("Expected stock (qty_available) from product: $expectedStock");
+
+      // Validate calculated stock against expected stock
+      if ((totalInStock - expectedStock).abs() > 0.001) {
+        developer.log(
+            "Warning: Stock mismatch for product $productId - Calculated Total In Stock: $totalInStock, Expected (qty_available): $expectedStock",
+            error: "Stock mismatch detected");
+        // Optionally, adjust totalInStock to match expectedStock if desired
+        // totalInStock = expectedStock;
+        // Recalculate stockDetails based on expectedStock if needed
       }
 
-      final stockMoveResult = await client.callKw({
+      // Fetch incoming stock moves (excluding 'done')
+      final incomingMoveResult = await client.callKw({
         'model': 'stock.move',
         'method': 'search_read',
         'args': [
           [
             ['product_id', '=', productId],
-            [
-              'state',
-              'in',
-              ['confirmed', 'assigned']
-            ],
+            ['state', 'in', ['confirmed', 'waiting', 'assigned', 'partially_available']],
+            ['location_dest_id.usage', '=', 'internal'],
+            ['location_id.usage', '!=', 'internal'],
+            ['location_dest_id.complete_name', 'in', validStockLocations],
           ]
         ],
         'kwargs': {
-          'fields': ['product_qty', 'date', 'location_id', 'location_dest_id'],
+          'fields': [
+            'product_uom_qty',
+            'quantity',
+            'date',
+            'location_id',
+            'location_dest_id',
+            'state',
+          ],
         },
       });
 
       List<Map<String, dynamic>> incomingStock = [];
-      for (var move in stockMoveResult) {
+      double totalIncoming = 0.0;
+      for (var move in incomingMoveResult) {
+        final quantity = (move['product_uom_qty'] as num?)?.toDouble() ?? 0.0;
         incomingStock.add({
-          'quantity': (move['product_qty'] as num).toDouble(),
+          'quantity': quantity,
           'expected_date': move['date'] ?? 'N/A',
-          'from_location':
-              move['location_id'] is List ? move['location_id'][1] : 'Unknown',
-          'to_location': move['location_dest_id'] is List
+          'from_location': move['location_id'] is List && move['location_id'].length > 1
+              ? move['location_id'][1]
+              : 'Unknown',
+          'to_location': move['location_dest_id'] is List && move['location_dest_id'].length > 1
               ? move['location_dest_id'][1]
               : 'Unknown',
+          'state': move['state'] ?? 'N/A',
         });
+        totalIncoming += quantity;
       }
+      developer.log("Raw incomingMoveResult: $incomingMoveResult");
+      developer.log("Processed incomingStock: $incomingStock");
+
+      // Fetch outgoing stock moves (excluding 'done')
+      final outgoingMoveResult = await client.callKw({
+        'model': 'stock.move',
+        'method': 'search_read',
+        'args': [
+          [
+            ['product_id', '=', productId],
+            ['state', 'in', ['confirmed', 'waiting', 'assigned', 'partially_available']],
+            ['location_id.usage', '=', 'internal'],
+            ['location_dest_id.usage', 'in', ['customer', 'production', 'inventory']],
+            ['location_id.complete_name', 'in', validStockLocations],
+          ]
+        ],
+        'kwargs': {
+          'fields': [
+            'product_uom_qty',
+            'quantity',
+            'date',
+            'location_id',
+            'location_dest_id',
+            'state',
+          ],
+        },
+      });
+
+      List<Map<String, dynamic>> outgoingStock = [];
+      double totalOutgoing = 0.0;
+      for (var move in outgoingMoveResult) {
+        final quantity = (move['product_uom_qty'] as num?)?.toDouble() ?? 0.0;
+        outgoingStock.add({
+          'quantity': quantity,
+          'date_expected': move['date'] ?? 'N/A',
+          'from_location': move['location_id'] is List && move['location_id'].length > 1
+              ? move['location_id'][1]
+              : 'Unknown',
+          'to_location': move['location_dest_id'] is List && move['location_dest_id'].length > 1
+              ? move['location_dest_id'][1]
+              : 'Unknown',
+          'state': move['state'] ?? 'N/A',
+        });
+        totalOutgoing += quantity;
+      }
+      developer.log("Raw outgoingMoveResult: $outgoingMoveResult");
+      developer.log("Processed outgoingStock: $outgoingStock");
+
+      final forecastedStock = totalInStock + totalIncoming - totalOutgoing;
+
+      developer.log(
+          "Summary: totalInStock=$totalInStock, totalAvailable=$totalAvailable, "
+              "totalIncoming=$totalIncoming, totalOutgoing=$totalOutgoing, "
+              "forecastedStock=$forecastedStock");
 
       return {
         'stock_details': stockDetails,
         'incoming_stock': incomingStock,
+        'outgoing_stock': outgoingStock,
+        'totalInStock': totalInStock,
+        'totalAvailable': totalAvailable,
+        'totalIncoming': totalIncoming,
+        'totalOutgoing': totalOutgoing,
+        'forecastedStock': forecastedStock,
       };
-    } catch (e) {
+    } catch (e, stackTrace) {
       developer.log(
           "Error fetching inventory details for product $productId: $e",
-          error: e);
-      return {'stock_details': [], 'incoming_stock': []};
+          error: e,
+          stackTrace: stackTrace);
+      return {
+        'stock_details': [],
+        'incoming_stock': [],
+        'outgoing_stock': [],
+        'totalInStock': 0.0,
+        'totalAvailable': 0.0,
+        'totalIncoming': 0.0,
+        'totalOutgoing': 0.0,
+        'forecastedStock': 0.0,
+      };
     }
   }
-
   void _filterProductTemplates() {
     final query = _searchController.text.toLowerCase();
     setState(() {
@@ -324,12 +451,7 @@ class _StockCheckPageState extends State<StockCheckPage> {
   Future<List<Map<String, String>>> _fetchVariantAttributes(
       OdooClient odooClient, List<int> attributeValueIds) async {
     try {
-      if (attributeValueIds.isEmpty) {
-        developer
-            .log("No attribute value IDs provided for fetching attributes");
-        return [];
-      }
-
+      if (attributeValueIds.isEmpty) return [];
       final attributeValueResult = await odooClient.callKw({
         'model': 'product.template.attribute.value',
         'method': 'read',
@@ -355,7 +477,7 @@ class _StockCheckPageState extends State<StockCheckPage> {
             [valueId]
           ],
           'kwargs': {
-            'fields': ['name'],
+            'fields': ['name']
           },
         });
 
@@ -366,7 +488,7 @@ class _StockCheckPageState extends State<StockCheckPage> {
             [attributeId]
           ],
           'kwargs': {
-            'fields': ['name'],
+            'fields': ['name']
           },
         });
 
@@ -377,7 +499,6 @@ class _StockCheckPageState extends State<StockCheckPage> {
           });
         }
       }
-      developer.log("Fetched ${attributes.length} attributes for variant");
       return attributes;
     } catch (e) {
       developer.log("Error fetching variant attributes: $e", error: e);
@@ -387,7 +508,7 @@ class _StockCheckPageState extends State<StockCheckPage> {
 
   Future<void> _showVariantsDialog(
       BuildContext context, Map<String, dynamic> template) async {
-    setState(() => _isActionLoading = true); // Show loading overlay
+    setState(() => _isActionLoading = true);
     final client = await SessionManager.getActiveClient();
     if (client == null) {
       setState(() => _isActionLoading = false);
@@ -403,7 +524,6 @@ class _StockCheckPageState extends State<StockCheckPage> {
     final variants = template['variants'] as List<Map<String, dynamic>>;
     if (variants.isEmpty) {
       setState(() => _isActionLoading = false);
-      developer.log("No variants found for template: ${template['name']}");
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('No variants found for ${template['name']}'),
@@ -416,25 +536,22 @@ class _StockCheckPageState extends State<StockCheckPage> {
     final deviceSize = MediaQuery.of(context).size;
     final dialogHeight = deviceSize.height * 0.75;
 
-    setState(() => _isActionLoading = false); // Hide loading before dialog
+    setState(() => _isActionLoading = false);
     await showDialog(
       context: context,
       barrierDismissible: true,
       builder: (BuildContext dialogContext) {
         return Dialog(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           elevation: 5,
           backgroundColor: Colors.white,
           insetPadding: EdgeInsets.zero,
           child: FractionallySizedBox(
             widthFactor: 0.9,
             child: Container(
-              constraints: BoxConstraints(
-                maxHeight: dialogHeight,
-                minHeight: 300,
-              ),
+              constraints:
+                  BoxConstraints(maxHeight: dialogHeight, minHeight: 300),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -476,14 +593,12 @@ class _StockCheckPageState extends State<StockCheckPage> {
                                     ?.map((dynamic id) => id as int)
                                     .toList() ??
                                 [];
-
                         final attributes = await _fetchVariantAttributes(
                             client, attributeValueIds);
                         final selectedAttributes = <String, String>{};
                         for (var attr in attributes) {
-                          final attrName = attr['attribute_name'] ?? '';
-                          final valueName = attr['value_name'] ?? '';
-                          selectedAttributes[attrName] = valueName;
+                          selectedAttributes[attr['attribute_name']!] =
+                              attr['value_name']!;
                         }
                         return {
                           'variant': variant,
@@ -491,7 +606,7 @@ class _StockCheckPageState extends State<StockCheckPage> {
                           'image_url': variant['image_url'],
                           'selected_attributes': selectedAttributes,
                         };
-                      })).then((results) => results),
+                      })),
                       builder: (context, snapshot) {
                         if (snapshot.connectionState ==
                             ConnectionState.waiting) {
@@ -499,16 +614,13 @@ class _StockCheckPageState extends State<StockCheckPage> {
                               child: CircularProgressIndicator());
                         }
                         if (snapshot.hasError) {
-                          developer.log(
-                              "Error loading variants: ${snapshot.error}",
-                              error: snapshot.error);
+                          developer
+                              .log("Error loading variants: ${snapshot.error}");
                           return const Center(
                               child: Text('Error loading variants'));
                         }
                         final variantData = snapshot.data ?? [];
                         if (variantData.isEmpty) {
-                          developer.log(
-                              "Variant data is empty for template: ${template['name']}");
                           return const Center(
                               child: Text('No variants available'));
                         }
@@ -538,7 +650,7 @@ class _StockCheckPageState extends State<StockCheckPage> {
                             final variant = data['variant'];
                             final attributes =
                                 data['attributes'] as List<Map<String, String>>;
-                            final imageUrl = data['image_url'] as String;
+                            final imageUrl = data['image_url'] ?? '';
                             final selectedAttributes =
                                 data['selected_attributes']
                                     as Map<String, String>;
@@ -584,26 +696,22 @@ class _StockCheckPageState extends State<StockCheckPage> {
       try {
         imageBytes = base64Decode(base64String);
       } catch (e) {
-        developer.log(
-            'buildVariantListItem: Invalid base64 image for ${variant['name']}: $e');
-        imageBytes = null;
+        developer.log('Invalid base64 image for ${variant['name']}: $e');
       }
     }
 
     return InkWell(
       onTap: () async {
-        setState(() => _isActionLoading = true); // Show loading
+        setState(() => _isActionLoading = true);
         final inventoryDetails =
             await _fetchInventoryDetails(client, variant['id']);
-
         Navigator.pop(context);
         setState(() => _isActionLoading = false);
         await showDialog(
           context: dialogContext,
           builder: (inventoryDialogContext) => Dialog(
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
-            ),
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
             elevation: 5,
             backgroundColor: Colors.white,
             insetPadding: EdgeInsets.zero,
@@ -703,28 +811,21 @@ class _StockCheckPageState extends State<StockCheckPage> {
                                 ),
                               ),
                             ),
-                            errorWidget: (context, url, error) {
-                              developer
-                                  .log("Failed to load variant image: $error");
-                              return const Icon(
-                                Icons.inventory_2_rounded,
-                                color: Colors.grey,
-                                size: 24,
-                              );
-                            },
+                            errorWidget: (context, url, error) => const Icon(
+                              Icons.inventory_2_rounded,
+                              color: Colors.grey,
+                              size: 24,
+                            ),
                           )
                         : Image.memory(
                             imageBytes!,
                             fit: BoxFit.cover,
-                            errorBuilder: (context, error, stackTrace) {
-                              developer
-                                  .log("Failed to load variant image: $error");
-                              return const Icon(
-                                Icons.inventory_2_rounded,
-                                color: Colors.grey,
-                                size: 24,
-                              );
-                            },
+                            errorBuilder: (context, error, stackTrace) =>
+                                const Icon(
+                              Icons.inventory_2_rounded,
+                              color: Colors.grey,
+                              size: 24,
+                            ),
                           ))
                     : const Icon(
                         Icons.inventory_2_rounded,
@@ -762,9 +863,7 @@ class _StockCheckPageState extends State<StockCheckPage> {
                     children: [
                       Container(
                         padding: const EdgeInsets.symmetric(
-                          horizontal: 6,
-                          vertical: 2,
-                        ),
+                            horizontal: 6, vertical: 2),
                         decoration: BoxDecoration(
                           color: Colors.grey[100],
                           borderRadius: BorderRadius.circular(4),
@@ -793,9 +892,7 @@ class _StockCheckPageState extends State<StockCheckPage> {
                     children: [
                       Container(
                         padding: const EdgeInsets.symmetric(
-                          horizontal: 6,
-                          vertical: 2,
-                        ),
+                            horizontal: 6, vertical: 2),
                         decoration: BoxDecoration(
                           color: (variant['qty_available'] as num) > 0
                               ? Colors.green[50]
@@ -813,18 +910,6 @@ class _StockCheckPageState extends State<StockCheckPage> {
                           ),
                         ),
                       ),
-                      // const SizedBox(width: 8),
-                      // TextButton(
-                      //   onPressed: () ,
-                      //   child: Text(
-                      //     'View Inventory',
-                      //     style: TextStyle(
-                      //       color: Theme.of(context).primaryColor,
-                      //       fontSize: 12,
-                      //       fontWeight: FontWeight.w600,
-                      //     ),
-                      //   ),
-                      // ),
                     ],
                   ),
                 ],
@@ -844,17 +929,103 @@ class _StockCheckPageState extends State<StockCheckPage> {
         inventoryDetails['stock_details'] as List<Map<String, dynamic>>;
     final incomingStock =
         inventoryDetails['incoming_stock'] as List<Map<String, dynamic>>;
+    final outgoingStock =
+        inventoryDetails['outgoing_stock'] as List<Map<String, dynamic>>;
 
-    // Helper to format date
+    // Calculate total quantities
+    int totalInStock = 0;
+    int totalAvailable = 0;
+    int totalIncoming = 0;
+    int totalOutgoing = 0;
+
+    print('Debug: Raw stockDetails: $stockDetails');
+    for (var stock in stockDetails) {
+      final quantity = (stock['quantity'] as num?)?.toInt() ?? 0;
+      final available = (stock['available'] as num?)?.toInt() ?? 0;
+      totalInStock += quantity;
+      totalAvailable += available;
+      print(
+          'Debug: Stock - warehouse=${stock['warehouse']}, quantity=$quantity, available=$available, reserved=${stock['reserved_quantity']}');
+    }
+
+    for (var incoming in incomingStock) {
+      totalIncoming += (incoming['quantity'] as num?)?.toInt() ?? 0;
+    }
+
+    for (var outgoing in outgoingStock) {
+      totalOutgoing += (outgoing['quantity'] as num?)?.toInt() ?? 0;
+    }
+
+    final forecastedStock = totalInStock + totalIncoming - totalOutgoing;
+
+    // Format date
     String _formatDate(String? date) {
       if (date == null || date == 'N/A') return 'Not specified';
       try {
         final parsedDate = DateTime.parse(date);
-        return "${parsedDate.day}/${parsedDate.month}/${parsedDate.year}";
+        final months = [
+          'Jan',
+          'Feb',
+          'Mar',
+          'Apr',
+          'May',
+          'Jun',
+          'Jul',
+          'Aug',
+          'Sep',
+          'Oct',
+          'Nov',
+          'Dec'
+        ];
+        return "${parsedDate.day} ${months[parsedDate.month - 1]} ${parsedDate.year}";
       } catch (e) {
-        return date;
+        return date ?? 'Invalid date';
       }
     }
+
+    // Get earliest arrival for incoming shipment
+    String getEarliestArrival() {
+      if (incomingStock.isEmpty) return "No items expected";
+      try {
+        DateTime? earliestDate;
+        final today = DateTime.now();
+        final todayMidnight = DateTime(today.year, today.month, today.day);
+
+        print(
+            'Debug: incomingStock expected_dates: ${incomingStock.map((item) => item['expected_date']).toList()}');
+
+        for (var item in incomingStock) {
+          if (item['expected_date'] != null && item['expected_date'] != 'N/A') {
+            try {
+              final date = DateTime.parse(item['expected_date']);
+              if (!date.isBefore(todayMidnight)) {
+                if (earliestDate == null || date.isBefore(earliestDate)) {
+                  earliestDate = date;
+                }
+              }
+            } catch (e) {
+              print('Debug: Failed to parse date ${item['expected_date']}: $e');
+            }
+          }
+        }
+
+        if (earliestDate == null) return "No future items expected";
+        print('Debug: Selected earliestDate: $earliestDate');
+
+        final difference = earliestDate.difference(todayMidnight).inDays;
+        if (difference == 0) return "Today";
+        if (difference == 1) return "Tomorrow";
+        if (difference > 1 && difference <= 7) return "In $difference days";
+        return _formatDate(earliestDate.toString());
+      } catch (e) {
+        print('Debug: Error in getEarliestArrival: $e');
+        return "Date not available";
+      }
+    }
+
+    // Debug output
+    print(
+        'Debug: totalInStock=$totalInStock, totalAvailable=$totalAvailable, totalIncoming=$totalIncoming, totalOutgoing=$totalOutgoing, forecastedStock=$forecastedStock');
 
     return Card(
       elevation: 2,
@@ -865,120 +1036,349 @@ class _StockCheckPageState extends State<StockCheckPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              nameParts(variant['name'])[0],
-              style: const TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-                color: Colors.black87,
+            // Product header
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (variant['name'] != null &&
+                          variant['name'].toString().trim().isNotEmpty) ...[
+                        Text(
+                          variant['name']!.toString().split(':').first,
+                          style: const TextStyle(
+                              fontSize: 16, fontWeight: FontWeight.bold),
+                        ),
+                        const SizedBox(height: 4),
+                      ],
+                      if (variant['default_code'] != null &&
+                          variant['default_code']
+                              .toString()
+                              .trim()
+                              .isNotEmpty) ...[
+                        Text(
+                          "ID: ${variant['default_code']}",
+                          style:
+                              TextStyle(color: Colors.grey[600], fontSize: 12),
+                        ),
+                        const SizedBox(height: 4),
+                      ],
+                      if (variant['barcode'] != null &&
+                          variant['barcode'].toString().trim().isNotEmpty) ...[
+                        Text(
+                          "SKU: ${variant['barcode']}",
+                          style:
+                              TextStyle(color: Colors.grey[600], fontSize: 12),
+                        ),
+                        const SizedBox(height: 4),
+                      ],
+                      if (variant['price'] != null) ...[
+                        Text(
+                          "Price: \$${(variant['price'] as num).toStringAsFixed(2)}",
+                          style: TextStyle(
+                            color: Theme.of(context).primaryColor,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                      ],
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+
+            // Summary section
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.grey[100],
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  _buildSummaryItem(
+                    "On Hand",
+                    totalInStock,
+                    Icons.check_circle_outline,
+                    totalInStock > 0 ? Colors.green : Colors.red,
+                  ),
+                  Container(height: 40, width: 1, color: Colors.grey[300]),
+                  _buildSummaryItem(
+                    "Incoming",
+                    totalIncoming,
+                    Icons.local_shipping,
+                    Colors.blue,
+                  ),
+                  Container(height: 40, width: 1, color: Colors.grey[300]),
+                  _buildSummaryItem(
+                    "Outgoing",
+                    totalOutgoing,
+                    Icons.arrow_upward,
+                    Colors.orange,
+                  ),
+                  Container(height: 40, width: 1, color: Colors.grey[300]),
+                  _buildSummaryItem(
+                    "Forecast (30d)",
+                    forecastedStock,
+                    Icons.trending_up,
+                    forecastedStock > 0 ? Colors.green : Colors.red,
+                  ),
+                ],
               ),
             ),
-            const SizedBox(height: 8),
-            Text(
-              "Product Code: ${variant['default_code'] ?? 'Not available'}",
-              style: TextStyle(color: Colors.grey[600], fontSize: 12),
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Icon(Icons.store, size: 18, color: Colors.grey[700]),
-                const SizedBox(width: 4),
-                const Text(
-                  'Items in Stock',
-                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+
+            // Next arrival information
+            if (totalIncoming > 0) ...[
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.blue[50],
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.blue[100]!, width: 1),
                 ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            if (stockDetails.isEmpty)
-              Text(
-                'No items in stock right now.',
-                style: TextStyle(color: Colors.grey[600], fontSize: 12),
-              )
-            else
-              ...stockDetails.map((stock) => Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Expanded(
-                          child: Text(
-                            stock['warehouse'],
-                            style: const TextStyle(fontSize: 12),
-                          ),
-                        ),
-                        Tooltip(
-                          message: 'Total number of items stored',
-                          child: Text(
-                            '${stock['quantity'].toStringAsFixed(0)} in storage',
-                            style: const TextStyle(fontSize: 12),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Tooltip(
-                          message:
-                              'Items ready for use (not booked for other orders)',
-                          child: Text(
-                            '${stock['available'].toStringAsFixed(0)} ready',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: stock['available'] > 0
-                                  ? Colors.green[700]
-                                  : Colors.red[700],
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  )),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Icon(Icons.local_shipping, size: 18, color: Colors.grey[700]),
-                const SizedBox(width: 4),
-                const Text(
-                  'Items on the Way',
-                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            if (incomingStock.isEmpty)
-              Text(
-                'No items expected soon.',
-                style: TextStyle(color: Colors.grey[600], fontSize: 12),
-              )
-            else
-              ...incomingStock.map((move) => Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: Column(
+                child: Row(
+                  children: [
+                    Icon(Icons.access_time, size: 18, color: Colors.blue[700]),
+                    const SizedBox(width: 8),
+                    Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          '${move['quantity'].toStringAsFixed(0)} items',
-                          style: const TextStyle(fontSize: 12),
+                        const Text(
+                          "Next Arrival",
+                          style: TextStyle(
+                              fontWeight: FontWeight.w500, fontSize: 13),
                         ),
                         Text(
-                          'Coming from: ${move['from_location']}',
-                          style:
-                              TextStyle(color: Colors.grey[600], fontSize: 12),
-                        ),
-                        Text(
-                          'Going to: ${move['to_location']}',
-                          style:
-                              TextStyle(color: Colors.grey[600], fontSize: 12),
-                        ),
-                        Text(
-                          'Expected by: ${_formatDate(move['expected_date'])}',
-                          style:
-                              TextStyle(color: Colors.grey[600], fontSize: 12),
+                          getEarliestArrival(),
+                          style: TextStyle(
+                            color: Colors.blue[800],
+                            fontWeight: FontWeight.bold,
+                            fontSize: 14,
+                          ),
                         ),
                       ],
                     ),
-                  )),
+                  ],
+                ),
+              ),
+            ],
+
+            // Stock by Location
+            if (stockDetails.isNotEmpty) ...[
+              const SizedBox(height: 16),
+              _buildExpandableSection(
+                title: "Stock by Location",
+                icon: Icons.store,
+                children: stockDetails
+                    .map((stock) => Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 6),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                flex: 2,
+                                child: Text(
+                                  stock['warehouse']?.toString() ?? 'Unknown',
+                                  style: const TextStyle(fontSize: 13),
+                                ),
+                              ),
+                              Expanded(
+                                flex: 1,
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.end,
+                                  children: [
+                                    Text(
+                                      "${(stock['available'] as num?)?.toStringAsFixed(0) ?? '0'}",
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.bold,
+                                        color: ((stock['available'] as num?)
+                                                        ?.toInt() ??
+                                                    0) >
+                                                0
+                                            ? Colors.green[700]
+                                            : Colors.red[700],
+                                      ),
+                                    ),
+                                    Text(
+                                      "/${(stock['quantity'] as num?)?.toStringAsFixed(0) ?? '0'}",
+                                      style: TextStyle(
+                                          fontSize: 13,
+                                          color: Colors.grey[700]),
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      "(Res: ${(stock['reserved_quantity'] as num?)?.toStringAsFixed(0) ?? '0'})",
+                                      style: TextStyle(
+                                          fontSize: 12,
+                                          color: Colors.orange[700]),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ))
+                    .toList(),
+              ),
+            ],
+
+            // Incoming Shipments
+            if (incomingStock.isNotEmpty) ...[
+              const SizedBox(height: 16),
+              _buildExpandableSection(
+                title: "Incoming Shipments",
+                icon: Icons.local_shipping,
+                children: incomingStock
+                    .map((move) => Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 8, vertical: 2),
+                                    decoration: BoxDecoration(
+                                      color: Colors.blue[50],
+                                      borderRadius: BorderRadius.circular(4),
+                                    ),
+                                    child: Text(
+                                      "${(move['quantity'] as num?)?.toStringAsFixed(0) ?? '0'} items",
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.blue[800],
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    "Expected: ${_formatDate(move['expected_date'])}",
+                                    style: const TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w500),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                "${move['from_location'] ?? 'Unknown'} → ${move['to_location'] ?? 'Unknown'}",
+                                style: TextStyle(
+                                    color: Colors.grey[600], fontSize: 12),
+                              ),
+                            ],
+                          ),
+                        ))
+                    .toList(),
+              ),
+            ],
+
+            // Outgoing Shipments
+            if (outgoingStock.isNotEmpty) ...[
+              const SizedBox(height: 16),
+              _buildExpandableSection(
+                title: "Outgoing Shipments",
+                icon: Icons.arrow_upward,
+                children: outgoingStock
+                    .map((move) => Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 8, vertical: 2),
+                                    decoration: BoxDecoration(
+                                      color: Colors.orange[50],
+                                      borderRadius: BorderRadius.circular(4),
+                                    ),
+                                    child: Text(
+                                      "${(move['quantity'] as num?)?.toStringAsFixed(0) ?? '0'} items",
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.orange[800],
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    "Expected: ${_formatDate(move['date_expected'])}",
+                                    style: const TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w500),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                "${move['from_location'] ?? 'Unknown'} → ${move['to_location'] ?? 'Unknown'}",
+                                style: TextStyle(
+                                    color: Colors.grey[600], fontSize: 12),
+                              ),
+                            ],
+                          ),
+                        ))
+                    .toList(),
+              ),
+            ],
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildSummaryItem(
+      String label, int value, IconData icon, Color color) {
+    return Column(
+      children: [
+        Icon(icon, color: color, size: 20),
+        const SizedBox(height: 4),
+        Text(
+          value.toString(),
+          style: TextStyle(
+              fontWeight: FontWeight.bold, fontSize: 16, color: color),
+        ),
+        Text(
+          label,
+          style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildExpandableSection({
+    required String title,
+    required IconData icon,
+    required List<Widget> children,
+  }) {
+    return ExpansionTile(
+      tilePadding: EdgeInsets.zero,
+      title: Row(
+        children: [
+          Icon(icon, size: 18, color: Colors.grey[700]),
+          const SizedBox(width: 8),
+          Text(
+            title,
+            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+          ),
+        ],
+      ),
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(left: 8, right: 8, bottom: 12),
+          child: Column(children: children),
+        ),
+      ],
     );
   }
 
@@ -1081,94 +1481,98 @@ class _StockCheckPageState extends State<StockCheckPage> {
                 child: _isLoading
                     ? Center(
                         child: Shimmer.fromColors(
-                        baseColor: Colors.grey[300]!,
-                        highlightColor: Colors.grey[100]!,
-                        child: ListView.builder(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 16, vertical: 8),
-                          itemCount: 8,
-                          itemBuilder: (context, index) {
-                            return Card(
-                              color: Colors.white,
-                              elevation: 1,
-                              margin: const EdgeInsets.only(bottom: 12),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: Padding(
-                                padding: const EdgeInsets.all(12),
-                                child: Row(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Container(
-                                      width: 60,
-                                      height: 60,
-                                      decoration: BoxDecoration(
-                                        color: Colors.white,
-                                        borderRadius: BorderRadius.circular(8),
-                                        border: Border.all(
-                                            color: Colors.grey[300]!, width: 1),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 12),
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          Container(
-                                            width: double.infinity,
-                                            height: 16,
-                                            color: Colors.white,
-                                          ),
-                                          const SizedBox(height: 4),
-                                          Container(
-                                            width: 150,
-                                            height: 12,
-                                            color: Colors.white,
-                                          ),
-                                          const SizedBox(height: 4),
-                                          Row(
-                                            children: [
-                                              Container(
-                                                width: 80,
-                                                height: 12,
-                                                color: Colors.white,
-                                              ),
-                                              const SizedBox(width: 8),
-                                              Container(
-                                                width: 60,
-                                                height: 12,
-                                                color: Colors.white,
-                                              ),
-                                            ],
-                                          ),
-                                          const SizedBox(height: 4),
-                                          Row(
-                                            children: [
-                                              Container(
-                                                width: 100,
-                                                height: 12,
-                                                color: Colors.white,
-                                              ),
-                                              const SizedBox(width: 8),
-                                              Container(
-                                                width: 80,
-                                                height: 12,
-                                                color: Colors.white,
-                                              ),
-                                            ],
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ],
+                          baseColor: Colors.grey[300]!,
+                          highlightColor: Colors.grey[100]!,
+                          child: ListView.builder(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 16, vertical: 8),
+                            itemCount: 8,
+                            itemBuilder: (context, index) {
+                              return Card(
+                                color: Colors.white,
+                                elevation: 1,
+                                margin: const EdgeInsets.only(bottom: 12),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
                                 ),
-                              ),
-                            );
-                          },
+                                child: Padding(
+                                  padding: const EdgeInsets.all(12),
+                                  child: Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Container(
+                                        width: 60,
+                                        height: 60,
+                                        decoration: BoxDecoration(
+                                          color: Colors.white,
+                                          borderRadius:
+                                              BorderRadius.circular(8),
+                                          border: Border.all(
+                                              color: Colors.grey[300]!,
+                                              width: 1),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 12),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Container(
+                                              width: double.infinity,
+                                              height: 16,
+                                              color: Colors.white,
+                                            ),
+                                            const SizedBox(height: 4),
+                                            Container(
+                                              width: 150,
+                                              height: 12,
+                                              color: Colors.white,
+                                            ),
+                                            const SizedBox(height: 4),
+                                            Row(
+                                              children: [
+                                                Container(
+                                                  width: 80,
+                                                  height: 12,
+                                                  color: Colors.white,
+                                                ),
+                                                const SizedBox(width: 8),
+                                                Container(
+                                                  width: 60,
+                                                  height: 12,
+                                                  color: Colors.white,
+                                                ),
+                                              ],
+                                            ),
+                                            const SizedBox(height: 4),
+                                            Row(
+                                              children: [
+                                                Container(
+                                                  width: 100,
+                                                  height: 12,
+                                                  color: Colors.white,
+                                                ),
+                                                const SizedBox(width: 8),
+                                                Container(
+                                                  width: 80,
+                                                  height: 12,
+                                                  color: Colors.white,
+                                                ),
+                                              ],
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
                         ),
-                      ))
+                      )
                     : _filteredProductTemplates.isEmpty
                         ? Center(
                             child: Column(
@@ -1193,27 +1597,27 @@ class _StockCheckPageState extends State<StockCheckPage> {
                               setState(() => _isLoading = true);
                               await _loadStockData();
                             },
-                          child: ListView.builder(
+                            child: ListView.builder(
                               padding: const EdgeInsets.symmetric(
                                   horizontal: 16, vertical: 8),
                               itemCount: _filteredProductTemplates.length,
                               itemBuilder: (context, index) {
-                                final template = _filteredProductTemplates[index];
+                                final template =
+                                    _filteredProductTemplates[index];
                                 return GestureDetector(
                                   onTap: () async {
-                                    setState(() =>
-                                        _isActionLoading = true); // Show loading
+                                    setState(() => _isActionLoading = true);
                                     if ((template['variants'] as List).length >
                                         1) {
                                       await _showVariantsDialog(
                                           context, template);
                                     } else {
                                       final variant = template['variants'][0];
-                                      final client =
-                                          await SessionManager.getActiveClient();
+                                      final client = await SessionManager
+                                          .getActiveClient();
                                       if (client == null) {
-                                        setState(() => _isActionLoading =
-                                            false); // Hide loading
+                                        setState(
+                                            () => _isActionLoading = false);
                                         ScaffoldMessenger.of(context)
                                             .showSnackBar(
                                           const SnackBar(
@@ -1227,8 +1631,7 @@ class _StockCheckPageState extends State<StockCheckPage> {
                                       final inventoryDetails =
                                           await _fetchInventoryDetails(
                                               client, variant['id']);
-                                      setState(() => _isActionLoading =
-                                          false); // Hide loading
+                                      setState(() => _isActionLoading = false);
                                       await showDialog(
                                         context: context,
                                         builder: (dialogContext) => Dialog(
@@ -1243,10 +1646,11 @@ class _StockCheckPageState extends State<StockCheckPage> {
                                             widthFactor: 0.9,
                                             child: Container(
                                               constraints: BoxConstraints(
-                                                maxHeight: MediaQuery.of(context)
-                                                        .size
-                                                        .height *
-                                                    0.75,
+                                                maxHeight:
+                                                    MediaQuery.of(context)
+                                                            .size
+                                                            .height *
+                                                        0.75,
                                                 minHeight: 300,
                                               ),
                                               child: Column(
@@ -1254,12 +1658,14 @@ class _StockCheckPageState extends State<StockCheckPage> {
                                                 children: [
                                                   Container(
                                                     padding:
-                                                        const EdgeInsets.all(16),
+                                                        const EdgeInsets.all(
+                                                            16),
                                                     decoration: BoxDecoration(
                                                       color: Theme.of(context)
                                                           .primaryColor,
                                                       borderRadius:
-                                                          const BorderRadius.only(
+                                                          const BorderRadius
+                                                              .only(
                                                         topLeft:
                                                             Radius.circular(16),
                                                         topRight:
@@ -1275,12 +1681,15 @@ class _StockCheckPageState extends State<StockCheckPage> {
                                                                 const TextStyle(
                                                               fontSize: 18,
                                                               fontWeight:
-                                                                  FontWeight.bold,
-                                                              color: Colors.white,
+                                                                  FontWeight
+                                                                      .bold,
+                                                              color:
+                                                                  Colors.white,
                                                             ),
                                                             maxLines: 1,
-                                                            overflow: TextOverflow
-                                                                .ellipsis,
+                                                            overflow:
+                                                                TextOverflow
+                                                                    .ellipsis,
                                                           ),
                                                         ),
                                                         IconButton(
@@ -1297,11 +1706,12 @@ class _StockCheckPageState extends State<StockCheckPage> {
                                                     ),
                                                   ),
                                                   Flexible(
-                                                    child: SingleChildScrollView(
+                                                    child:
+                                                        SingleChildScrollView(
                                                       child: Padding(
                                                         padding:
-                                                            const EdgeInsets.all(
-                                                                16),
+                                                            const EdgeInsets
+                                                                .all(16),
                                                         child:
                                                             _buildInventoryDetailsCard(
                                                           variant: variant,
@@ -1318,14 +1728,13 @@ class _StockCheckPageState extends State<StockCheckPage> {
                                         ),
                                       );
                                     }
-                                    setState(() =>
-                                        _isActionLoading = false); // Hide loading
+                                    setState(() => _isActionLoading = false);
                                   },
                                   child: _buildProductCard(template),
                                 );
                               },
                             ),
-                        ),
+                          ),
               ),
             ],
           ),
@@ -1334,8 +1743,7 @@ class _StockCheckPageState extends State<StockCheckPage> {
               color: Colors.black54,
               child: Center(
                 child: CircularProgressIndicator(
-                  color: Theme.of(context).primaryColor,
-                ),
+                    color: Theme.of(context).primaryColor),
               ),
             ),
         ],
@@ -1356,9 +1764,7 @@ class _StockCheckPageState extends State<StockCheckPage> {
       try {
         imageBytes = base64Decode(base64String);
       } catch (e) {
-        developer.log(
-            'buildProductCard: Invalid base64 image for ${template['name']}: $e');
-        imageBytes = null;
+        developer.log('Invalid base64 image for ${template['name']}: $e');
       }
     }
 
@@ -1366,9 +1772,7 @@ class _StockCheckPageState extends State<StockCheckPage> {
       color: Colors.white,
       elevation: 1,
       margin: const EdgeInsets.only(bottom: 12),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-      ),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: Padding(
         padding: const EdgeInsets.all(12),
         child: Column(
@@ -1410,40 +1814,22 @@ class _StockCheckPageState extends State<StockCheckPage> {
                                     ),
                                   ),
                                 ),
-                                imageBuilder: (context, imageProvider) {
-                                  developer.log(
-                                      "Image loaded successfully for template: ${template['name']}");
-                                  return Container(
-                                    decoration: BoxDecoration(
-                                      image: DecorationImage(
-                                        image: imageProvider,
-                                        fit: BoxFit.cover,
-                                      ),
-                                    ),
-                                  );
-                                },
-                                errorWidget: (context, url, error) {
-                                  developer.log(
-                                      "Failed to load image for template ${template['name']}: $error");
-                                  return const Icon(
-                                    Icons.inventory_2_rounded,
-                                    color: Colors.grey,
-                                    size: 24,
-                                  );
-                                },
+                                errorWidget: (context, url, error) =>
+                                    const Icon(
+                                  Icons.inventory_2_rounded,
+                                  color: Colors.grey,
+                                  size: 24,
+                                ),
                               )
                             : Image.memory(
                                 imageBytes!,
                                 fit: BoxFit.cover,
-                                errorBuilder: (context, error, stackTrace) {
-                                  developer.log(
-                                      "Failed to load image for template ${template['name']}: $error");
-                                  return const Icon(
-                                    Icons.inventory_2_rounded,
-                                    color: Colors.grey,
-                                    size: 24,
-                                  );
-                                },
+                                errorBuilder: (context, error, stackTrace) =>
+                                    const Icon(
+                                  Icons.inventory_2_rounded,
+                                  color: Colors.grey,
+                                  size: 24,
+                                ),
                               ))
                         : const Icon(
                             Icons.inventory_2_rounded,
@@ -1549,3 +1935,5 @@ class _StockCheckPageState extends State<StockCheckPage> {
     );
   }
 }
+
+// Placeholder for SessionManager (replace with your actual implementation)

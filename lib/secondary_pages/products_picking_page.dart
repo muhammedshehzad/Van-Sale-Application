@@ -8,6 +8,7 @@ import 'package:latest_van_sale_application/providers/order_picking_provider.dar
 import 'package:latest_van_sale_application/secondary_pages/1/customers.dart';
 import 'package:latest_van_sale_application/secondary_pages/picking_products_ventorreff.dart';
 import 'package:provider/provider.dart';
+import 'package:shimmer/shimmer.dart';
 import 'dart:async';
 import '../authentication/cyllo_session_model.dart';
 import '../providers/data_provider.dart';
@@ -58,6 +59,8 @@ class _PickingPageState extends State<PickingPage>
   bool _sortAscending = true;
   List<Map<String, dynamic>> filteredPickingLines = [];
   final Map<String, String> attributeNames = {};
+  int? defaultLocationId; // Add this line
+  int? defaultLocationDestId;
 
   @override
   bool get wantKeepAlive => true;
@@ -144,6 +147,78 @@ class _PickingPageState extends State<PickingPage>
         throw Exception('Picking ID is null');
       }
 
+      // Fetch picking details to ensure we have the latest data
+      final pickingDetails =
+          await widget.provider.fetchPickingDetails(pickingId);
+
+      // Attempt to get location IDs from picking
+      int? locationId = pickingDetails['location_id'] is List<dynamic> &&
+              pickingDetails['location_id'].isNotEmpty
+          ? pickingDetails['location_id'][0] as int
+          : null;
+      int? locationDestId =
+          pickingDetails['location_dest_id'] is List<dynamic> &&
+                  pickingDetails['location_dest_id'].isNotEmpty
+              ? pickingDetails['location_dest_id'][0] as int
+              : null;
+
+      // If location IDs are missing, fetch default locations from the warehouse
+      if (locationId == null || locationDestId == null) {
+        final warehouseResult = await client.callKw({
+          'model': 'stock.warehouse',
+          'method': 'search_read',
+          'args': [
+            [
+              ['id', '=', widget.warehouseId]
+            ],
+            ['lot_stock_id', 'wh_output_stock_loc_id'],
+          ],
+          'kwargs': {},
+        });
+
+        if (warehouseResult.isEmpty) {
+          setState(() {
+            errorMessage = 'Warehouse not found or not configured correctly';
+            isProcessing = false;
+            isInitialized = true;
+          });
+          _showErrorDialog('Configuration Error',
+              'Warehouse not found or not configured correctly');
+          return;
+        }
+
+        final warehouse = warehouseResult[0];
+        locationId ??= warehouse['lot_stock_id'] is List<dynamic> &&
+                warehouse['lot_stock_id'].isNotEmpty
+            ? warehouse['lot_stock_id'][0] as int
+            : null;
+        locationDestId ??=
+            warehouse['wh_output_stock_loc_id'] is List<dynamic> &&
+                    warehouse['wh_output_stock_loc_id'].isNotEmpty
+                ? warehouse['wh_output_stock_loc_id'][0] as int
+                : null;
+
+        // Final check for valid location IDs
+        if (locationId == null || locationDestId == null) {
+          setState(() {
+            errorMessage =
+                'Unable to determine valid location IDs for the warehouse';
+            isProcessing = false;
+            isInitialized = true;
+          });
+          _showErrorDialog('Configuration Error',
+              'Unable to determine valid location IDs for the warehouse');
+          return;
+        }
+      }
+
+      // Store location IDs in state
+      setState(() {
+        defaultLocationId = locationId;
+        defaultLocationDestId = locationDestId;
+      });
+
+      // Rest of the method remains unchanged
       if (pickingState == 'draft' || pickingState == 'confirmed') {
         bool actionAssignSuccess = false;
         for (int attempt = 1; attempt <= 3; attempt++) {
@@ -251,7 +326,7 @@ class _PickingPageState extends State<PickingPage>
             'lot_id',
             'lot_name',
             'location_id',
-            'quantity',
+            'quantity'
           ],
         ],
         'kwargs': {},
@@ -290,42 +365,34 @@ class _PickingPageState extends State<PickingPage>
         locationIdMap[productId] = locationId;
       }
 
-      final pickingDetails =
-          await widget.provider.fetchPickingDetails(pickingId);
-      final defaultLocationId =
-          pickingDetails['location_id'] is List<dynamic> &&
-                  pickingDetails['location_id'].isNotEmpty
-              ? pickingDetails['location_id'][0] as int
-              : throw Exception('Invalid location_id in picking');
-      final defaultLocationDestId =
-          pickingDetails['location_dest_id'] is List<dynamic> &&
-                  pickingDetails['location_dest_id'].isNotEmpty
-              ? pickingDetails['location_dest_id'][0] as int
-              : throw Exception('Invalid location_dest_id in picking');
-
       // Cross-check with sale order if origin is a sale order
       Map<String, dynamic>? saleOrder;
-      if (pickingDetails['origin'] != null &&
-          pickingDetails['origin'].toString().startsWith('SO')) {
-        final saleOrderResult = await client.callKw({
-          'model': 'sale.order',
-          'method': 'search_read',
-          'args': [
-            [
-              ['name', '=', pickingDetails['origin']]
+      final origin = pickingDetails['origin'] as String?;
+      if (origin != null && origin.startsWith('SO')) {
+        try {
+          final saleOrderResult = await client.callKw({
+            'model': 'sale.order',
+            'method': 'search_read',
+            'args': [
+              [
+                ['name', '=', origin]
+              ],
+              ['order_line'],
             ],
-            ['order_line'],
-          ],
-          'kwargs': {},
-        });
-
-        if (saleOrderResult.isNotEmpty) {
-          saleOrder = saleOrderResult[0];
+            'kwargs': {},
+          });
+          if (saleOrderResult.isNotEmpty) {
+            saleOrder = saleOrderResult[0];
+          }
+        } catch (e) {
+          debugPrint('Failed to fetch sale order for origin $origin: $e');
         }
       }
 
       Map<int, double> saleOrderQuantities = {};
-      if (saleOrder != null && saleOrder['order_line'] != null) {
+      if (saleOrder != null &&
+          saleOrder['order_line'] != null &&
+          saleOrder['order_line'] is List<dynamic>) {
         final orderLineIds = saleOrder['order_line'] as List<dynamic>;
         final orderLineResult = await client.callKw({
           'model': 'sale.order.line',
@@ -366,11 +433,12 @@ class _PickingPageState extends State<PickingPage>
             'default_code': 'No Code',
             'tracking': 'none',
             'barcode': null,
+            'is_product_variant': false,
+            'product_template_attribute_value_ids': [],
           },
         );
 
         final trackingType = _normalizeTrackingValue(product['tracking']);
-        // Use product_uom_qty for ordered quantity, fallback to sale order if available
         double orderedQty =
             (move['product_uom_qty'] as num?)?.toDouble() ?? 0.0;
         if (saleOrderQuantities.containsKey(productId)) {
@@ -388,15 +456,14 @@ class _PickingPageState extends State<PickingPage>
             )
             .toList();
         final pickedQty = relatedMoveLines.isNotEmpty
-            ? relatedMoveLines.fold<dynamic>(
+            ? relatedMoveLines.fold<double>(
                 0.0,
-                (sum, line) {
+                (double sum, dynamic line) {
                   final quantity = line['quantity'];
                   if (quantity == null) return sum;
                   if (quantity is num) return sum + quantity.toDouble();
                   if (quantity is String) {
-                    final parsed = double.tryParse(quantity);
-                    return sum + (parsed ?? 0.0);
+                    return sum + (double.tryParse(quantity) ?? 0.0);
                   }
                   return sum;
                 },
@@ -409,8 +476,8 @@ class _PickingPageState extends State<PickingPage>
               moveLine.isNotEmpty ? moveLine['id'] as int? : null;
           List<String> serialNumbers = [];
           String locationName = locationMap[productId] ?? 'Not in stock';
-          var locationId = moveLine.isNotEmpty &&
-                  moveLine['location_id'] is List &&
+          var moveLineLocationId = moveLine.isNotEmpty &&
+                  moveLine['location_id'] is List<dynamic> &&
                   moveLine['location_id'].isNotEmpty
               ? (moveLine['location_id'] as List<dynamic>)[0] as int
               : (locationIdMap[productId] ?? defaultLocationId);
@@ -429,7 +496,7 @@ class _PickingPageState extends State<PickingPage>
             if (moveLine['location_id'] is List<dynamic> &&
                 moveLine['location_id'].isNotEmpty) {
               locationName = moveLine['location_id'][1] as String;
-              locationId = moveLine['location_id'][0] as int;
+              moveLineLocationId = moveLine['location_id'][0] as int;
             }
           }
 
@@ -442,14 +509,13 @@ class _PickingPageState extends State<PickingPage>
             'ordered_qty': orderedQty,
             'quantity': moveLine.isNotEmpty ? pickedQty : 0.0,
             'uom': 'Units',
-            'location_id': locationId,
+            'location_id': moveLineLocationId,
             'location_name': locationName,
             'lot_id': moveLine.isNotEmpty ? moveLine['lot_id'] : null,
             'is_picked': pickedQty >= orderedQty && orderedQty > 0,
             'is_available': stockAvailability[productId] != null &&
                 stockAvailability[productId]! > 0,
             'tracking': trackingType,
-            // Add variant info
             'is_product_variant': product['is_product_variant'] ?? false,
             'product_template_attribute_value_ids':
                 product['product_template_attribute_value_ids'] ?? [],
@@ -460,7 +526,7 @@ class _PickingPageState extends State<PickingPage>
           if (moveLineId != null) {
             pickedQuantities[moveLineId] = pickedQty;
             lotSerialNumbers[moveLineId] = serialNumbers;
-            locationIds[moveLineId] = locationId;
+            locationIds[moveLineId] = moveLineLocationId!;
             quantityControllers[moveLineId] =
                 TextEditingController(text: pickedQty.toStringAsFixed(2));
             lotSerialControllers[moveLineId] = serialNumbers
@@ -482,12 +548,14 @@ class _PickingPageState extends State<PickingPage>
         }
       }
 
-      stockAvailability = Map<int, double>.fromIterable(stockQuantResult,
-          key: (item) => (item['product_id'] is List<dynamic> &&
-                  item['product_id'].isNotEmpty
-              ? item['product_id'][0] as int
-              : throw Exception('Invalid product_id format in stock quant')),
-          value: (item) => (item['quantity'] as num).toDouble());
+      stockAvailability = Map<int, double>.fromIterable(
+        stockQuantResult,
+        key: (item) => (item['product_id'] is List<dynamic> &&
+                item['product_id'].isNotEmpty
+            ? item['product_id'][0] as int
+            : throw Exception('Invalid product_id format in stock quant')),
+        value: (item) => (item['quantity'] as num).toDouble(),
+      );
 
       for (var line in pickingLines) {
         final productId = (line['product_id'] as List<dynamic>)[0] as int;
@@ -519,7 +587,6 @@ class _PickingPageState extends State<PickingPage>
         isProcessing = false;
         isInitialized = true;
       });
-
       debugPrint('detailedErrorMessage: $detailedErrorMessage');
       _showErrorDialog('Initialization Error', detailedErrorMessage);
     }
@@ -669,12 +736,17 @@ class _PickingPageState extends State<PickingPage>
   }
 
   Future<void> _addNewProduct(String barcode) async {
+    print('DEBUG: _addNewProduct called with barcode: $barcode');
     try {
+      print('DEBUG: Fetching active Odoo client');
       final client = await SessionManager.getActiveClient();
       if (client == null) {
+        print('DEBUG: No active Odoo session found');
         throw Exception('No active Odoo session');
       }
+      print('DEBUG: Odoo client obtained successfully');
 
+      print('DEBUG: Searching for product with barcode: $barcode');
       final productResult = await client.callKw({
         'model': 'product.product',
         'method': 'search_read',
@@ -686,18 +758,38 @@ class _PickingPageState extends State<PickingPage>
         ],
         'kwargs': {},
       });
+      print('DEBUG: Product search result: $productResult');
 
       if (productResult.isEmpty) {
+        print('DEBUG: No product found for barcode: $barcode');
         _showSnackBar('No product found with barcode $barcode', Colors.red);
         return;
       }
 
       final product = productResult[0];
       final productId = product['id'] as int;
-      final pickingId = widget.picking['id'] as int;
-      final locationId = widget.picking['location_id'][0] as int;
-      final locationDestId = widget.picking['location_dest_id'][0] as int;
+      final pickingId = widget.picking['id'] as int?;
+      if (pickingId == null) {
+        print('DEBUG: Picking ID is null');
+        _showSnackBar('Cannot add product: picking ID is null', Colors.red);
+        return;
+      }
 
+      if (defaultLocationId == null || defaultLocationDestId == null) {
+        print('DEBUG: Location IDs are not set');
+        _showSnackBar(
+            'Cannot add product: location IDs are not set', Colors.red);
+        return;
+      }
+
+      final locationId = defaultLocationId!;
+      final locationDestId = defaultLocationDestId!;
+
+      print('DEBUG: Product found - ID: $productId, Name: ${product['name']}');
+      print(
+          'DEBUG: Picking ID: $pickingId, Location ID: $locationId, Destination Location ID: $locationDestId');
+
+      print('DEBUG: Creating move line for product ID: $productId');
       final moveLineId = await widget.provider.createMoveLine(
         pickingId,
         productId,
@@ -705,25 +797,36 @@ class _PickingPageState extends State<PickingPage>
         locationId,
         locationDestId,
       );
+      print('DEBUG: Move line creation result: $moveLineId');
 
       if (moveLineId != null) {
+        print(
+            'DEBUG: Move line created successfully, reinitializing picking data');
         await _initializePickingData();
+        print('DEBUG: Picking data reinitialized');
         _showSnackBar('Product added successfully', Colors.green);
       } else {
+        print('DEBUG: Failed to create move line');
         _showSnackBar('Failed to add product', Colors.red);
       }
     } catch (e) {
+      print('DEBUG: Error in _addNewProduct: $e');
       _showSnackBar('Error adding product: $e', Colors.red);
     }
   }
 
   Future<void> _addNewProductById(int productId) async {
+    print('DEBUG: _addNewProductById called with productId: $productId');
     try {
+      print('DEBUG: Fetching active Odoo client');
       final client = await SessionManager.getActiveClient();
       if (client == null) {
+        print('DEBUG: No active Odoo session found');
         throw Exception('No active Odoo session');
       }
+      print('DEBUG: Odoo client obtained successfully');
 
+      print('DEBUG: Searching for product with ID: $productId');
       final productResult = await client.callKw({
         'model': 'product.product',
         'method': 'search_read',
@@ -735,16 +838,36 @@ class _PickingPageState extends State<PickingPage>
         ],
         'kwargs': {},
       });
+      print('DEBUG: Product search result: $productResult');
 
       if (productResult.isEmpty) {
+        print('DEBUG: No product found for ID: $productId');
         _showSnackBar('Product not found', Colors.red);
         return;
       }
 
-      final pickingId = widget.picking['id'] as int;
-      final locationId = widget.picking['location_id'][0] as int;
-      final locationDestId = widget.picking['location_dest_id'][0] as int;
+      final pickingId = widget.picking['id'] as int?;
+      if (pickingId == null) {
+        print('DEBUG: Picking ID is null');
+        _showSnackBar('Cannot add product: picking ID is null', Colors.red);
+        return;
+      }
 
+      if (defaultLocationId == null || defaultLocationDestId == null) {
+        print('DEBUG: Location IDs are not set');
+        _showSnackBar(
+            'Cannot add product: location IDs are not set', Colors.red);
+        return;
+      }
+
+      final locationId = defaultLocationId!;
+      final locationDestId = defaultLocationDestId!;
+
+      print('DEBUG: Product found - Name: ${productResult[0]['name']}');
+      print(
+          'DEBUG: Picking ID: $pickingId, Location ID: $locationId, Destination Location ID: $locationDestId');
+
+      print('DEBUG: Creating move line for product ID: $productId');
       final moveLineId = await widget.provider.createMoveLine(
         pickingId,
         productId,
@@ -752,14 +875,20 @@ class _PickingPageState extends State<PickingPage>
         locationId,
         locationDestId,
       );
+      print('DEBUG: Move line creation result: $moveLineId');
 
       if (moveLineId != null) {
+        print(
+            'DEBUG: Move line created successfully, reinitializing picking data');
         await _initializePickingData();
+        print('DEBUG: Picking data reinitialized');
         _showSnackBar('Product added successfully', Colors.green);
       } else {
+        print('DEBUG: Failed to create move line');
         _showSnackBar('Failed to add product', Colors.red);
       }
     } catch (e) {
+      print('DEBUG: Error in _addNewProductById: $e');
       _showSnackBar('Error adding product: $e', Colors.red);
     }
   }
@@ -2095,20 +2224,6 @@ class _PickingPageState extends State<PickingPage>
                     icon: Icons.location_on_outlined,
                   ),
                   buildInfoRow(
-                    'Source Location',
-                    pickingData['location_id'] is List<dynamic>
-                        ? pickingData['location_id'][1] as String
-                        : 'N/A',
-                    icon: Icons.home_outlined,
-                  ),
-                  buildInfoRow(
-                    'Destination',
-                    pickingData['location_dest_id'] is List<dynamic>
-                        ? pickingData['location_dest_id'][1] as String
-                        : 'N/A',
-                    icon: Icons.place_outlined,
-                  ),
-                  buildInfoRow(
                     'Scheduled Date',
                     formatDate(pickingData['scheduled_date']),
                     icon: Icons.calendar_today_outlined,
@@ -2119,6 +2234,18 @@ class _PickingPageState extends State<PickingPage>
                         ? pickingData['partner_id'][1] as String
                         : 'N/A',
                     icon: Icons.business_outlined,
+                  ),
+                  buildInfoRow(
+                    'Picking Type',
+                    pickingData['picking_type_id'] is List<dynamic>
+                        ? pickingData['picking_type_id'][1] as String
+                        : 'N/A',
+                    icon: Icons.list_alt_outlined,
+                  ),
+                  buildInfoRow(
+                    'State',
+                    pickingData['state'] ?? 'N/A',
+                    icon: Icons.check_circle_outline,
                   ),
                   if (pickingData['note'] != null &&
                       pickingData['note'].toString().isNotEmpty)
@@ -2201,42 +2328,42 @@ class _PickingPageState extends State<PickingPage>
               ),
             ),
           ),
-          Card(
-            elevation: 1,
-            margin: const EdgeInsets.only(top: 8.0),
-            shape:
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            child: Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Additional Information',
-                    style: textTheme.titleMedium
-                        ?.copyWith(fontWeight: FontWeight.bold),
-                  ),
-                  const Divider(height: 24),
-                  buildInfoRow(
-                    'Created On',
-                    formatDate(pickingData['create_date']),
-                    icon: Icons.access_time_outlined,
-                  ),
-                  buildInfoRow(
-                    'Last Modified',
-                    formatDate(pickingData['write_date']),
-                    icon: Icons.update_outlined,
-                  ),
-                  if (pickingData['priority'] != null)
-                    buildInfoRow(
-                      'Priority',
-                      formatPriority(pickingData['priority']),
-                      icon: Icons.flag_outlined,
-                    ),
-                ],
-              ),
-            ),
-          ),
+          // Card(
+          //   elevation: 1,
+          //   margin: const EdgeInsets.only(top: 8.0),
+          //   shape:
+          //       RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          //   child: Padding(
+          //     padding: const EdgeInsets.all(16.0),
+          //     child: Column(
+          //       crossAxisAlignment: CrossAxisAlignment.start,
+          //       children: [
+          //         Text(
+          //           'Additional Information',
+          //           style: textTheme.titleMedium
+          //               ?.copyWith(fontWeight: FontWeight.bold),
+          //         ),
+          //         const Divider(height: 24),
+          //         buildInfoRow(
+          //           'Created On',
+          //           formatDate(pickingData['create_date']),
+          //           icon: Icons.access_time_outlined,
+          //         ),
+          //         buildInfoRow(
+          //           'Last Modified',
+          //           formatDate(pickingData['write_date']),
+          //           icon: Icons.update_outlined,
+          //         ),
+          //         if (pickingData['priority'] != null)
+          //           buildInfoRow(
+          //             'Priority',
+          //             formatPriority(pickingData['priority']),
+          //             icon: Icons.flag_outlined,
+          //           ),
+          //       ],
+          //     ),
+          //   ),
+          // ),
         ],
       ),
     );
@@ -2412,11 +2539,8 @@ class _PickingPageState extends State<PickingPage>
 
   Widget buildToDoTab() {
     if (isProcessing) {
-      return const Center(
-        child: CircularProgressIndicator(),
-      );
+      return buildToDoTabShimmer(context);
     }
-
     if (errorMessage != null) {
       return Center(
         child: Container(
@@ -2667,7 +2791,7 @@ class _PickingPageState extends State<PickingPage>
                   }).toList()),
                   builder: (context, snapshot) {
                     if (snapshot.connectionState == ConnectionState.waiting) {
-                      return const Center(child: CircularProgressIndicator());
+                      return buildToDoTabShimmer(context);
                     }
                     if (snapshot.hasError) {
                       return const Center(
@@ -2695,7 +2819,7 @@ class _PickingPageState extends State<PickingPage>
         ),
         if (!isProcessing && isInitialized)
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 40),
             child: Stack(
               clipBehavior: Clip.none,
               children: [
@@ -2812,7 +2936,8 @@ class _PickingPageState extends State<PickingPage>
         if (line['id'] == null) return true; // Skip lines without IDs
         final orderedQty = line['ordered_qty'] as double;
         final pickedQty = pickedQuantities[line['id'] as int] ?? 0.0;
-        debugPrint('Line ${line['id']}: Ordered: $orderedQty, Picked: $pickedQty');
+        debugPrint(
+            'Line ${line['id']}: Ordered: $orderedQty, Picked: $pickedQty');
         return pickedQty >= orderedQty;
       });
 
@@ -2869,7 +2994,9 @@ class _PickingPageState extends State<PickingPage>
           await client.callKw({
             'model': 'stock.backorder.confirmation',
             'method': 'process',
-            'args': [[wizardId]],
+            'args': [
+              [wizardId]
+            ],
             'kwargs': {},
           });
           _showSnackBar('Backorder created successfully', Colors.green);
@@ -2877,7 +3004,9 @@ class _PickingPageState extends State<PickingPage>
           await client.callKw({
             'model': 'stock.backorder.confirmation',
             'method': 'process_cancel_backorder',
-            'args': [[wizardId]],
+            'args': [
+              [wizardId]
+            ],
             'kwargs': {},
           });
           _showSnackBar('Picking reserved without backorder', Colors.green);
@@ -2888,8 +3017,10 @@ class _PickingPageState extends State<PickingPage>
 
       // Step 5: Refresh picking and order details
       if (mounted) {
-        final pickingDetails = await widget.provider.fetchPickingDetails(pickingId);
-        final provider = Provider.of<SaleOrderDetailProvider>(context, listen: false);
+        final pickingDetails =
+            await widget.provider.fetchPickingDetails(pickingId);
+        final provider =
+            Provider.of<SaleOrderDetailProvider>(context, listen: false);
         await provider.fetchOrderDetails();
         setState(() {
           widget.picking['state'] = pickingDetails['state'];
@@ -2910,6 +3041,7 @@ class _PickingPageState extends State<PickingPage>
       }
     }
   }
+
   Future<String> _getAttributeNames(
       BuildContext context, List<int> attributeValueIds) async {
     try {
@@ -3417,7 +3549,7 @@ class _PickingPageState extends State<PickingPage>
 
   Widget _buildDoneTab() {
     if (isProcessing) {
-      return const Center(child: CircularProgressIndicator());
+      return buildDoneTabShimmer(context);
     }
 
     if (errorMessage != null) {
@@ -3964,24 +4096,27 @@ class _PickingPageState extends State<PickingPage>
       key: _scaffoldKey,
       appBar: AppBar(
         leading: IconButton(
-            onPressed: () {
-              Navigator.pop(context);
-            },
-            icon: Icon(
-              Icons.arrow_back,
-              color: Colors.white,
-            )),
+          onPressed: () {
+            Navigator.pop(context);
+          },
+          icon: const Icon(
+            Icons.arrow_back,
+            color: Colors.white,
+          ),
+        ),
         backgroundColor: primaryColor,
         title: Text(
           widget.picking['name'] ?? 'Picking',
-          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+          style: const TextStyle(
+            color: Colors.white,
+          ),
         ),
         bottom: TabBar(
           controller: _tabController,
           labelColor: Colors.white,
           unselectedLabelColor: Colors.white70,
           indicatorColor: Colors.white,
-          labelStyle: TextStyle(fontWeight: FontWeight.w600),
+          labelStyle: const TextStyle(fontWeight: FontWeight.w600),
           tabs: const [
             Tab(icon: Icon(Icons.description_outlined), text: 'Details'),
             Tab(icon: Icon(Icons.pending_actions_outlined), text: 'To Do'),
@@ -4000,7 +4135,7 @@ class _PickingPageState extends State<PickingPage>
         ],
       ),
       body: isProcessing && !isInitialized
-          ? const Center(child: CircularProgressIndicator())
+          ? _getShimmerForCurrentTab(context)
           : TabBarView(
               controller: _tabController,
               children: [
@@ -4011,4 +4146,703 @@ class _PickingPageState extends State<PickingPage>
             ),
     );
   }
+
+  Widget _getShimmerForCurrentTab(BuildContext context) {
+    switch (_tabController.index) {
+      case 0:
+        return buildDetailsTabShimmer(context);
+      case 1:
+        return buildToDoTabShimmer(context);
+      case 2:
+        return buildDoneTabShimmer(context);
+      default:
+        return buildToDoTabShimmer(context);
+    }
+  }
+}
+
+Widget buildDetailsTabShimmer(BuildContext context) {
+  return Shimmer.fromColors(
+    baseColor: Colors.grey[300]!,
+    highlightColor: Colors.grey[100]!,
+    child: SingleChildScrollView(
+      padding: const EdgeInsets.all(16.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // First Card: Delivery Order Info
+          Card(
+            elevation: 1,
+            margin: const EdgeInsets.only(bottom: 16.0),
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            child: Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Title and Order Number
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Container(
+                        width: 150,
+                        height: 20,
+                        decoration: BoxDecoration(
+                          color: Colors.grey[300],
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                      ),
+                      Container(
+                        width: 80,
+                        height: 30,
+                        decoration: BoxDecoration(
+                          color: Colors.grey[300],
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const Divider(height: 24),
+                  // Status Row
+                  Container(
+                    padding: const EdgeInsets.all(12.0),
+                    decoration: BoxDecoration(
+                      color: Colors.grey[200],
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 12,
+                          height: 12,
+                          decoration: const BoxDecoration(
+                            color: Colors.grey,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Container(
+                          width: 200,
+                          height: 16,
+                          decoration: BoxDecoration(
+                            color: Colors.grey[300],
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  // Info Rows (e.g., Origin, Scheduled Date, etc.)
+                  ...List.generate(
+                    5,
+                    (index) => Padding(
+                      padding: const EdgeInsets.only(bottom: 12.0),
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 18,
+                            height: 18,
+                            decoration: BoxDecoration(
+                              color: Colors.grey[300],
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Container(
+                            width: 100,
+                            height: 16,
+                            decoration: BoxDecoration(
+                              color: Colors.grey[300],
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Container(
+                            width: 150,
+                            height: 16,
+                            decoration: BoxDecoration(
+                              color: Colors.grey[300],
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          // Second Card: Ordered Products
+          Card(
+            elevation: 1,
+            margin: const EdgeInsets.only(bottom: 16.0),
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            child: Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Title
+                  Row(
+                    children: [
+                      Container(
+                        width: 24,
+                        height: 24,
+                        decoration: BoxDecoration(
+                          color: Colors.grey[300],
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Container(
+                        width: 150,
+                        height: 18,
+                        decoration: BoxDecoration(
+                          color: Colors.grey[300],
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const Divider(height: 24),
+                  // Product List
+                  ...List.generate(
+                    3,
+                    (index) => Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 8.0),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Container(
+                            width: double.infinity,
+                            height: 16,
+                            decoration: BoxDecoration(
+                              color: Colors.grey[300],
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Container(
+                            width: 100,
+                            height: 14,
+                            decoration: BoxDecoration(
+                              color: Colors.grey[300],
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Container(
+                            width: 100,
+                            height: 14,
+                            decoration: BoxDecoration(
+                              color: Colors.grey[300],
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+Widget buildToDoTabShimmer(BuildContext context) {
+  return Shimmer.fromColors(
+    baseColor: Colors.grey[300]!,
+    highlightColor: Colors.grey[100]!,
+    child: Column(
+      children: [
+        // Search Bar and Icons
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          child: Column(
+            children: [
+              Container(
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(8),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.05),
+                      blurRadius: 10,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Container(
+                        height: 48,
+                        decoration: BoxDecoration(
+                          color: Colors.grey[300],
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
+                    ),
+                    Container(
+                      height: 30,
+                      width: 1,
+                      color: Colors.grey.withOpacity(0.3),
+                      margin: const EdgeInsets.symmetric(horizontal: 8),
+                    ),
+                    Container(
+                      width: 40,
+                      height: 40,
+                      decoration: BoxDecoration(
+                        color: Colors.grey[300],
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Container(
+                      width: 40,
+                      height: 40,
+                      decoration: BoxDecoration(
+                        color: Colors.grey[300],
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              // Scan Message Placeholder
+              Container(
+                width: double.infinity,
+                margin: const EdgeInsets.only(top: 12),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                decoration: BoxDecoration(
+                  color: Colors.grey[200],
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 20,
+                      height: 20,
+                      decoration: BoxDecoration(
+                        color: Colors.grey[300],
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Container(
+                      width: 200,
+                      height: 16,
+                      decoration: BoxDecoration(
+                        color: Colors.grey[300],
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        // Product Cards
+        Expanded(
+          child: ListView.builder(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            itemCount: 3,
+            itemBuilder: (context, index) {
+              return Card(
+                elevation: 2,
+                margin: const EdgeInsets.only(bottom: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  side: BorderSide(color: Colors.grey.withOpacity(0.2)),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // Product Icon
+                          Container(
+                            width: 48,
+                            height: 48,
+                            decoration: BoxDecoration(
+                              color: Colors.grey[300],
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                          ),
+                          const SizedBox(width: 16),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                // Product Name
+                                Container(
+                                  width: double.infinity,
+                                  height: 16,
+                                  decoration: BoxDecoration(
+                                    color: Colors.grey[300],
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                // SKU
+                                Container(
+                                  width: 100,
+                                  height: 12,
+                                  decoration: BoxDecoration(
+                                    color: Colors.grey[300],
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                // Barcode
+                                Container(
+                                  width: 120,
+                                  height: 12,
+                                  decoration: BoxDecoration(
+                                    color: Colors.grey[300],
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                // Variant Attributes
+                                Container(
+                                  width: 150,
+                                  height: 12,
+                                  decoration: BoxDecoration(
+                                    color: Colors.grey[300],
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      // Location Container
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: Colors.grey[100],
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Row(
+                          children: [
+                            Container(
+                              width: 16,
+                              height: 16,
+                              decoration: BoxDecoration(
+                                color: Colors.grey[300],
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                            ),
+                            const SizedBox(width: 4),
+                            Expanded(
+                              child: Container(
+                                height: 13,
+                                decoration: BoxDecoration(
+                                  color: Colors.grey[300],
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      // Progress Section
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Container(
+                            width: 120,
+                            height: 13,
+                            decoration: BoxDecoration(
+                              color: Colors.grey[300],
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                          ),
+                          Container(
+                            width: 40,
+                            height: 13,
+                            decoration: BoxDecoration(
+                              color: Colors.grey[300],
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      // Progress Bar
+                      Container(
+                        height: 8,
+                        decoration: BoxDecoration(
+                          color: Colors.grey[300],
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      // Action Buttons
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          Container(
+                            width: 80,
+                            height: 32,
+                            decoration: BoxDecoration(
+                              color: Colors.grey[300],
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Container(
+                            width: 80,
+                            height: 32,
+                            decoration: BoxDecoration(
+                              color: Colors.grey[300],
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Container(
+                            width: 80,
+                            height: 32,
+                            decoration: BoxDecoration(
+                              color: Colors.grey[300],
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+        // Validate Button
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 40),
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Container(
+                height: 56,
+                decoration: BoxDecoration(
+                  color: Colors.grey[300],
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+              Positioned(
+                right: -6,
+                top: -8,
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: Colors.grey[300],
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Container(
+                    width: 20,
+                    height: 12,
+                    decoration: BoxDecoration(
+                      color: Colors.grey[300],
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+Widget buildDoneTabShimmer(BuildContext context) {
+  return Shimmer.fromColors(
+    baseColor: Colors.grey[300]!,
+    highlightColor: Colors.grey[100]!,
+    child: Column(
+      children: [
+        // Search Bar
+        Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Container(
+            height: 56,
+            decoration: BoxDecoration(
+              color: Colors.grey[300],
+              borderRadius: BorderRadius.circular(8),
+            ),
+          ),
+        ),
+        // Product Cards
+        Expanded(
+          child: ListView.builder(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            itemCount: 3,
+            itemBuilder: (context, index) {
+              return Card(
+                elevation: 2,
+                margin: const EdgeInsets.only(bottom: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  side: BorderSide(color: Colors.grey.withOpacity(0.2)),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // Product Icon
+                          Container(
+                            width: 48,
+                            height: 48,
+                            decoration: BoxDecoration(
+                              color: Colors.grey[300],
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                          ),
+                          const SizedBox(width: 16),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                // Product Name
+                                Container(
+                                  width: double.infinity,
+                                  height: 16,
+                                  decoration: BoxDecoration(
+                                    color: Colors.grey[300],
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                // SKU
+                                Container(
+                                  width: 100,
+                                  height: 12,
+                                  decoration: BoxDecoration(
+                                    color: Colors.grey[300],
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                // Barcode
+                                Container(
+                                  width: 120,
+                                  height: 12,
+                                  decoration: BoxDecoration(
+                                    color: Colors.grey[300],
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                // Variant Attributes
+                                Container(
+                                  width: 150,
+                                  height: 12,
+                                  decoration: BoxDecoration(
+                                    color: Colors.grey[300],
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      // Location Container
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: Colors.grey[100],
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Row(
+                          children: [
+                            Container(
+                              width: 16,
+                              height: 16,
+                              decoration: BoxDecoration(
+                                color: Colors.grey[300],
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                            ),
+                            const SizedBox(width: 4),
+                            Expanded(
+                              child: Container(
+                                height: 13,
+                                decoration: BoxDecoration(
+                                  color: Colors.grey[300],
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      // Progress Section
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Container(
+                            width: 120,
+                            height: 13,
+                            decoration: BoxDecoration(
+                              color: Colors.grey[300],
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                          ),
+                          Container(
+                            width: 40,
+                            height: 13,
+                            decoration: BoxDecoration(
+                              color: Colors.grey[300],
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      // Progress Bar
+                      Container(
+                        height: 8,
+                        decoration: BoxDecoration(
+                          color: Colors.grey[300],
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    ),
+  );
 }

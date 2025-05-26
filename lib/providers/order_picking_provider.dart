@@ -10,75 +10,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../authentication/cyllo_session_model.dart';
 import 'dart:developer' as developer;
 
-import '../assets/widgets and consts/create_customer_page.dart';
+import '../secondary_pages/create_customer_page.dart';
 import '../assets/widgets and consts/page_transition.dart';
 import '../secondary_pages/1/products.dart';
-
-class LogoutButton extends StatelessWidget {
-  const LogoutButton({Key? key}) : super(key: key);
-
-  @override
-  Widget build(BuildContext context) {
-    debugPrint('LogoutButton: Building with context $context');
-    return IconButton(
-      tooltip: 'Logout Button',
-      onPressed: () {
-        debugPrint('LogoutButton: onPressed triggered');
-        _confirmLogout(context);
-      },
-      icon: const Icon(
-        Icons.login_outlined,
-        color: Colors.white,
-      ),
-    );
-  }
-
-  void _confirmLogout(BuildContext context) {
-    debugPrint(
-        'LogoutButton: Showing confirmation dialog with context $context');
-    showDialog(
-      context: context,
-      barrierDismissible: true,
-      builder: (BuildContext dialogContext) {
-        debugPrint(
-            'LogoutButton: Dialog built with dialogContext $dialogContext');
-        return AlertDialog(
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16.0)),
-          elevation: 8.0,
-          title: const Text(
-            'Confirm Logout',
-            style: TextStyle(fontWeight: FontWeight.bold),
-          ),
-          content: const Text('Are you sure you want to log out?'),
-          actions: [
-            TextButton(
-              onPressed: () {
-                debugPrint('LogoutButton: Cancel button pressed');
-                Navigator.of(dialogContext).pop();
-              },
-              child: const Text('Cancel'),
-            ),
-            TextButton(
-              onPressed: () async {
-                debugPrint('LogoutButton: Logout button pressed');
-                Navigator.of(dialogContext).pop(); // Close dialog
-                debugPrint('LogoutButton: Confirmation dialog popped');
-                try {
-                  await LogoutService.logout(context);
-                  debugPrint('LogoutButton: LogoutService.logout completed');
-                } catch (e) {
-                  debugPrint('LogoutButton: Error in LogoutService.logout: $e');
-                }
-              },
-              child: const Text('Logout'),
-            ),
-          ],
-        );
-      },
-    );
-  }
-}
 
 class LogoutService {
   static Future<void> logout(BuildContext context) async {
@@ -90,11 +24,9 @@ class LogoutService {
       return;
     }
 
-    // Store the dialog context for popping
     BuildContext? dialogContext;
 
     try {
-      // Show improved loading dialog
       debugPrint('LogoutService: Showing loading dialog');
       showDialog(
         context: context,
@@ -146,17 +78,14 @@ class LogoutService {
         throw e;
       });
 
-      // Faster loading experience with simulated minimum duration
       Future<void> minLoadingTime =
-      Future.delayed(const Duration(milliseconds: 800));
-
-      // Start SharedPreferences clearing
+          Future.delayed(const Duration(milliseconds: 1000));
       debugPrint('LogoutService: Clearing SharedPreferences');
       final prefs = await SharedPreferences.getInstance();
       try {
         await Future.wait([
           prefs.remove('url').then(
-                  (success) => debugPrint('LogoutService: Removed url: $success')),
+              (success) => debugPrint('LogoutService: Removed url: $success')),
           prefs.remove('isLoggedIn').then((success) =>
               debugPrint('LogoutService: Removed isLoggedIn: $success')),
           prefs.remove('userName').then((success) =>
@@ -186,26 +115,23 @@ class LogoutService {
           prefs.remove('selectedDatabase').then((success) =>
               debugPrint('LogoutService: Removed selectedDatabase: $success')),
         ]);
+        await prefs.setBool('hasCheckedModules', false); // Reset flag
         debugPrint('LogoutService: All SharedPreferences cleared successfully');
       } catch (e) {
         debugPrint('LogoutService: Error clearing SharedPreferences: $e');
         rethrow;
       }
 
-      // Clear DataSyncManager cache
       debugPrint('LogoutService: Clearing DataSyncManager cache');
       try {
         await DataSyncManager().clearCache();
         debugPrint('LogoutService: DataSyncManager cache cleared successfully');
       } catch (e) {
         debugPrint('LogoutService: Error clearing DataSyncManager cache: $e');
-        // Optionally add to error handling, but don't rethrow to continue logout
       }
 
-      // Wait for minimum loading time to complete
       await minLoadingTime;
 
-      // Close the loading dialog
       if (dialogContext != null && dialogContext!.mounted) {
         debugPrint(
             'LogoutService: Popping loading dialog with dialogContext $dialogContext');
@@ -220,14 +146,13 @@ class LogoutService {
             'LogoutService: dialogContext not available or not mounted, skipping pop');
       }
 
-      // Navigate to Login screen
       if (context.mounted) {
         debugPrint('LogoutService: Navigating to Login screen');
         try {
           await Navigator.pushAndRemoveUntil(
             context,
-            SlidingPageTransitionRL(page: Login()), // Ensure Login is defined
-                (Route<dynamic> route) => false,
+            SlidingPageTransitionRL(page: Login()),
+            (Route<dynamic> route) => false,
           );
           debugPrint('LogoutService: Navigation to Login completed');
         } catch (e) {
@@ -238,7 +163,6 @@ class LogoutService {
         debugPrint('LogoutService: Context not mounted, skipping navigation');
       }
 
-      // Show success message
       if (context.mounted) {
         debugPrint('LogoutService: Showing success snackbar');
         try {
@@ -261,7 +185,6 @@ class LogoutService {
         debugPrint('LogoutService: Context not mounted, skipping snackbar');
       }
     } catch (e, stackTrace) {
-      // Close the loading dialog if there's an error
       if (dialogContext != null && dialogContext!.mounted) {
         debugPrint('LogoutService: Error occurred, popping loading dialog');
         try {
@@ -273,7 +196,6 @@ class LogoutService {
         }
       }
 
-      // Show error message
       if (context.mounted) {
         debugPrint('LogoutService: Showing error snackbar');
         try {
@@ -289,7 +211,7 @@ class LogoutService {
               backgroundColor: Colors.red,
               behavior: SnackBarBehavior.floating,
               margin:
-              const EdgeInsets.only(bottom: 20.0, left: 20.0, right: 20.0),
+                  const EdgeInsets.only(bottom: 20.0, left: 20.0, right: 20.0),
               shape: const RoundedRectangleBorder(
                 borderRadius: BorderRadius.all(Radius.circular(8.0)),
               ),
@@ -309,6 +231,7 @@ class LogoutService {
     }
   }
 }
+
 const Color primaryColor = Color(0xFFA12424);
 final Color neutralGrey = const Color(0xFF757575);
 final Color backgroundColor = const Color(0xFFF5F5F5);
@@ -397,14 +320,10 @@ class OrderPickingProvider with ChangeNotifier {
             shopLocationController.text = newCustomer.city!;
             contactPersonController.text = newCustomer.name;
             contactNumberController.text = newCustomer.phone!;
-
-            // Note: The SnackBar is now shown in the CreateCustomerPage after successful creation
           },
         ),
       ),
     ).then((Customer? newCustomer) {
-      // This code executes when the user returns from the CreateCustomerPage
-      // If a customer was created and returned, update the form fields
       if (newCustomer != null) {
         addCustomer(newCustomer);
 
@@ -463,11 +382,7 @@ class OrderPickingProvider with ChangeNotifier {
       _lastSequenceNumber++;
       final sequencePart = _lastSequenceNumber.toString().padLeft(5, '0');
       newOrderId = '$_orderPrefix$sequencePart';
-
-      // developer.log('Generated order ID attempt #$attempt: $newOrderId');
-
       final exists = await _checkOrderIdExists(client, newOrderId);
-      // developer.log('Order ID $newOrderId exists in Odoo: $exists');
 
       if (exists) {
         attempt++;
@@ -479,20 +394,15 @@ class OrderPickingProvider with ChangeNotifier {
 
     _currentOrderId = newOrderId;
     await _saveLastSequenceNumber();
-    // developer.log('Final generated order ID: $_currentOrderId');
     notifyListeners();
     return _currentOrderId!;
   }
 
   Future<bool> _checkOrderIdExists(dynamic client, String orderId) async {
     try {
-      // developer.log('Checking if order ID exists: $orderId');
-
-      // Try the standard domain format first
       final domain = [
         ['name', '=', orderId]
       ];
-      // developer.log('Attempting with domain: $domain');
 
       final result = await client.callKw({
         'model': 'sale.order',
@@ -501,14 +411,14 @@ class OrderPickingProvider with ChangeNotifier {
         'kwargs': {},
       });
 
-      // developer.log(
-      //     'Odoo search_count result for $orderId: $result (type: ${result.runtimeType})');
+      developer.log(
+          'Odoo search_count result for $orderId: $result (type: ${result.runtimeType})');
 
       final count =
           (result is int) ? result : int.tryParse(result.toString()) ?? 0;
       return count > 0;
     } catch (e) {
-      // developer.log('Error with search_count for $orderId: $e', error: e);
+      developer.log('Error with search_count for $orderId: $e', error: e);
 
       try {
         developer.log('Falling back to search method for $orderId');
@@ -523,8 +433,8 @@ class OrderPickingProvider with ChangeNotifier {
           'kwargs': {},
         });
 
-        // developer.log(
-        //     'Odoo search result for $orderId: $searchResult (type: ${searchResult.runtimeType})');
+        developer.log(
+            'Odoo search result for $orderId: $searchResult (type: ${searchResult.runtimeType})');
         return searchResult is List && searchResult.isNotEmpty;
       } catch (searchError) {
         developer.log('Fallback search failed for $orderId: $searchError',
@@ -602,7 +512,7 @@ class OrderPickingProvider with ChangeNotifier {
             'parent_id',
             'partner_latitude',
             'partner_longitude',
-            'image_1920', // Ensure this field is fetched
+            'image_1920',
           ],
         },
       });
@@ -621,12 +531,9 @@ class OrderPickingProvider with ChangeNotifier {
             }
 
             try {
-              // Convert Map<dynamic, dynamic> to Map<String, dynamic>
               final Map<String, dynamic> typedCustomerData =
-                  customerData.cast<String, dynamic>() ??
-                      Map<String, dynamic>.from(customerData);
-              return Customer.fromJson(
-                  typedCustomerData); // Use the fromJson factory method
+                  customerData.cast<String, dynamic>();
+              return Customer.fromJson(typedCustomerData);
             } catch (e) {
               developer.log("Error mapping customer: $e, Data: $customerData");
               return null;
@@ -655,7 +562,7 @@ class OrderPickingProvider with ChangeNotifier {
         developer.log("Company ID: ${firstCustomer.companyId}");
         developer.log("Latitude: ${firstCustomer.latitude ?? 'N/A'}");
         developer.log("Longitude: ${firstCustomer.longitude ?? 'N/A'}");
-        developer.log("Image URL: ${firstCustomer.imageUrl ?? 'N/A'}");
+        // developer.log("Image URL: ${firstCustomer.imageUrl ?? 'N/A'}");
       }
     } catch (e) {
       developer.log("Error fetching customers: $e");
@@ -737,7 +644,6 @@ class OrderPickingProvider with ChangeNotifier {
 }
 
 extension OrderPickingProviderCache on OrderPickingProvider {
-  // Load customers from cached data
   Future<void> setCustomersFromCache(dynamic cachedCustomers) async {
     try {
       if (cachedCustomers is List) {
@@ -752,7 +658,6 @@ extension OrderPickingProviderCache on OrderPickingProvider {
     }
   }
 
-  // Prepare customers data for caching
   dynamic getCustomersForCache() {
     try {
       return _customers.map((customer) => customer.toJson()).toList();

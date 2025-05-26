@@ -109,17 +109,14 @@ class InvoiceProvider extends ChangeNotifier {
 
       _invoices = List<Map<String, dynamic>>.from(invoices);
       debugPrint('InvoiceProvider: Raw Odoo response length=${invoices.length}');
-
-      // Batch fetch all invoice lines
       final allLineIds = _invoices
           .expand((invoice) => List<int>.from(invoice['invoice_line_ids'] ?? []))
           .toSet()
-          .toList(); // Remove duplicates
+          .toList();
       if (allLineIds.isNotEmpty) {
         final lines = await _fetchInvoiceLines(allLineIds);
         final lineMap = {for (var line in lines) line['id']: line};
 
-        // Assign lines to invoices
         for (var invoice in _invoices) {
           final lineIds = List<int>.from(invoice['invoice_line_ids'] ?? []);
           invoice['line_details'] = lineIds
@@ -133,7 +130,6 @@ class InvoiceProvider extends ChangeNotifier {
         }
       }
 
-      // Check for duplicates
       final invoiceIds = _invoices.map((i) => i['id']).toSet();
       if (invoiceIds.length != _invoices.length) {
         debugPrint('InvoiceProvider: WARNING: Found duplicate invoices, unique IDs=${invoiceIds.length}');
@@ -154,7 +150,6 @@ class InvoiceProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  // New method to fetch lines for a specific invoice
   Future<List<Map<String, dynamic>>> fetchInvoiceLinesForInvoice(int invoiceId) async {
     final invoice = _invoices.firstWhere(
           (i) => i['id'] == invoiceId,
@@ -191,7 +186,6 @@ class InvoiceProvider extends ChangeNotifier {
       return validFields;
     } catch (e) {
       debugPrint('InvoiceProvider: Error fetching fields for $model: $e');
-      // Fallback to requested fields if fields_get fails
       return requestedFields;
     }
   }

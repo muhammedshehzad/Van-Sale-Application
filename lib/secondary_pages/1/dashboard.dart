@@ -88,10 +88,10 @@ class DashboardStats {
   final String topSellingProduct;
   final int visitedCustomers;
   final int remainingCustomers;
-  int scheduledDeliveries; // Changed from late final
-  int inTransitDeliveries; // Changed from late final
-  int delivered; // Changed from late final
-  int delayedDeliveries; // Changed from late final
+  int scheduledDeliveries;
+  int inTransitDeliveries;
+  int delivered;
+  int delayedDeliveries;
 
   DashboardStats({
     required this.todaySales,
@@ -102,10 +102,10 @@ class DashboardStats {
     required this.topSellingProduct,
     required this.visitedCustomers,
     required this.remainingCustomers,
-    this.scheduledDeliveries = 0, // Default to 0
-    this.inTransitDeliveries = 0, // Default to 0
-    this.delivered = 0, // Default to 0
-    this.delayedDeliveries = 0, // Default to 0
+    this.scheduledDeliveries = 0,
+    this.inTransitDeliveries = 0,
+    this.delivered = 0,
+    this.delayedDeliveries = 0,
   });
 
   factory DashboardStats.fromJson(Map<String, dynamic> json) {
@@ -160,7 +160,6 @@ class DashboardStats {
   }
 }
 
-// New model for revenue details
 class RevenueDetails {
   final double todayRevenue;
   final double weeklyRevenue;
@@ -177,7 +176,6 @@ class RevenueDetails {
   });
 }
 
-// Service for Odoo API communication using odoo_rpc
 class OdooService {
   OdooClient? _client;
   CylloSessionModel? _session;
@@ -191,7 +189,7 @@ class OdooService {
         method: 'search_read',
         args: [
           [
-            ['type', '=', 'product'], // Stockable products only
+            ['type', '=', 'product'],
             ['qty_available', '<=', threshold]
           ]
         ],
@@ -260,129 +258,8 @@ class OdooService {
     }
   }
 
-  Future<void> fetchDeliveryStatus(DashboardStats stats) async {
-    try {
-      final today = DateTime.now();
-      final startOfDay =
-          DateTime(today.year, today.month, today.day).toIso8601String();
-      final endOfDay =
-          DateTime(today.year, today.month, today.day + 1).toIso8601String();
-      final now = DateTime.now().toIso8601String();
-
-      // Scheduled Deliveries: Deliveries planned for today, not yet started
-      final scheduled = await callKW(
-        model: 'stock.picking',
-        method: 'search_count',
-        args: [
-          [
-            ['scheduled_date', '>=', startOfDay],
-            ['scheduled_date', '<', endOfDay],
-            [
-              'state',
-              'in',
-              ['confirmed', 'assigned']
-            ],
-          ]
-        ],
-      );
-      debugPrint('Scheduled deliveries count: $scheduled');
-
-      // In Transit Deliveries: Deliveries that have started
-      final inTransit = await callKW(
-        model: 'stock.picking',
-        method: 'search_count',
-        args: [
-          [
-            ['scheduled_date', '>=', startOfDay],
-            ['scheduled_date', '<', endOfDay],
-            ['state', '=', 'assigned'], // Replace with 'in_progress' if custom
-          ]
-        ],
-      );
-      debugPrint('In-transit deliveries count: $inTransit');
-
-      // Delivered: Deliveries completed today
-      final delivered = await callKW(
-        model: 'stock.picking',
-        method: 'search_count',
-        args: [
-          [
-            ['date_done', '>=', startOfDay],
-            ['date_done', '<', endOfDay],
-            ['state', '=', 'done'],
-          ]
-        ],
-      );
-      debugPrint('Delivered count: $delivered');
-
-      // Delayed Deliveries: Scheduled deliveries not completed and past due
-      final delayed = await callKW(
-        model: 'stock.picking',
-        method: 'search_count',
-        args: [
-          [
-            ['scheduled_date', '>=', startOfDay],
-            ['scheduled_date', '<', now],
-            [
-              'state',
-              'in',
-              ['confirmed', 'assigned']
-            ],
-          ]
-        ],
-      );
-      debugPrint('Delayed deliveries count: $delayed');
-
-      // Assign values to stats
-      stats.scheduledDeliveries = scheduled is int ? scheduled : 0;
-      stats.inTransitDeliveries = inTransit is int ? inTransit : 0;
-      stats.delivered = delivered is int ? delivered : 0;
-      stats.delayedDeliveries = delayed is int ? delayed : 0;
-
-      debugPrint('Delivery Status Updated: '
-          'Scheduled: ${stats.scheduledDeliveries}, '
-          'In Transit: ${stats.inTransitDeliveries}, '
-          'Delivered: ${stats.delivered}, '
-          'Delayed: ${stats.delayedDeliveries}');
-    } catch (e) {
-      debugPrint('Error fetching delivery status: $e');
-      // Only reset fields if they haven't been set
-      stats.scheduledDeliveries = stats.scheduledDeliveries;
-      stats.inTransitDeliveries = stats.inTransitDeliveries;
-      stats.delivered = stats.delivered;
-      stats.delayedDeliveries = stats.delayedDeliveries;
-    }
-  }
-
-  Future<List<Customer>> getAllCustomers() async {
-    try {
-      final result = await callKW(
-        model: 'res.partner',
-        method: 'search_read',
-        args: [
-          [
-            ['is_company', '=', true]
-          ]
-        ],
-        kwargs: {
-          'fields': ['id', 'name', 'email', 'phone'],
-        },
-      );
-      if (result is List) {
-        return result.where((item) => item is Map<String, dynamic>).map((json) {
-          return Customer.fromJson(json as Map<String, dynamic>);
-        }).toList();
-      }
-      return [];
-    } catch (e) {
-      debugPrint('Error fetching customers: $e');
-      return [];
-    }
-  }
-
   Future<bool> initFromStorage() async {
     try {
-      // Add a 10-second timeout for session initialization
       _session = await SessionManager.getCurrentSession().timeout(
         const Duration(seconds: 10),
         onTimeout: () {
@@ -396,7 +273,6 @@ class OdooService {
         return false;
       }
 
-      // Create client with timeout
       _client = await _session!.createClient().timeout(
         const Duration(seconds: 10),
         onTimeout: () {
@@ -441,8 +317,6 @@ class OdooService {
       final endOfDay = startOfDay.add(Duration(days: 1));
       final startOfWeek = today.subtract(Duration(days: today.weekday - 1));
       final endOfWeek = startOfWeek.add(Duration(days: 7));
-
-      // Daily sales
       final salesResult = await callKW(
         model: 'sale.order',
         method: 'search_read',
@@ -455,6 +329,7 @@ class OdooService {
               'in',
               ['sale', 'done']
             ],
+            ['name', '=ilike', 'S%'], // Add filter for name starting with 'S'
           ]
         ],
         kwargs: {
@@ -462,7 +337,6 @@ class OdooService {
         },
       );
 
-      // Pending deliveries
       final pendingDeliveriesResult = await callKW(
         model: 'sale.order',
         method: 'search_count',
@@ -479,7 +353,6 @@ class OdooService {
         kwargs: {},
       );
 
-      // Unpaid invoices
       final unpaidInvoicesResult = await callKW(
         model: 'account.move',
         method: 'search_count',
@@ -497,7 +370,6 @@ class OdooService {
         kwargs: {},
       );
 
-      // Weekly sales
       final weeklySalesResult = await callKW(
         model: 'sale.order',
         method: 'search_read',
@@ -510,6 +382,7 @@ class OdooService {
               'in',
               ['sale', 'done']
             ],
+            ['name', '=ilike', 'S%'], // Add filter for name starting with 'S'
           ]
         ],
         kwargs: {
@@ -517,7 +390,6 @@ class OdooService {
         },
       );
 
-      // Visited customers today
       final visitedCustomersResult = await callKW(
         model: 'sale.order',
         method: 'search_read',
@@ -530,6 +402,7 @@ class OdooService {
               'in',
               ['sale', 'done']
             ],
+            ['name', '=ilike', 'S%'], // Add filter for name starting with 'S'
           ]
         ],
         kwargs: {
@@ -537,7 +410,6 @@ class OdooService {
         },
       );
 
-      // Total customers
       final totalCustomersResult = await callKW(
         model: 'res.partner',
         method: 'search_count',
@@ -549,7 +421,6 @@ class OdooService {
         kwargs: {},
       );
 
-      // Parsing results
       int todaySales = 0;
       double totalRevenue = 0.0;
       Set<int> visitedCustomerIds = {};
@@ -594,12 +465,9 @@ class OdooService {
         visitedCustomers: visitedCustomers,
         remainingCustomers: remainingCustomers,
         scheduledDeliveries: 0,
-        // Will be set by fetchDeliveryStatus
         inTransitDeliveries: 0,
-        // Will be set by fetchDeliveryStatus
         delivered: 0,
-        // Will be set by fetchDeliveryStatus
-        delayedDeliveries: 0, // Will be set by fetchDeliveryStatus
+        delayedDeliveries: 0,
       );
     } catch (e) {
       debugPrint('Error fetching dashboard stats: $e');
@@ -614,8 +482,6 @@ class OdooService {
       final endOfDay = startOfDay.add(Duration(days: 1));
       final startOfWeek = today.subtract(Duration(days: today.weekday - 1));
       final endOfWeek = startOfWeek.add(Duration(days: 7));
-
-      // Today's sales with customer details
       final todaySalesResult = await callKW(
         model: 'sale.order',
         method: 'search_read',
@@ -628,6 +494,7 @@ class OdooService {
               'in',
               ['sale', 'done']
             ],
+            ['name', '=ilike', 'S%'], // Add filter for name starting with 'S'
           ]
         ],
         kwargs: {
@@ -643,7 +510,6 @@ class OdooService {
         },
       );
 
-      // Weekly sales
       final weeklySalesResult = await callKW(
         model: 'sale.order',
         method: 'search_read',
@@ -656,6 +522,7 @@ class OdooService {
               'in',
               ['sale', 'done']
             ],
+            ['name', '=ilike', 'S%'], // Add filter for name starting with 'S'
           ]
         ],
         kwargs: {
@@ -663,7 +530,6 @@ class OdooService {
         },
       );
 
-      // Top selling product
       final topProductResult = await callKW(
         model: 'sale.order.line',
         method: 'search_read',
@@ -676,6 +542,8 @@ class OdooService {
               'in',
               ['sale', 'done']
             ],
+            ['order_id.name', '=ilike', 'S%'],
+            // Add filter for order name starting with 'S'
           ]
         ],
         kwargs: {
@@ -685,7 +553,6 @@ class OdooService {
         },
       );
 
-      // Parse results
       int todaySalesCount = 0;
       double todayRevenue = 0.0;
       List<SaleOrder> salesBreakdown = [];
@@ -742,7 +609,11 @@ class OdooService {
       final result = await callKW(
         model: 'sale.order',
         method: 'search_read',
-        args: [[]],
+        args: [
+          [
+            ['name', 'not like', 'TCK%']
+          ]
+        ],
         kwargs: {
           'fields': [
             'id',
@@ -849,14 +720,13 @@ class _DashboardPageState extends State<DashboardPage>
   bool _isRefreshing = false;
   late Future<bool> _initFuture;
   DashboardStats? _cachedStats;
-  List<Customer>? _cachedCustomers;
   List<SaleOrder>? _cachedOrders;
   String _username = "";
   bool _isInitialLoad = true;
   bool _isMounted = false;
   String? _userImageBase64;
-  bool _hasClearedCache = false; // New flag to prevent multiple cache clears
-  List<Product>? _lowStockProducts; // New variable for low stock products
+  bool _hasClearedCache = false;
+  List<Product>? _lowStockProducts;
 
   @override
   void initState() {
@@ -889,7 +759,7 @@ class _DashboardPageState extends State<DashboardPage>
         await prefs.remove('cached_dashboard_stats');
         await prefs.remove('cached_customers');
         await prefs.remove('cached_sale_orders');
-        await prefs.remove('cached_low_stock_products'); // Clear new cache
+        await prefs.remove('cached_low_stock_products');
         await prefs.setString('last_cache_date', today);
         _hasClearedCache = true;
         debugPrint('Cleared stale cache for date: $today');
@@ -900,12 +770,7 @@ class _DashboardPageState extends State<DashboardPage>
         _cachedStats = DashboardStats.fromJson(jsonDecode(statsJson));
       }
       final customersJson = prefs.getString('cached_customers');
-      if (customersJson != null) {
-        final customersList = jsonDecode(customersJson) as List;
-        _cachedCustomers = customersList
-            .map((json) => Customer.fromJson(json as Map<String, dynamic>))
-            .toList();
-      }
+      if (customersJson != null) {}
       final ordersJson = prefs.getString('cached_sale_orders');
       if (ordersJson != null) {
         final ordersList = jsonDecode(ordersJson) as List;
@@ -932,7 +797,7 @@ class _DashboardPageState extends State<DashboardPage>
     required DashboardStats stats,
     required List<Customer> customers,
     required List<SaleOrder> orders,
-    required List<Product> lowStockProducts, // Added parameter
+    required List<Product> lowStockProducts,
   }) async {
     final prefs = await SharedPreferences.getInstance();
     try {
@@ -982,11 +847,9 @@ class _DashboardPageState extends State<DashboardPage>
     });
     try {
       final stats = await _odooService.getDashboardStats();
-      await _odooService.fetchDeliveryStatus(stats);
       final customers = await _odooService.getTodayCustomers();
       final orders = await _odooService.getRecentSaleOrders();
-      final lowStockProducts =
-          await _odooService.getLowStockProducts(); // Fetch new data
+      final lowStockProducts = await _odooService.getLowStockProducts();
       await _saveCachedData(
         stats: stats,
         customers: customers,
@@ -996,7 +859,6 @@ class _DashboardPageState extends State<DashboardPage>
       if (_isMounted) {
         setState(() {
           _cachedStats = stats;
-          _cachedCustomers = customers;
           _cachedOrders = orders;
           _lowStockProducts = lowStockProducts;
           _isRefreshing = false;
@@ -1063,7 +925,6 @@ class _DashboardPageState extends State<DashboardPage>
                   ),
                   onPressed: () {
                     if (_isMounted) {
-                      // Check if mounted before calling setState
                       setState(() {
                         _initFuture = _initializeService();
                       });
@@ -1086,16 +947,6 @@ class _DashboardPageState extends State<DashboardPage>
               ],
             ),
           );
-        }
-
-        if (snapshot.data == false) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            // Navigator.pushReplacement(
-            //   context,
-            //   MaterialPageRoute(builder: (context) => const Login()),
-            // );
-          });
-          return _buildDashboard();
         }
 
         return _buildDashboard();
@@ -1238,9 +1089,6 @@ class _DashboardPageState extends State<DashboardPage>
     );
   }
 
-// Inside _DashboardPageState class
-
-// Helper function to show a loading dialog
   void _showLoadingDialog(BuildContext context) {
     showDialog(
       context: context,
@@ -1274,7 +1122,6 @@ class _DashboardPageState extends State<DashboardPage>
     );
   }
 
-// Helper function to show an error dialog
   void _showErrorDialog({
     required BuildContext context,
     required String message,
@@ -1326,34 +1173,30 @@ class _DashboardPageState extends State<DashboardPage>
     );
   }
 
-// Updated _scanProductBarcode function
   Future<void> _scanProductBarcode() async {
     try {
-      // Request camera permission
       final permissionStatus = await Permission.camera.request();
       if (permissionStatus != PermissionStatus.granted) {
         if (context.mounted) {
           _showErrorDialog(
             context: context,
             message: 'Camera permission is required to scan barcodes.',
-            onRetry: _scanProductBarcode, // Allow retry
+            onRetry: _scanProductBarcode,
           );
         }
         return;
       }
 
-      // Scan barcode
       String barcode = await FlutterBarcodeScanner.scanBarcode(
-        '#ff6666', // Line color
-        'Cancel', // Cancel button text
-        true, // Show flash icon
-        ScanMode.BARCODE, // Scan mode
+        '#ff6666',
+        'Cancel',
+        true,
+        ScanMode.BARCODE,
       );
 
       if (!context.mounted) return;
 
       if (barcode == '-1') {
-        // Scan cancelled
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('Barcode scan cancelled'),
@@ -1365,7 +1208,6 @@ class _DashboardPageState extends State<DashboardPage>
       }
 
       if (barcode.isEmpty) {
-        // No barcode scanned
         _showErrorDialog(
           context: context,
           message: 'No barcode detected. Please try again.',
@@ -1373,15 +1215,11 @@ class _DashboardPageState extends State<DashboardPage>
         );
         return;
       }
-
-      // Show loading dialog
       _showLoadingDialog(context);
-
-      // Initialize Odoo client
       bool initialized = await _odooService.initFromStorage();
       if (!initialized) {
         if (context.mounted) {
-          Navigator.of(context).pop(); // Close loading dialog
+          Navigator.of(context).pop();
           _showErrorDialog(
             context: context,
             message:
@@ -1391,8 +1229,6 @@ class _DashboardPageState extends State<DashboardPage>
         }
         return;
       }
-
-      // Query Odoo for product with matching barcode
       final productResult = await _odooService.callKW(
         model: 'product.product',
         method: 'search_read',
@@ -1408,13 +1244,10 @@ class _DashboardPageState extends State<DashboardPage>
       );
 
       if (!context.mounted) return;
-
-      // Close loading dialog
       Navigator.of(context).pop();
 
       if (productResult is List && productResult.isNotEmpty) {
         final productId = productResult[0]['id'].toString();
-        // Navigate to ProductDetailsPage
         Navigator.push(
           context,
           SlidingPageTransitionRL(
@@ -1423,7 +1256,6 @@ class _DashboardPageState extends State<DashboardPage>
             ),
           ),
         );
-        // Show success SnackBar
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Product found! Loading details...'),
@@ -1433,7 +1265,6 @@ class _DashboardPageState extends State<DashboardPage>
           ),
         );
       } else {
-        // No product found
         _showErrorDialog(
           context: context,
           message: 'No product found with barcode: $barcode',
@@ -1443,7 +1274,6 @@ class _DashboardPageState extends State<DashboardPage>
     } catch (e) {
       debugPrint('Error scanning barcode: $e');
       if (context.mounted) {
-        // Close loading dialog if open
         Navigator.of(context).pop();
         String errorMessage;
         if (e.toString().contains('OdooException')) {
@@ -1463,37 +1293,52 @@ class _DashboardPageState extends State<DashboardPage>
     }
   }
 
-// Ensure _buildQuickActionButton is defined (already in your code)
   Widget _buildQuickActionButton(
       IconData icon, String label, Color color, VoidCallback onTap) {
-    return Container(
-      width: 80,
-      margin: const EdgeInsets.only(right: 12),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(10),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: color.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Icon(icon, color: color, size: 24),
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(12),
+          child: Container(
+            width: 85,
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: color.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(12),
+                    boxShadow: [
+                      BoxShadow(
+                        color: color.withOpacity(0.15),
+                        blurRadius: 8,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: Icon(icon, color: color, size: 26),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.grey[800],
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 0.2,
+                  ),
+                  textAlign: TextAlign.center,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
             ),
-            const SizedBox(height: 8),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 12,
-                color: Colors.grey[800],
-                fontWeight: FontWeight.w500,
-              ),
-              textAlign: TextAlign.center,
-            ),
-          ],
+          ),
         ),
       ),
     );
@@ -1762,43 +1607,43 @@ class _DashboardPageState extends State<DashboardPage>
             ),
             const SizedBox(height: 16),
             SizedBox(
-              height: 100,
+              height: 110,
               child: ListView(
                 scrollDirection: Axis.horizontal,
                 children: [
                   _buildQuickActionButton(
-                    Icons.map,
+                    Icons.map_rounded,
                     'Route Plan',
-                    Colors.green[600]!,
+                    const Color(0xFF4CAF50),
                     () => loadRouteData(context),
                   ),
                   _buildQuickActionButton(
-                    Icons.qr_code_scanner,
+                    Icons.qr_code_scanner_rounded,
                     'Scan Product',
-                    Colors.purple[600]!,
+                    const Color(0xFF9C27B0),
                     _scanProductBarcode,
                   ),
                   _buildQuickActionButton(
-                    Icons.inventory_2,
+                    Icons.inventory_2_rounded,
                     'Stock Check',
-                    Colors.amber[600]!,
+                    const Color(0xFFFFC107),
                     () {
                       Navigator.push(context,
                           SlidingPageTransitionRL(page: StockCheckPage()));
                     },
                   ),
                   _buildQuickActionButton(
-                    Icons.post_add,
+                    Icons.post_add_rounded,
                     'Create Order',
-                    Colors.blue[600]!,
+                    const Color(0xFF2196F3),
                     () {
                       showCreateOrderSheetGeneral(context);
                     },
                   ),
                   _buildQuickActionButton(
-                    Icons.receipt,
+                    Icons.receipt_rounded,
                     'Create Invoice',
-                    Colors.red[600]!,
+                    const Color(0xFFF44336),
                     () {
                       Navigator.push(
                           context,
@@ -1809,9 +1654,9 @@ class _DashboardPageState extends State<DashboardPage>
                     },
                   ),
                   _buildQuickActionButton(
-                    Icons.sync,
+                    Icons.sync_rounded,
                     'Sync Data',
-                    Colors.teal[600]!,
+                    const Color(0xFF009688),
                     () async {
                       await _handleRefresh();
                     },
@@ -1823,7 +1668,7 @@ class _DashboardPageState extends State<DashboardPage>
             LowStockAlertSection(lowStockProducts: _lowStockProducts ?? []),
             const SizedBox(height: 16),
             Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              mainAxisAlignment: MainAxisAlignment.start,
               children: [
                 const Text(
                   'Recent Sales',
@@ -1832,83 +1677,161 @@ class _DashboardPageState extends State<DashboardPage>
                     fontWeight: FontWeight.bold,
                   ),
                 ),
-                TextButton(
-                  onPressed: () {
-                    // Navigator.push(
-                    //   context,
-                    //   SlidingPageTransitionRL(
-                    //     page: TodaysSalesPage(
-                    //       provider: Provider.of<SalesOrderProvider>(context,
-                    //           listen: false),
-                    //     ),
-                    //   ),
-                    // );
-                  },
-                  child: const Text(
-                    'View All',
-                    style: TextStyle(color: Color(0xFF6A1414)),
-                  ),
-                ),
               ],
             ),
             const SizedBox(height: 8),
             _cachedOrders != null && _cachedOrders!.isNotEmpty
                 ? Card(
-                    elevation: 2,
+                    elevation: 3,
                     shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
+                      borderRadius: BorderRadius.circular(12),
                     ),
                     child: ListView.separated(
                       shrinkWrap: true,
                       physics: const NeverScrollableScrollPhysics(),
                       itemCount:
-                          _cachedOrders!.length > 3 ? 3 : _cachedOrders!.length,
-                      separatorBuilder: (context, index) =>
-                          const Divider(height: 1),
+                          _cachedOrders!.length > 4 ? 4 : _cachedOrders!.length,
+                      separatorBuilder: (context, index) => Divider(
+                          height: 1, thickness: 0.5, color: Colors.grey[200]),
                       itemBuilder: (context, index) {
                         final order = _cachedOrders![index];
-                        return ListTile(
-                          title: Text(order.name),
-                          subtitle: Text(
-                            '${order.customerName} • \$${order.total.toStringAsFixed(2)}',
+                        return Container(
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(8),
+                            color: Colors.white,
                           ),
-                          trailing: Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 4),
-                            decoration: BoxDecoration(
-                              color: order.state == "done"
-                                  ? Colors.green[50]
-                                  : order.state == "sale"
-                                      ? Colors.blue[50]
-                                      : Colors.orange[50],
-                              borderRadius: BorderRadius.circular(12),
+                          child: ListTile(
+                            title: Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    order.name,
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 16,
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                                Text(
+                                  '\$${order.total.toStringAsFixed(2)}',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 16,
+                                    color: Colors.grey[800],
+                                  ),
+                                ),
+                              ],
                             ),
-                            child: Text(
-                              order.stateFormatted,
-                              style: TextStyle(
-                                color: order.state == "done"
-                                    ? Colors.green
-                                    : order.state == "sale"
-                                        ? Colors.blue
-                                        : Colors.orange,
-                                fontSize: 12,
-                                fontWeight: FontWeight.bold,
+                            subtitle: Padding(
+                              padding: const EdgeInsets.only(top: 6),
+                              child: Row(
+                                children: [
+                                  Icon(Icons.person_outline,
+                                      size: 16, color: Colors.grey[600]),
+                                  const SizedBox(width: 4),
+                                  Expanded(
+                                    child: Text(
+                                      order.customerName,
+                                      style: TextStyle(
+                                        color: Colors.grey[700],
+                                        fontSize: 14,
+                                      ),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 10, vertical: 4),
+                                    decoration: BoxDecoration(
+                                      color: order.state == "done"
+                                          ? Colors.green[50]
+                                          : order.state == "sale"
+                                              ? Colors.blue[50]
+                                              : Colors.orange[50],
+                                      borderRadius: BorderRadius.circular(12),
+                                      border: Border.all(
+                                        color: order.state == "done"
+                                            ? Colors.green[200]!
+                                            : order.state == "sale"
+                                                ? Colors.blue[200]!
+                                                : Colors.orange[200]!,
+                                        width: 1,
+                                      ),
+                                    ),
+                                    child: Text(
+                                      order.stateFormatted,
+                                      style: TextStyle(
+                                        color: order.state == "done"
+                                            ? Colors.green[700]
+                                            : order.state == "sale"
+                                                ? Colors.blue[700]
+                                                : Colors.orange[700],
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
+                            onTap: () {
+                              Navigator.push(
+                                  context,
+                                  SlidingPageTransitionRL(
+                                      page: SaleOrderDetailPage(
+                                    orderData: order.toJson(),
+                                  )));
+                            },
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
                           ),
-                          onTap: () {
-                            Navigator.push(
-                                context,
-                                SlidingPageTransitionRL(
-                                    page: SaleOrderDetailPage(
-                                  orderData: order.toJson(),
-                                )));
-                          },
                         );
                       },
                     ),
                   )
-                : _buildRecentSalesShimmer(),
+                : Card(
+                    elevation: 3,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(40),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.receipt_long_outlined,
+                            size: 64,
+                            color: Colors.grey[400],
+                          ),
+                          const SizedBox(height: 16),
+                          Text(
+                            'No Recent Orders',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.grey[600],
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            'Your recent orders will appear here',
+                            style: TextStyle(
+                              fontSize: 14,
+                              color: Colors.grey[500],
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
           ],
         ),
       ),
@@ -2151,7 +2074,6 @@ class _RevenueDetailsDialogState extends State<RevenueDetailsDialog> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // Header with gradient
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
@@ -2179,7 +2101,6 @@ class _RevenueDetailsDialogState extends State<RevenueDetailsDialog> {
                 ],
               ),
             ),
-            // Content
             Expanded(
               child: FutureBuilder<RevenueDetails>(
                 future: _revenueDetailsFuture,
@@ -2433,8 +2354,6 @@ void loadRouteData(BuildContext context) {
                     ),
                     onPressed: () async {
                       Navigator.of(dialogContext).pop();
-
-                      // Show custom loading dialog
                       showDialog(
                         context: context,
                         barrierDismissible: false,
@@ -2551,7 +2470,6 @@ void loadRouteData(BuildContext context) {
   );
 }
 
-// Add toJson methods to models for caching
 extension DashboardStatsExtension on DashboardStats {
   Map<String, dynamic> toJson() {
     return {
@@ -2595,7 +2513,6 @@ class LowStockAlertSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Sort products by vanInventory in ascending order
     final sortedProducts = lowStockProducts?.map((p) => p).toList()
       ?..sort((a, b) => a.vanInventory.compareTo(b.vanInventory));
 
@@ -2718,8 +2635,6 @@ class LowStockAlertSection extends StatelessWidget {
 
   Widget _buildProductList(BuildContext context, List<Product> sortedProducts) {
     final displayCount = sortedProducts.length > 5 ? 5 : sortedProducts.length;
-    final theme = Theme.of(context);
-    final primaryColor = theme.primaryColor;
 
     return Container(
       decoration: const BoxDecoration(
@@ -2747,8 +2662,6 @@ class LowStockAlertSection extends StatelessWidget {
   Widget _buildProductTile(BuildContext context, Product product) {
     final theme = Theme.of(context);
     final primaryColor = theme.primaryColor;
-
-    // Determine severity level based on inventory count
     Color severityColor;
     IconData severityIcon;
 
@@ -2766,7 +2679,7 @@ class LowStockAlertSection extends StatelessWidget {
     return InkWell(
       onTap: () => _navigateToProductDetails(context, product),
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 4),
+        padding: const EdgeInsets.symmetric(vertical: 2),
         child: ListTile(
           leading: Container(
             width: 48,
@@ -2880,7 +2793,6 @@ class _AllLowStockProductsDialogState extends State<AllLowStockProductsDialog> {
   @override
   void initState() {
     super.initState();
-    // Sort products by vanInventory in ascending order
     _filteredProducts = List<Product>.from(widget.lowStockProducts)
       ..sort((a, b) => a.vanInventory.compareTo(b.vanInventory));
   }

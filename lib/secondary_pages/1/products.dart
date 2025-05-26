@@ -3,6 +3,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:odoo_rpc/odoo_rpc.dart';
 import 'package:provider/provider.dart';
+import 'package:shimmer/shimmer.dart';
 import 'dart:convert';
 import 'dart:developer' as developer;
 import '../../../authentication/cyllo_session_model.dart';
@@ -13,12 +14,10 @@ import '../product_details_page.dart';
 
 class ProductsPage extends StatefulWidget {
   final List<Product> availableProducts;
-  final Function(Product, int) onAddProduct;
 
   const ProductsPage({
     Key? key,
     required this.availableProducts,
-    required this.onAddProduct,
   }) : super(key: key);
 
   @override
@@ -38,8 +37,15 @@ class _ProductsPageState extends State<ProductsPage> {
     super.initState();
     developer.log(
         'initState: Initial availableProducts count: ${widget.availableProducts.length}');
-    _initializeProductTemplates();
-    _restoreDraftState();
+    if (widget.availableProducts.isEmpty) {
+      setState(() {
+        _isLoading = true; // Start loading
+      });
+      _refreshProducts(); // Trigger product loading if empty
+    } else {
+      _initializeProductTemplates();
+      _restoreDraftState();
+    }
   }
 
   void _initializeProductTemplates() {
@@ -116,7 +122,6 @@ class _ProductsPageState extends State<ProductsPage> {
     }
   }
 
-
   void _filterProductTemplates(String query) {
     setState(() {
       if (query.isEmpty) {
@@ -184,6 +189,9 @@ class _ProductsPageState extends State<ProductsPage> {
   }
 
   Future<void> _refreshProducts() async {
+    setState(() {
+      _isLoading = true; // Start loading
+    });
     try {
       final saleorderProvider =
           Provider.of<SalesOrderProvider>(context, listen: false);
@@ -204,6 +212,7 @@ class _ProductsPageState extends State<ProductsPage> {
         developer.log(
             'refreshProducts: Refreshed, availableProducts: ${widget.availableProducts.length}, filteredProductTemplates: ${filteredProductTemplates.length}');
         _restoreDraftState();
+        _isLoading = false; // Stop loading
       });
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -213,6 +222,9 @@ class _ProductsPageState extends State<ProductsPage> {
         ),
       );
     } catch (e) {
+      setState(() {
+        _isLoading = false; // Stop loading on error
+      });
       developer.log('refreshProducts: Error refreshing products: $e');
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -228,6 +240,7 @@ class _ProductsPageState extends State<ProductsPage> {
       OrderPickingProvider orderPickingProvider) {
     if (orderPickingProvider.needsProductRefresh) {
       setState(() {
+        _isLoading = true; // Start loading
         widget.availableProducts.clear();
         widget.availableProducts.addAll(salesProvider.products);
         filteredProductTemplates = _groupProducts(widget.availableProducts);
@@ -242,6 +255,7 @@ class _ProductsPageState extends State<ProductsPage> {
         developer.log(
             'updateProductList: Updated availableProducts: ${widget.availableProducts.length}, filteredProductTemplates: ${filteredProductTemplates.length}');
         _restoreDraftState();
+        _isLoading = false; // Stop loading
       });
       orderPickingProvider.resetProductRefreshFlag();
     } else {
@@ -295,7 +309,8 @@ class _ProductsPageState extends State<ProductsPage> {
             child: RefreshIndicator(
               onRefresh: _refreshProducts,
               color: primaryColor,
-              child: buildProductsList(),
+              child:
+                  _isLoading ? const ProductPageShimmer() : buildProductsList(),
             ),
           ),
         ],
@@ -327,7 +342,6 @@ class _ProductsPageState extends State<ProductsPage> {
           elevation: 5,
           backgroundColor: Colors.white,
           insetPadding: EdgeInsets.zero,
-
           child: FractionallySizedBox(
             widthFactor: .9,
             child: Container(
@@ -383,8 +397,7 @@ class _ProductsPageState extends State<ProductsPage> {
                       builder: (context, snapshot) {
                         if (snapshot.connectionState ==
                             ConnectionState.waiting) {
-                          return const Center(
-                              child: CircularProgressIndicator());
+                          return const VariantsDialogShimmer();
                         }
                         if (snapshot.hasError) {
                           return const Center(
@@ -475,9 +488,9 @@ class _ProductsPageState extends State<ProductsPage> {
     }
 
     return InkWell(
-      onTap: () {
+      onTap: () async {
         Navigator.of(dialogContext).pop();
-        Navigator.push(
+        await Navigator.push(
           context,
           SlidingPageTransitionRL(
             page: ProductDetailsPage(
@@ -486,6 +499,7 @@ class _ProductsPageState extends State<ProductsPage> {
             ),
           ),
         );
+        _refreshProducts();
       },
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -658,14 +672,12 @@ class _ProductsPageState extends State<ProductsPage> {
   }
 
   Widget buildProductsList() {
-
     List<String> categories = filteredProductTemplates
         .where((p) => p['category'] != null)
         .map((p) => p['category'] as String)
         .toSet()
         .toList()
       ..sort();
-
 
     if (categories.isEmpty) {
       categories = ['All Products'];
@@ -705,7 +717,7 @@ class _ProductsPageState extends State<ProductsPage> {
               ),
               focusedBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(10),
-                borderSide: const BorderSide(color: Color(0xFF1F2C54)),
+                borderSide: BorderSide(color: primaryColor),
               ),
             ),
             onChanged: _filterProductTemplates,
@@ -738,7 +750,25 @@ class _ProductsPageState extends State<ProductsPage> {
                     'buildProductsList: Category "$category" has ${filteredByCategory.length} templates');
 
                 return filteredByCategory.isEmpty
-                    ? const Center(child: Text("No products in this category."))
+                    ? Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.inventory_2_outlined,
+                                size: 48, color: Colors.grey[400]),
+                            const SizedBox(height: 8),
+                            Text(
+                              searchController.text.isNotEmpty
+                                  ? 'No products found for "${searchController.text}"'
+                                  : 'No products in this category',
+                              style: TextStyle(
+                                  color: Colors.grey[600],
+                                  fontStyle: FontStyle.italic),
+                              textAlign: TextAlign.center,
+                            ),
+                          ],
+                        ),
+                      )
                     : RefreshIndicator(
                         onRefresh: _refreshProducts,
                         color: const Color(0xFF1F2C54),
@@ -779,7 +809,7 @@ class _ProductsPageState extends State<ProductsPage> {
                                     selectedAttributes,
                                   );
                                 } else {
-                                  Navigator.push(
+                                  await Navigator.push(
                                     context,
                                     SlidingPageTransitionRL(
                                       page: ProductDetailsPage(
@@ -790,6 +820,7 @@ class _ProductsPageState extends State<ProductsPage> {
                                       ),
                                     ),
                                   );
+                                  _refreshProducts();
                                 }
                               },
                               child: _buildProductCard(template),
@@ -1063,5 +1094,328 @@ Future<List<Map<String, String>>> _fetchVariantAttributes(
   } catch (e) {
     developer.log("Error fetching variant attributes: $e");
     return [];
+  }
+}
+
+class ProductPageShimmer extends StatelessWidget {
+  const ProductPageShimmer({Key? key}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    final deviceSize = MediaQuery.of(context).size;
+    return Scaffold(
+      backgroundColor: Colors.grey[100],
+      body: Stack(
+        children: [
+          Container(
+            width: deviceSize.width,
+            height: deviceSize.height,
+            // padding: const EdgeInsets.only(left: 16, right: 16, top: 16),
+            child: Column(
+              children: [
+                // Shimmer for Search Bar
+                Shimmer.fromColors(
+                  baseColor: Colors.grey[300]!,
+                  highlightColor: Colors.grey[100]!,
+                  child: Container(
+                    height: 50,
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: Colors.grey[300]!),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                // Shimmer for Tab Bar
+                Shimmer.fromColors(
+                  baseColor: Colors.grey[300]!,
+                  highlightColor: Colors.grey[100]!,
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: List.generate(
+                        4, // Number of shimmer tabs
+                        (index) => Container(
+                          width: 100,
+                          height: 30,
+                          margin: const EdgeInsets.symmetric(horizontal: 8),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                // Shimmer for Product List
+                Expanded(
+                  child: ListView.builder(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    itemCount: 8, // Number of shimmer cards
+                    itemBuilder: (context, index) => _buildProductCardShimmer(),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildProductCardShimmer() {
+    return Card(
+      color: Colors.white,
+      elevation: 1,
+      margin: const EdgeInsets.only(bottom: 12),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Shimmer for Product Image
+            Shimmer.fromColors(
+              baseColor: Colors.grey[300]!,
+              highlightColor: Colors.grey[100]!,
+              child: Container(
+                width: 60,
+                height: 60,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            // Shimmer for Product Details
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Shimmer for Product Name
+                  Shimmer.fromColors(
+                    baseColor: Colors.grey[300]!,
+                    highlightColor: Colors.grey[100]!,
+                    child: Container(
+                      width: double.infinity,
+                      height: 16,
+                      color: Colors.white,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  // Shimmer for SKU and Price
+                  Row(
+                    children: [
+                      Shimmer.fromColors(
+                        baseColor: Colors.grey[300]!,
+                        highlightColor: Colors.grey[100]!,
+                        child: Container(
+                          width: 80,
+                          height: 14,
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Shimmer.fromColors(
+                        baseColor: Colors.grey[300]!,
+                        highlightColor: Colors.grey[100]!,
+                        child: Container(
+                          width: 60,
+                          height: 14,
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  // Shimmer for Stock and Variants
+                  Row(
+                    children: [
+                      Shimmer.fromColors(
+                        baseColor: Colors.grey[300]!,
+                        highlightColor: Colors.grey[100]!,
+                        child: Container(
+                          width: 80,
+                          height: 14,
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Shimmer.fromColors(
+                        baseColor: Colors.grey[300]!,
+                        highlightColor: Colors.grey[100]!,
+                        child: Container(
+                          width: 60,
+                          height: 14,
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// Shimmer for Variants Dialog
+class VariantsDialogShimmer extends StatelessWidget {
+  const VariantsDialogShimmer({Key? key}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // Shimmer for Dialog Header
+        Shimmer.fromColors(
+          baseColor: Colors.grey[300]!,
+          highlightColor: Colors.grey[100]!,
+          child: Container(
+            padding: const EdgeInsets.all(16),
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.only(
+                topLeft: Radius.circular(16),
+                topRight: Radius.circular(16),
+              ),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Container(
+                    height: 18,
+                    color: Colors.white,
+                  ),
+                ),
+                Container(
+                  width: 24,
+                  height: 24,
+                  color: Colors.white,
+                ),
+              ],
+            ),
+          ),
+        ),
+        // Shimmer for Variants List
+        Flexible(
+          child: ListView.separated(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            shrinkWrap: true,
+            itemCount: 3,
+            // Number of shimmer variant items
+            separatorBuilder: (context, index) => const Divider(
+              height: 1,
+              thickness: 1,
+              indent: 16,
+              endIndent: 16,
+            ),
+            itemBuilder: (context, index) => _buildVariantListItemShimmer(),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildVariantListItemShimmer() {
+    return Expanded(
+      child: Padding(
+        padding: const EdgeInsets.all(8.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Shimmer for Variant Name
+            Shimmer.fromColors(
+              baseColor: Colors.grey[300]!,
+              highlightColor: Colors.grey[100]!,
+              child: Container(
+                width: double.infinity,
+                height: 15,
+                color: Colors.white,
+              ),
+            ),
+            const SizedBox(height: 6),
+            // Shimmer for Attributes
+            Shimmer.fromColors(
+              baseColor: Colors.grey[300]!,
+              highlightColor: Colors.grey[100]!,
+              child: Container(
+                width: 150,
+                height: 12,
+                color: Colors.white,
+              ),
+            ),
+            const SizedBox(height: 6),
+            // Shimmer for SKU and Price
+            Row(
+              children: [
+                Shimmer.fromColors(
+                  baseColor: Colors.grey[300]!,
+                  highlightColor: Colors.grey[100]!,
+                  child: Container(
+                    width: 80,
+                    height: 12,
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Shimmer.fromColors(
+                  baseColor: Colors.grey[300]!,
+                  highlightColor: Colors.grey[100]!,
+                  child: Container(
+                    width: 60,
+                    height: 12,
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            // Shimmer for Stock Status
+            Shimmer.fromColors(
+              baseColor: Colors.grey[300]!,
+              highlightColor: Colors.grey[100]!,
+              child: Container(
+                width: 80,
+                height: 12,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }

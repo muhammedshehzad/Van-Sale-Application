@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import '../assets/widgets and consts/confirmation_dialogs.dart';
+import '../assets/widgets and consts/page_transition.dart';
 import '../authentication/cyllo_session_model.dart';
 import 'dart:convert';
+import '../secondary_pages/invoice_details_page.dart';
 
 String _numberToWords(double amount) {
   final units = [
@@ -83,7 +86,6 @@ class InvoiceCreationProvider extends ChangeNotifier {
   List<Map<String, dynamic>> _availableCustomers = [];
   List<Map<String, dynamic>> _availableJournals = [];
   List<Map<String, dynamic>> _availablePaymentTerms = [];
-  List<Map<String, dynamic>> _availableFiscalPositions = [];
   List<Map<String, dynamic>> _availableSalespersons = [];
   List<Map<String, dynamic>> _availableTaxes = [];
   List<Map<String, dynamic>> _availableAnalyticAccounts = [];
@@ -119,9 +121,6 @@ class InvoiceCreationProvider extends ChangeNotifier {
 
   List<Map<String, dynamic>> get availablePaymentTerms =>
       _availablePaymentTerms;
-
-  List<Map<String, dynamic>> get availableFiscalPositions =>
-      _availableFiscalPositions;
 
   List<Map<String, dynamic>> get availableSalespersons =>
       _availableSalespersons;
@@ -207,7 +206,6 @@ class InvoiceCreationProvider extends ChangeNotifier {
     fetchAvailableCustomers();
     fetchJournals();
     fetchPaymentTerms();
-    fetchFiscalPositions();
     fetchSalespersons();
     fetchTaxes();
     fetchAnalyticAccounts();
@@ -287,11 +285,11 @@ class InvoiceCreationProvider extends ChangeNotifier {
         'tax_ids': line['tax_id'] is List ? line['tax_id'] : [],
         'default_code': line['default_code']?.toString() ?? 'N/A',
         'barcode': line['barcode']?.toString(),
-        'selected_attributes': [], // Add if attributes are needed
+        'selected_attributes': [],
       };
     }).toList();
 
-    debugPrint('Updated invoice lines: $_invoiceLines'); // Debugging
+    debugPrint('Updated invoice lines: $_invoiceLines');
     notifyListeners();
   }
 
@@ -457,33 +455,6 @@ class InvoiceCreationProvider extends ChangeNotifier {
       }).toList();
     } catch (e) {
       _errorMessage = 'Failed to load payment terms: $e';
-    }
-    notifyListeners();
-  }
-
-  Future<void> fetchFiscalPositions() async {
-    try {
-      final client = await SessionManager.getActiveClient();
-      if (client == null) throw Exception('No active session');
-
-      final result = await client.callKw({
-        'model': 'account.fiscal.position',
-        'method': 'search_read',
-        'args': [
-          [],
-          ['id', 'name'],
-        ],
-        'kwargs': {'limit': 50},
-      });
-
-      _availableFiscalPositions = result.map<Map<String, dynamic>>((position) {
-        return {
-          'id': position['id'],
-          'name': position['name'],
-        };
-      }).toList();
-    } catch (e) {
-      _errorMessage = 'Failed to load fiscal positions: $e';
     }
     notifyListeners();
   }
@@ -671,27 +642,23 @@ class InvoiceCreationProvider extends ChangeNotifier {
     }
   }
 
-  Future<Map<String, dynamic>?> createDraftInvoice(int saleOrderId) async {
+  Future<Map<String, dynamic>?> createDraftInvoice(
+      int saleOrderId, BuildContext context) async {
     _isLoading = true;
     _errorMessage = '';
     notifyListeners();
 
     try {
       debugPrint('createDraftInvoice: Starting with saleOrderId=$saleOrderId');
-
-      // Validate inputs
       if (saleOrderId <= 0) {
         throw Exception('Invalid sale order ID: $saleOrderId');
       }
 
-      // Get active client
       final client = await SessionManager.getActiveClient();
       if (client == null) {
         throw Exception('No active session');
       }
       debugPrint('Active client obtained successfully');
-
-      // Fetch sale order to get its name for invoice origin check
       final saleOrderData = await client.callKw({
         'model': 'sale.order',
         'method': 'read',
@@ -705,8 +672,6 @@ class InvoiceCreationProvider extends ChangeNotifier {
         throw Exception('Sale order with ID $saleOrderId not found');
       }
       final saleOrderName = saleOrderData[0]['name'] as String;
-
-      // Check if an invoice already exists for this sale order
       final existingInvoices = await client.callKw({
         'model': 'account.move',
         'method': 'search_read',
@@ -714,7 +679,7 @@ class InvoiceCreationProvider extends ChangeNotifier {
           [
             ['invoice_origin', '=', saleOrderName],
             ['move_type', '=', 'out_invoice'],
-            ['state', '!=', 'cancel'], // Exclude cancelled invoices
+            ['state', '!=', 'cancel'],
           ],
           ['id', 'name', 'state'],
         ],
@@ -728,6 +693,24 @@ class InvoiceCreationProvider extends ChangeNotifier {
         _isLoading = false;
         notifyListeners();
         debugPrint(_errorMessage);
+
+        showProfessionalDraftInvoiceDialog(
+          context,
+          invoiceId: existingInvoice['id'],
+          invoiceName: existingInvoice['name'],
+          state: existingInvoice['state'],
+          alreadyExists: true,
+          onConfirm: () {
+            Navigator.pushReplacement(
+              context,
+              SlidingPageTransitionRL(
+                page: InvoiceDetailsPage(
+                    invoiceId: existingInvoice['id'].toString()),
+              ),
+            );
+          },
+        );
+
         return {
           'already_exists': true,
           'id': existingInvoice['id'],
@@ -736,7 +719,6 @@ class InvoiceCreationProvider extends ChangeNotifier {
         };
       }
 
-      // Dynamically determine payment term field for sale.order
       String? saleOrderPaymentTermField;
       try {
         final saleOrderFields = await client.callKw({
@@ -768,7 +750,6 @@ class InvoiceCreationProvider extends ChangeNotifier {
             'Failed to fetch sale.order fields: $e. Proceeding without payment term.');
       }
 
-      // Dynamically determine payment term field for account.move
       String? accountMovePaymentTermField;
       try {
         final accountMoveFields = await client.callKw({
@@ -800,7 +781,6 @@ class InvoiceCreationProvider extends ChangeNotifier {
             'Failed to fetch account.move fields: $e. Proceeding without payment term.');
       }
 
-      // Fetch sale order with order lines
       final saleOrderFields = ['name', 'partner_id', 'order_line'];
       if (saleOrderPaymentTermField != null) {
         saleOrderFields.add(saleOrderPaymentTermField);
@@ -818,7 +798,6 @@ class InvoiceCreationProvider extends ChangeNotifier {
         throw Exception('Sale order with ID $saleOrderId not found');
       }
 
-      // Fetch sale order lines
       final saleOrder = saleOrderDataFull[0];
       final orderLineIds = saleOrder['order_line'] as List<dynamic>? ?? [];
       final orderLines = orderLineIds.isNotEmpty
@@ -841,7 +820,6 @@ class InvoiceCreationProvider extends ChangeNotifier {
             })
           : [];
 
-      // Prepare invoice lines from sale order lines
       final invoiceLines = orderLines.map((line) {
         final productId =
             line['product_id'] is List ? line['product_id'][0] : null;
@@ -877,17 +855,15 @@ class InvoiceCreationProvider extends ChangeNotifier {
             'No valid invoice lines found for sale order $saleOrderId');
       }
 
-      // Determine the payment term ID
       int? paymentTermId;
       if (saleOrderPaymentTermField != null &&
           saleOrder[saleOrderPaymentTermField] is List &&
           saleOrder[saleOrderPaymentTermField].isNotEmpty) {
         paymentTermId = saleOrder[saleOrderPaymentTermField][0];
       } else {
-        paymentTermId = _paymentTermId; // Fallback to provider's payment term
+        paymentTermId = _paymentTermId;
       }
 
-      // Validate payment term ID if provided
       if (paymentTermId != null) {
         final paymentTermExists = await client.callKw({
           'model': 'account.payment.term',
@@ -902,11 +878,10 @@ class InvoiceCreationProvider extends ChangeNotifier {
         if (paymentTermExists.isEmpty) {
           debugPrint(
               'Warning: Invalid payment term ID $paymentTermId. Ignoring payment term.');
-          paymentTermId = null; // Ignore invalid payment term
+          paymentTermId = null;
         }
       }
 
-      // Prepare invoice data
       final invoiceData = {
         'partner_id': saleOrder['partner_id'][0],
         'invoice_date': DateFormat('yyyy-MM-dd').format(_invoiceDate),
@@ -917,16 +892,13 @@ class InvoiceCreationProvider extends ChangeNotifier {
         'invoice_line_ids': invoiceLines,
       };
 
-      // Add payment term only if valid and supported
       if (paymentTermId != null && accountMovePaymentTermField != null) {
         invoiceData[accountMovePaymentTermField] = paymentTermId;
       }
 
-      // Debug invoice data
       debugPrint('Creating invoice via account.move create with data:');
       debugPrint(jsonEncode(invoiceData));
 
-      // Create invoice
       final invoiceResult = await client.callKw({
         'model': 'account.move',
         'method': 'create',
@@ -942,6 +914,20 @@ class InvoiceCreationProvider extends ChangeNotifier {
       debugPrint('createDraftInvoice response: Invoice ID $invoiceResult');
       _isLoading = false;
       notifyListeners();
+
+      showProfessionalDraftInvoiceDialog(
+        context,
+        invoiceId: invoiceResult,
+        onConfirm: () {
+          Navigator.pushReplacement(
+            context,
+            SlidingPageTransitionRL(
+              page: InvoiceDetailsPage(invoiceId: invoiceResult.toString()),
+            ),
+          );
+        },
+      );
+
       return {'id': invoiceResult};
     } catch (e, stackTrace) {
       _errorMessage = 'Failed to create invoice: $e';
@@ -953,7 +939,8 @@ class InvoiceCreationProvider extends ChangeNotifier {
     }
   }
 
-  Future<Map<String, dynamic>> validateInvoice(int saleOrderId) async {
+  Future<Map<String, dynamic>> validateInvoice(
+      int saleOrderId, BuildContext context) async {
     _isLoading = true;
     _errorMessage = '';
     notifyListeners();
@@ -961,14 +948,12 @@ class InvoiceCreationProvider extends ChangeNotifier {
     try {
       debugPrint('validateInvoice: Starting with saleOrderId=$saleOrderId');
 
-      // Create draft invoice
       debugPrint('Creating draft invoice...');
-      final draftInvoice = await createDraftInvoice(saleOrderId);
+      final draftInvoice = await createDraftInvoice(saleOrderId, context);
       if (draftInvoice == null) {
         throw Exception('Failed to create draft invoice');
       }
 
-      // Check if invoice already exists
       if (draftInvoice['already_exists'] == true) {
         _isLoading = false;
         notifyListeners();
@@ -984,14 +969,12 @@ class InvoiceCreationProvider extends ChangeNotifier {
       final invoiceId = draftInvoice['id'] as int;
       debugPrint('Validating invoice ID: $invoiceId');
 
-      // Get active client
       final client = await SessionManager.getActiveClient();
       if (client == null) {
         throw Exception('No active session');
       }
       debugPrint('Active client obtained successfully');
 
-      // Post the invoice using action_post
       final postResult = await client.callKw({
         'model': 'account.move',
         'method': 'action_post',
@@ -1002,7 +985,6 @@ class InvoiceCreationProvider extends ChangeNotifier {
       });
       debugPrint('action_post response: $postResult');
 
-      // Check invoice state after posting
       final invoiceStateData = await client.callKw({
         'model': 'account.move',
         'method': 'read',
@@ -1043,6 +1025,7 @@ class InvoiceCreationProvider extends ChangeNotifier {
       return {'success': false, 'invoiceId': null, 'invoiceName': null};
     }
   }
+
   void resetForm() {
     _invoiceLines = [];
     _customerId = null;

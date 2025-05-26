@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
+import '../assets/widgets and consts/confirmation_dialogs.dart';
 import '../providers/sale_order_detail_provider.dart';
 
 class PaymentPage extends StatefulWidget {
@@ -155,16 +156,17 @@ class _PaymentPageState extends State<PaymentPage> {
 
       if (mounted) {
         HapticFeedback.lightImpact();
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Payment recorded successfully'),
-            backgroundColor: Colors.green,
-            duration: Duration(seconds: 3),
-          ),
-        );
-        Navigator.pop(context, updatedInvoiceData);
-      }
 
+        showProfessionalPaymentConfirmedDialog(
+          context,
+          invoiceNumber: widget.invoiceData['name'] ?? 'Draft',
+          paymentAmount: paymentAmount,
+          paymentDate: _selectedDate,
+          onConfirm: () {
+            Navigator.pop(context, updatedInvoiceData);
+          },
+        );
+      }
     } catch (e) {
       if (mounted) {
         String errorMessage = 'Failed to record payment. Please try again.';
@@ -209,7 +211,6 @@ class _PaymentPageState extends State<PaymentPage> {
         backgroundColor: primaryColor,
         foregroundColor: Colors.white,
         elevation: 0,
-        centerTitle: true,
       ),
       body: SafeArea(
         child: SingleChildScrollView(
@@ -223,7 +224,8 @@ class _PaymentPageState extends State<PaymentPage> {
                 Card(
                   elevation: elevation,
                   shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(borderRadius)),
+                    borderRadius: BorderRadius.circular(borderRadius),
+                  ),
                   child: Padding(
                     padding: const EdgeInsets.all(padding),
                     child: Column(
@@ -249,33 +251,73 @@ class _PaymentPageState extends State<PaymentPage> {
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            Text('Invoice Number:',
-                                style: TextStyle(color: Colors.grey[700])),
-                            Text(widget.invoiceData['name'] ?? 'Draft'),
+                            Text(
+                              'Invoice Number:',
+                              style: TextStyle(color: Colors.grey[700]),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                widget.invoiceData['name']?.toString() ??
+                                    'Draft',
+                                overflow: TextOverflow.ellipsis,
+                                textAlign: TextAlign.end,
+                              ),
+                            ),
                           ],
                         ),
                         const SizedBox(height: 8),
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            Text('Customer:',
-                                style: TextStyle(color: Colors.grey[700])),
-                            Text(widget.invoiceData['partner_id'] is List
-                                ? (widget.invoiceData['partner_id'] as List)[1]
-                                    as String
-                                : 'Unknown'),
+                            Text(
+                              'Customer:',
+                              style: TextStyle(color: Colors.grey[700]),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                widget.invoiceData['partner_id'] is List &&
+                                        (widget.invoiceData['partner_id']
+                                                    as List)
+                                                .length >
+                                            1
+                                    ? (widget.invoiceData['partner_id']
+                                            as List)[1]
+                                        .toString()
+                                    : widget.invoiceData['partner_id']
+                                            ?.toString() ??
+                                        'Unknown',
+                                overflow: TextOverflow.ellipsis,
+                                maxLines: 2,
+                                textAlign: TextAlign.end,
+                              ),
+                            ),
                           ],
                         ),
                         const SizedBox(height: 8),
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            Text('Remaining Balance:',
-                                style: TextStyle(color: Colors.grey[700])),
-                            Text(currencyFormat.format(remainingBalance),
+                            Text(
+                              'Remaining Balance:',
+                              style: TextStyle(color: Colors.grey[700]),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                currencyFormat.format(remainingBalance),
                                 style: const TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    color: primaryColor)),
+                                  fontWeight: FontWeight.bold,
+                                  color: primaryColor,
+                                ),
+                                overflow: TextOverflow.ellipsis,
+                                textAlign: TextAlign.end,
+                              ),
+                            ),
                           ],
                         ),
                       ],

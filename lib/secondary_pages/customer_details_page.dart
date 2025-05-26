@@ -5,9 +5,10 @@ import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
-import 'package:latest_van_sale_application/assets/widgets%20and%20consts/create_customer_page.dart';
+import 'package:latest_van_sale_application/secondary_pages/create_customer_page.dart';
 import 'package:photo_view/photo_view.dart';
 import 'package:provider/provider.dart';
+import 'package:shimmer/shimmer.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:latest_van_sale_application/assets/widgets%20and%20consts/page_transition.dart';
@@ -19,10 +20,7 @@ import '../providers/invoice_provider.dart';
 import '../providers/sale_order_provider.dart';
 import '1/invoice_list_page.dart';
 import 'customer_history_page.dart';
-import 'invoice_details_page.dart';
 import 'dart:io';
-
-// Assuming primaryColor and Customer class are defined elsewhere
 
 class ContactPerson {
   final String id;
@@ -238,7 +236,7 @@ class _CustomerDetailsPageState extends State<CustomerDetailsPage>
       ),
     ).then((value) {
       if (value == true) {
-        _fetchCustomerDetails(); // Refresh data after order creation
+        _fetchCustomerDetails();
       }
     });
   }
@@ -271,6 +269,10 @@ class _CustomerDetailsPageState extends State<CustomerDetailsPage>
         throw Exception('No active session. Please log in again.');
       }
 
+      if (widget.customer.id.isEmpty) {
+        throw Exception('Invalid customer ID');
+      }
+
       final result = await client.callKw({
         'model': 'res.partner',
         'method': 'geo_localize',
@@ -295,7 +297,7 @@ class _CustomerDetailsPageState extends State<CustomerDetailsPage>
             'fields': [
               'partner_latitude',
               'partner_longitude',
-              'date_localization'
+              // Removed 'date_localization'
             ],
             'limit': 1,
           },
@@ -312,8 +314,6 @@ class _CustomerDetailsPageState extends State<CustomerDetailsPage>
                 updatedData['partner_latitude'] ?? 0.0;
             _customerDetails['partner_longitude'] =
                 updatedData['partner_longitude'] ?? 0.0;
-            _customerDetails['date_localization'] =
-                updatedData['date_localization'] ?? null;
           });
 
           final orderPickingProvider =
@@ -350,11 +350,16 @@ class _CustomerDetailsPageState extends State<CustomerDetailsPage>
       }
     } catch (e) {
       debugPrint('Geolocalization error: $e');
+      String errorMessage = 'Failed to geolocalize: ${e.toString()}';
+      if (e.toString().contains('geo_localize')) {
+        errorMessage =
+            'Geolocalization is not set up in Odoo. Please contact your administrator to install and configure the "base_geolocalize" module in the Odoo backend.';
+      }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Failed to geolocalize: ${e.toString()}'),
+          content: Text(errorMessage),
           backgroundColor: Colors.red,
-          duration: const Duration(seconds: 3),
+          duration: const Duration(seconds: 5),
         ),
       );
     } finally {
@@ -379,7 +384,6 @@ class _CustomerDetailsPageState extends State<CustomerDetailsPage>
         throw Exception('Invalid customer ID');
       }
 
-      // Fetch customer details
       final customerResult = await client.callKw({
         'model': 'res.partner',
         'method': 'search_read',
@@ -420,7 +424,6 @@ class _CustomerDetailsPageState extends State<CustomerDetailsPage>
             'parent_id',
             'partner_latitude',
             'partner_longitude',
-            'date_localization',
           ],
         },
       });
@@ -430,8 +433,6 @@ class _CustomerDetailsPageState extends State<CustomerDetailsPage>
       }
 
       _customerDetails = customerResult[0];
-
-      // Fetch parent name if exists
       String? parentName;
       if (_customerDetails['parent_id'] != false &&
           _customerDetails['parent_id'] is List) {
@@ -454,7 +455,6 @@ class _CustomerDetailsPageState extends State<CustomerDetailsPage>
         }
       }
 
-      // Update detailed customer
       detailedCustomer = Customer(
         id: widget.customer.id,
         name: _safeString(_customerDetails['name']),
@@ -492,7 +492,6 @@ class _CustomerDetailsPageState extends State<CustomerDetailsPage>
         industryId: _safeGetId(_customerDetails['industry_id']),
       );
 
-      // Fetch sale orders
       final ordersResult = await client.callKw({
         'model': 'sale.order',
         'method': 'search_read',
@@ -535,9 +534,6 @@ class _CustomerDetailsPageState extends State<CustomerDetailsPage>
 
       _totalOrders = _saleOrders.length;
       _totalSpent = _saleOrders.fold(0, (sum, order) => sum + order.total);
-
-      // Fetch invoices
-// Fetch invoices
       final invoicesResult = await client.callKw({
         'model': 'account.move',
         'method': 'search_read',
@@ -549,7 +545,7 @@ class _CustomerDetailsPageState extends State<CustomerDetailsPage>
         ],
         'kwargs': {
           'fields': [
-            'id', // Add this
+            'id',
             'name',
             'invoice_date',
             'amount_total',
@@ -564,10 +560,9 @@ class _CustomerDetailsPageState extends State<CustomerDetailsPage>
       });
 
       _invoices = (invoicesResult as List)
-          .where((invoice) => invoice['id'] != null) // Skip invoices without ID
+          .where((invoice) => invoice['id'] != null)
           .map((invoice) => Invoice(
                 id: invoice['id'].toString(),
-                // Safe since we filtered null IDs
                 name: _safeString(invoice['name']),
                 date: invoice['invoice_date'] != false
                     ? DateTime.parse(invoice['invoice_date'].toString())
@@ -586,7 +581,6 @@ class _CustomerDetailsPageState extends State<CustomerDetailsPage>
       _openInvoices =
           _invoices.where((inv) => inv.paymentState == 'not_paid').length;
 
-      // Fetch delivery addresses
       final addressesResult = await client.callKw({
         'model': 'res.partner',
         'method': 'search_read',
@@ -630,7 +624,6 @@ class _CustomerDetailsPageState extends State<CustomerDetailsPage>
               ))
           .toList();
 
-      // Fetch contacts
       final contactsResult = await client.callKw({
         'model': 'res.partner',
         'method': 'search_read',
@@ -657,7 +650,6 @@ class _CustomerDetailsPageState extends State<CustomerDetailsPage>
               ))
           .toList();
 
-      // Fetch notes
       final notesResult = await client.callKw({
         'model': 'mail.message',
         'method': 'search_read',
@@ -687,7 +679,6 @@ class _CustomerDetailsPageState extends State<CustomerDetailsPage>
               ))
           .toList();
 
-      // Fetch pricing rules
       final partnerResult = await client.callKw({
         'model': 'res.partner',
         'method': 'search_read',
@@ -756,7 +747,6 @@ class _CustomerDetailsPageState extends State<CustomerDetailsPage>
               ))
           .toList();
 
-      // Calculate customer since
       if (_customerDetails['date'] != null &&
           _customerDetails['date'] != false) {
         _customerSince = DateFormat('MMMM yyyy')
@@ -769,7 +759,6 @@ class _CustomerDetailsPageState extends State<CustomerDetailsPage>
         );
       }
 
-      // Calculate sales statistics
       Map<String, double> salesByMonth = {};
       final now = DateTime.now();
       for (int i = 11; i >= 0; i--) {
@@ -865,7 +854,6 @@ class _CustomerDetailsPageState extends State<CustomerDetailsPage>
   }
 
   Future<void> _makePhoneCall(String? phoneNumber) async {
-    // Check if phoneNumber is null or empty
     if (phoneNumber == null ||
         phoneNumber.trim().isEmpty ||
         !_isValidPhoneNumber(phoneNumber)) {
@@ -881,7 +869,6 @@ class _CustomerDetailsPageState extends State<CustomerDetailsPage>
 
     final Uri phoneUri = Uri(scheme: 'tel', path: phoneNumber.trim());
     try {
-      // Check permission first
       final permissionStatus = await Permission.phone.request();
       if (!permissionStatus.isGranted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -893,8 +880,6 @@ class _CustomerDetailsPageState extends State<CustomerDetailsPage>
         );
         return;
       }
-
-      // Check if URL can be launched
       if (await canLaunchUrl(phoneUri)) {
         await launchUrl(phoneUri);
       } else {
@@ -917,10 +902,8 @@ class _CustomerDetailsPageState extends State<CustomerDetailsPage>
     }
   }
 
-// Helper function to validate phone number
   bool _isValidPhoneNumber(String phoneNumber) {
-    // Basic phone number validation (can be enhanced based on requirements)
-    final phoneRegExp = RegExp(r'^\+?[\d\s-]{7,}$');
+    final phoneRegExp = RegExp(r'^\+?[\d\s\-\(\)]{7,}$');
     return phoneRegExp.hasMatch(phoneNumber.trim());
   }
 
@@ -1041,6 +1024,195 @@ class _CustomerDetailsPageState extends State<CustomerDetailsPage>
     }
   }
 
+  Future<void> _deleteCustomer(BuildContext context, Customer customer) async {
+    if (customer.id.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Invalid customer ID. Cannot delete customer.'),
+          backgroundColor: Colors.red,
+          duration: Duration(seconds: 3),
+        ),
+      );
+      return;
+    }
+
+    // Check for dependencies (open orders or invoices)
+    bool hasDependencies =
+        _saleOrders.any((order) => order.state != 'cancel') ||
+            _invoices.any((invoice) => invoice.paymentState != 'paid');
+
+    if (hasDependencies) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+              'Cannot delete customer with open orders or unpaid invoices.'),
+          backgroundColor: Colors.orange,
+          duration: Duration(seconds: 4),
+        ),
+      );
+      return;
+    }
+
+    // Show confirmation dialog
+    bool? confirmDelete = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          title: Row(
+            children: [
+              Icon(Icons.warning_amber_rounded,
+                  color: Colors.red[600], size: 28),
+              const SizedBox(width: 8),
+              const Text(
+                'Delete Customer',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 18,
+                  color: Colors.black87,
+                ),
+              ),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Are you sure you want to delete ${customer.name}?',
+                style: const TextStyle(
+                  fontSize: 16,
+                  color: Colors.black87,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'This action is permanent and cannot be undone.',
+                style: TextStyle(
+                  fontSize: 14,
+                  color: Colors.grey[600],
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text(
+                'Cancel',
+                style: TextStyle(
+                  color: Colors.grey,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(context, true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red[600],
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              ),
+              child: const Text(
+                'Delete',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirmDelete != true) return;
+
+    // Show loading dialog
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return Dialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: const Padding(
+            padding: EdgeInsets.all(16),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(),
+                SizedBox(width: 16),
+                Text('Deleting customer...'),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+
+    try {
+      final client = await SessionManager.getActiveClient();
+      if (client == null) {
+        throw Exception('No active session. Please log in again.');
+      }
+
+      // Delete the customer using Odoo's unlink method
+      final result = await client.callKw({
+        'model': 'res.partner',
+        'method': 'unlink',
+        'args': [
+          [int.parse(customer.id)]
+        ],
+        'kwargs': {},
+      });
+
+      if (result == true) {
+        // Update the provider
+        final orderPickingProvider =
+            Provider.of<OrderPickingProvider>(context, listen: false);
+        orderPickingProvider.customers.removeWhere((c) => c.id == customer.id);
+        orderPickingProvider.notifyListeners();
+
+        // Close loading dialog
+        Navigator.pop(context);
+
+        // Show success message
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Customer deleted successfully'),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 3),
+          ),
+        );
+
+        // Navigate back
+        Navigator.pop(context);
+      } else {
+        throw Exception('Failed to delete customer');
+      }
+    } catch (e) {
+      // Close loading dialog
+      Navigator.pop(context);
+
+      // Show error message
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to delete customer: ${e.toString()}'),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 4),
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -1054,7 +1226,9 @@ class _CustomerDetailsPageState extends State<CustomerDetailsPage>
         ),
         title: const Text(
           'Customer Profile',
-          style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+          style: TextStyle(
+            color: Colors.white,
+          ),
         ),
         actions: [
           PopupMenuButton<String>(
@@ -1079,6 +1253,9 @@ class _CustomerDetailsPageState extends State<CustomerDetailsPage>
                 case 'create':
                   showCreateOrderSheet(context, widget.customer);
                   break;
+                case 'delete':
+                  _deleteCustomer(context, widget.customer);
+                  break;
               }
             },
             itemBuilder: (BuildContext context) => [
@@ -1090,23 +1267,15 @@ class _CustomerDetailsPageState extends State<CustomerDetailsPage>
                   value: 'call', child: Text('Call Customer')),
               const PopupMenuItem<String>(
                   value: 'whatsapp', child: Text('Message on WhatsApp')),
+              const PopupMenuItem<String>(
+                  value: 'delete', child: Text('Delete Customer')),
             ],
           ),
           const SizedBox(width: 8),
         ],
       ),
       body: _isLoading
-          ? Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  CircularProgressIndicator(color: primaryColor),
-                  const SizedBox(height: 16),
-                  Text('Loading customer details...',
-                      style: TextStyle(color: Colors.grey[600])),
-                ],
-              ),
-            )
+          ? CustomerDetailsShimmer()
           : Column(
               children: [
                 Container(
@@ -1141,15 +1310,17 @@ class _CustomerDetailsPageState extends State<CustomerDetailsPage>
                               },
                               child: CircleAvatar(
                                 radius: 40,
-                                backgroundColor: primaryColor.withOpacity(0.2),
-                                child: widget.customer.imageUrl != null &&
-                                        widget.customer.imageUrl!.isNotEmpty
+                                backgroundColor:
+                                    Colors.blueGrey.withOpacity(0.1),
+                                child: detailedCustomer != null &&
+                                        detailedCustomer!.imageUrl != null &&
+                                        detailedCustomer!.imageUrl!.isNotEmpty
                                     ? ClipOval(
-                                        child: widget.customer.imageUrl!
+                                        child: detailedCustomer!.imageUrl!
                                                 .startsWith('http')
                                             ? CachedNetworkImage(
                                                 imageUrl:
-                                                    widget.customer.imageUrl!,
+                                                    detailedCustomer!.imageUrl!,
                                                 width: 80,
                                                 height: 80,
                                                 fit: BoxFit.cover,
@@ -1165,8 +1336,8 @@ class _CustomerDetailsPageState extends State<CustomerDetailsPage>
                                                         _buildAvatarFallback(),
                                               )
                                             : Image.memory(
-                                                base64Decode(widget
-                                                    .customer.imageUrl!
+                                                base64Decode(detailedCustomer!
+                                                    .imageUrl!
                                                     .split(',')
                                                     .last),
                                                 width: 80,
@@ -1177,7 +1348,45 @@ class _CustomerDetailsPageState extends State<CustomerDetailsPage>
                                                     _buildAvatarFallback(),
                                               ),
                                       )
-                                    : _buildAvatarFallback(),
+                                    : widget.customer.imageUrl != null &&
+                                            widget.customer.imageUrl!.isNotEmpty
+                                        ? ClipOval(
+                                            child: widget.customer.imageUrl!
+                                                    .startsWith('http')
+                                                ? CachedNetworkImage(
+                                                    imageUrl: widget
+                                                        .customer.imageUrl!,
+                                                    width: 80,
+                                                    height: 80,
+                                                    fit: BoxFit.cover,
+                                                    placeholder:
+                                                        (context, url) =>
+                                                            Center(
+                                                      child:
+                                                          CircularProgressIndicator(
+                                                              strokeWidth: 2,
+                                                              color:
+                                                                  primaryColor),
+                                                    ),
+                                                    errorWidget: (context, url,
+                                                            error) =>
+                                                        _buildAvatarFallback(),
+                                                  )
+                                                : Image.memory(
+                                                    base64Decode(widget
+                                                        .customer.imageUrl!
+                                                        .split(',')
+                                                        .last),
+                                                    width: 80,
+                                                    height: 80,
+                                                    fit: BoxFit.cover,
+                                                    errorBuilder: (context,
+                                                            error,
+                                                            stackTrace) =>
+                                                        _buildAvatarFallback(),
+                                                  ),
+                                          )
+                                        : _buildAvatarFallback(),
                               ),
                             ),
                             const SizedBox(width: 16),
@@ -1193,9 +1402,13 @@ class _CustomerDetailsPageState extends State<CustomerDetailsPage>
                                           CrossAxisAlignment.start,
                                       children: [
                                         Text(
-                                          widget.customer.name.isNotEmpty
-                                              ? widget.customer.name
-                                              : 'Unnamed Customer',
+                                          detailedCustomer != null &&
+                                                  detailedCustomer!
+                                                      .name.isNotEmpty
+                                              ? detailedCustomer!.name
+                                              : widget.customer.name.isNotEmpty
+                                                  ? widget.customer.name
+                                                  : 'Unnamed Customer',
                                           style: const TextStyle(
                                               fontSize: 22,
                                               fontWeight: FontWeight.bold),
@@ -1243,6 +1456,33 @@ class _CustomerDetailsPageState extends State<CustomerDetailsPage>
                                             ),
                                           ],
                                         ),
+                                        if (detailedCustomer != null &&
+                                            detailedCustomer!.parentName !=
+                                                null &&
+                                            detailedCustomer!
+                                                .parentName!.isNotEmpty) ...[
+                                          const SizedBox(height: 4),
+                                          Row(
+                                            children: [
+                                              Icon(Icons.business,
+                                                  size: 16,
+                                                  color: Colors.grey[600]),
+                                              const SizedBox(width: 4),
+                                              Expanded(
+                                                child: Text(
+                                                  'Company: ${detailedCustomer!.parentName}',
+                                                  style: TextStyle(
+                                                      color: Colors.grey[600],
+                                                      fontSize: 14),
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                  softWrap: true,
+                                                  maxLines: 1,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ],
                                       ],
                                     ),
                                   ),
@@ -1276,7 +1516,12 @@ class _CustomerDetailsPageState extends State<CustomerDetailsPage>
                                                   },
                                                 ),
                                               ),
-                                            );
+                                            ).then((_) {
+                                              // Refresh the page when returning from CreateCustomerPage
+                                              setState(() {
+                                                _fetchCustomerDetails();
+                                              });
+                                            });
                                           },
                                     icon: Icon(Icons.edit, color: Colors.grey),
                                   ),
@@ -1317,9 +1562,16 @@ class _CustomerDetailsPageState extends State<CustomerDetailsPage>
                   child: TabBarView(
                     controller: _tabController,
                     children: [
-                      _buildInfoTab(),
-                      _buildInvoicesTab(),
-                      _buildAnalyticsTab(),
+                      RefreshIndicator(
+                          onRefresh: _fetchCustomerDetails,
+                          child: _buildInfoTab()),
+                      RefreshIndicator(
+                        onRefresh: _fetchCustomerDetails,
+                        child: _buildInvoicesTab(),
+                      ),
+                      RefreshIndicator(
+                          onRefresh: _fetchCustomerDetails,
+                          child: _buildAnalyticsTab()),
                     ],
                   ),
                 ),
@@ -1329,10 +1581,14 @@ class _CustomerDetailsPageState extends State<CustomerDetailsPage>
   }
 
   Widget _buildAvatarFallback() {
+    final displayName =
+        detailedCustomer != null && detailedCustomer!.name.isNotEmpty
+            ? detailedCustomer!.name
+            : widget.customer.name.isNotEmpty
+                ? widget.customer.name
+                : 'C';
     return Text(
-      widget.customer.name.isNotEmpty
-          ? widget.customer.name.substring(0, 1).toUpperCase()
-          : 'C',
+      displayName.substring(0, 1).toUpperCase(),
       style: TextStyle(
           fontSize: 32, fontWeight: FontWeight.bold, color: primaryColor),
     );
@@ -1458,6 +1714,13 @@ class _CustomerDetailsPageState extends State<CustomerDetailsPage>
           _safeString(_customerDetails['website']),
           onTap: () => _launchWebsite(_safeString(_customerDetails['website'])),
         ),
+        if (detailedCustomer?.parentName != null &&
+            detailedCustomer!.parentName!.isNotEmpty)
+          _buildInfoRow(
+            Icons.business_rounded,
+            'Parent Company',
+            _safeString(detailedCustomer!.parentName),
+          ),
         _buildInfoRow(
           Icons.fingerprint,
           'VAT',
@@ -1519,16 +1782,16 @@ class _CustomerDetailsPageState extends State<CustomerDetailsPage>
               ? '${detailedCustomer!.latitude}, ${detailedCustomer!.longitude}'
               : 'Not geolocalized',
         ),
-        _buildInfoRow(
-          Icons.calendar_today,
-          'Last Geolocalized',
-          _customerDetails['date_localization'] != null &&
-                  _customerDetails['date_localization'] != false
-              ? DateFormat('MMM d, yyyy')
-                  .format(DateTime.parse(_customerDetails['date_localization']))
-              : 'Never',
-        ),
-        const SizedBox(height: 12),
+        // _buildInfoRow(
+        //   Icons.calendar_today,
+        //   'Last Geolocalized',
+        //   _customerDetails['date_localization'] != null &&
+        //           _customerDetails['date_localization'] != false
+        //       ? DateFormat('MMM d, yyyy')
+        //           .format(DateTime.parse(_customerDetails['date_localization']))
+        //       : 'Never',
+        // // ),
+        // const SizedBox(height: 12),
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
@@ -1685,7 +1948,6 @@ class _CustomerDetailsPageState extends State<CustomerDetailsPage>
                   );
                   return;
                 }
-                // Implement add new delivery address functionality
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
                     content: Text(
@@ -1758,7 +2020,6 @@ class _CustomerDetailsPageState extends State<CustomerDetailsPage>
                     icon: const Icon(Icons.map, size: 18),
                     color: primaryColor,
                     onPressed: () {
-                      // Implement map view for address
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
                           content: Text('Map view for address not implemented'),
@@ -1775,7 +2036,6 @@ class _CustomerDetailsPageState extends State<CustomerDetailsPage>
                     icon: const Icon(Icons.edit, size: 18),
                     color: Colors.grey,
                     onPressed: () {
-                      // Implement edit address functionality
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
                           content: Text('Edit address feature not implemented'),
@@ -1852,6 +2112,10 @@ class _CustomerDetailsPageState extends State<CustomerDetailsPage>
               return InvoiceCard(
                 invoice: invoiceMap,
                 provider: Provider.of<InvoiceProvider>(context, listen: false),
+                onRefresh: () {
+
+                  _fetchCustomerDetails();
+                },
               );
             },
           );
@@ -1948,11 +2212,12 @@ class _CustomerDetailsPageState extends State<CustomerDetailsPage>
                             leftTitles: AxisTitles(
                               sideTitles: SideTitles(
                                 showTitles: true,
-                                reservedSize: 40,
+                                reservedSize: 45,
                                 getTitlesWidget: (value, meta) {
                                   return Text(
                                     '\$${value.toInt()}',
                                     style: const TextStyle(fontSize: 12),
+                                    overflow: TextOverflow.ellipsis,
                                   );
                                 },
                               ),
@@ -2018,22 +2283,18 @@ class PhotoViewer extends StatelessWidget {
     );
   }
 
-  // Helper method to determine the correct image provider
   ImageProvider _getImageProvider(String url) {
     if (url.startsWith('http')) {
       return NetworkImage(url);
     } else if (url.startsWith('data:image')) {
-      // Handle base64 image data
       final base64Data = url.split(',').last;
       return MemoryImage(base64Decode(base64Data));
     } else {
-      // Assume it's already a base64 string without prefix
       return MemoryImage(base64Decode(url));
     }
   }
 }
 
-// Example of image thumbnail with proper tap to view
 Widget buildImageThumbnail(BuildContext context, List<String> imageGallery) {
   return GestureDetector(
     onTap: () {
@@ -2083,7 +2344,6 @@ Widget _buildImageContent(String imageUrl) {
       ),
     );
   } else if (imageUrl.startsWith('http')) {
-    // Handle network images
     return CachedNetworkImage(
       imageUrl: imageUrl,
       fit: BoxFit.cover,
@@ -2099,7 +2359,6 @@ Widget _buildImageContent(String imageUrl) {
       ),
     );
   } else {
-    // Assume it's already a base64 string without prefix
     return Image.memory(
       base64Decode(imageUrl),
       fit: BoxFit.cover,
@@ -2114,7 +2373,6 @@ Widget _buildImageContent(String imageUrl) {
   }
 }
 
-// Extension to add copyWith to Customer class
 extension CustomerExtension on Customer {
   Customer copyWith({
     String? id,
@@ -2175,6 +2433,342 @@ extension CustomerExtension on Customer {
       latitude: latitude ?? this.latitude,
       longitude: longitude ?? this.longitude,
       industryId: industryId ?? this.industryId,
+    );
+  }
+}
+
+class CustomerDetailsShimmer extends StatelessWidget {
+  const CustomerDetailsShimmer({Key? key}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        // Header Shimmer
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+          color: Colors.white,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Shimmer.fromColors(
+                baseColor: Colors.grey[300]!,
+                highlightColor: Colors.grey[100]!,
+                child: CircleAvatar(
+                  radius: 40,
+                  backgroundColor: Colors.white,
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Shimmer.fromColors(
+                      baseColor: Colors.grey[300]!,
+                      highlightColor: Colors.grey[100]!,
+                      child: Container(
+                        width: double.infinity,
+                        height: 22,
+                        color: Colors.white,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Shimmer.fromColors(
+                      baseColor: Colors.grey[300]!,
+                      highlightColor: Colors.grey[100]!,
+                      child: Container(
+                        width: 150,
+                        height: 14,
+                        color: Colors.white,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Shimmer.fromColors(
+                      baseColor: Colors.grey[300]!,
+                      highlightColor: Colors.grey[100]!,
+                      child: Container(
+                        width: 100,
+                        height: 14,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Shimmer.fromColors(
+                baseColor: Colors.grey[300]!,
+                highlightColor: Colors.grey[100]!,
+                child: Container(
+                  width: 40,
+                  height: 40,
+                  color: Colors.white,
+                ),
+              ),
+            ],
+          ),
+        ),
+        // Quick Stats Shimmer
+        Container(
+          padding: const EdgeInsets.symmetric(vertical: 0, horizontal: 12),
+          color: Colors.white,
+          child: IntrinsicHeight(
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: List.generate(
+                3,
+                (index) => Expanded(
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Column(
+                        children: [
+                          Shimmer.fromColors(
+                            baseColor: Colors.grey[300]!,
+                            highlightColor: Colors.grey[100]!,
+                            child: Container(
+                              width: 60,
+                              height: 16,
+                              color: Colors.white,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Shimmer.fromColors(
+                            baseColor: Colors.grey[300]!,
+                            highlightColor: Colors.grey[100]!,
+                            child: Container(
+                              width: 80,
+                              height: 12,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (index < 2)
+                        VerticalDivider(
+                          thickness: 1,
+                          width: 1,
+                          indent: 12,
+                          endIndent: 12,
+                          color: Colors.grey[200],
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Divider(height: 1, color: Colors.grey[200]),
+        // Tab Bar Shimmer
+        Container(
+          height: 48,
+          color: Colors.white,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: List.generate(
+              3,
+              (index) => Shimmer.fromColors(
+                baseColor: Colors.grey[300]!,
+                highlightColor: Colors.grey[100]!,
+                child: Container(
+                  width: 100,
+                  height: 30,
+                  color: Colors.white,
+                ),
+              ),
+            ),
+          ),
+        ),
+        // Info Tab Content Shimmer
+        Expanded(
+          child: ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              _buildCardShimmer(titleWidth: 150, rows: 7), // Contact Info
+              const SizedBox(height: 16),
+              _buildCardShimmer(
+                  titleWidth: 100, rows: 7, withButtons: true), // Address
+              const SizedBox(height: 16),
+              _buildCardShimmer(titleWidth: 150, rows: 2), // Financial Info
+              const SizedBox(height: 16),
+              _buildDeliveryAddressesShimmer(), // Delivery Addresses
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCardShimmer({
+    required double titleWidth,
+    required int rows,
+    bool withButtons = false,
+  }) {
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Shimmer.fromColors(
+              baseColor: Colors.grey[300]!,
+              highlightColor: Colors.grey[100]!,
+              child: Container(
+                width: titleWidth,
+                height: 16,
+                color: Colors.white,
+              ),
+            ),
+            const SizedBox(height: 8),
+            const Divider(height: 1, color: Colors.grey),
+            const SizedBox(height: 8),
+            ...List.generate(
+              rows,
+              (i) => Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Row(
+                  children: [
+                    Shimmer.fromColors(
+                      baseColor: Colors.grey[300]!,
+                      highlightColor: Colors.grey[100]!,
+                      child: Container(
+                        width: 20,
+                        height: 20,
+                        color: Colors.white,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Shimmer.fromColors(
+                        baseColor: Colors.grey[300]!,
+                        highlightColor: Colors.grey[100]!,
+                        child: Container(
+                          height: 14,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            if (withButtons) ...[
+              const SizedBox(height: 12),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Shimmer.fromColors(
+                    baseColor: Colors.grey[300]!,
+                    highlightColor: Colors.grey[100]!,
+                    child: Container(
+                      width: 120,
+                      height: 36,
+                      color: Colors.white,
+                    ),
+                  ),
+                  Shimmer.fromColors(
+                    baseColor: Colors.grey[300]!,
+                    highlightColor: Colors.grey[100]!,
+                    child: Container(
+                      width: 120,
+                      height: 36,
+                      color: Colors.white,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDeliveryAddressesShimmer() {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Shimmer.fromColors(
+                  baseColor: Colors.grey[300]!,
+                  highlightColor: Colors.grey[100]!,
+                  child: Container(
+                    width: 150,
+                    height: 16,
+                    color: Colors.white,
+                  ),
+                ),
+                Shimmer.fromColors(
+                  baseColor: Colors.grey[300]!,
+                  highlightColor: Colors.grey[100]!,
+                  child: Container(
+                    width: 20,
+                    height: 20,
+                    color: Colors.white,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            const Divider(height: 1, color: Colors.grey),
+            const SizedBox(height: 8),
+            ...List.generate(
+              2,
+              (index) => Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.grey[100],
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Shimmer.fromColors(
+                      baseColor: Colors.grey[300]!,
+                      highlightColor: Colors.grey[100]!,
+                      child: Container(
+                        width: 100,
+                        height: 14,
+                        color: Colors.white,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Shimmer.fromColors(
+                      baseColor: Colors.grey[300]!,
+                      highlightColor: Colors.grey[100]!,
+                      child: Container(
+                        width: double.infinity,
+                        height: 12,
+                        color: Colors.white,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Shimmer.fromColors(
+                      baseColor: Colors.grey[300]!,
+                      highlightColor: Colors.grey[100]!,
+                      child: Container(
+                        width: 150,
+                        height: 12,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

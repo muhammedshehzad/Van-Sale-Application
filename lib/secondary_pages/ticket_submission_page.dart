@@ -6,6 +6,7 @@ import 'package:path/path.dart' as path;
 import 'package:shimmer/shimmer.dart';
 import 'dart:convert';
 import 'dart:typed_data';
+import '../assets/widgets and consts/confirmation_dialogs.dart';
 import '../authentication/cyllo_session_model.dart';
 import '../providers/order_picking_provider.dart';
 
@@ -25,6 +26,7 @@ class _TicketSubmissionPageState extends State<TicketSubmissionPage> {
   final _emailController = TextEditingController();
   final _subjectController = TextEditingController();
   final _messageController = TextEditingController();
+  final _complainantNameController = TextEditingController();
   String _selectedCategory = 'Delivery Error';
   bool _isSubmitting = false;
   List<FileAttachment> _attachments = [];
@@ -41,7 +43,24 @@ class _TicketSubmissionPageState extends State<TicketSubmissionPage> {
   @override
   void initState() {
     super.initState();
+    _fetchLoggedInUserName();
     _emailController.text = widget.agentEmail;
+  }
+
+  Future<void> _fetchLoggedInUserName() async {
+    try {
+      final session = await SessionManager.getCurrentSession();
+      if (session != null) {
+        setState(() {
+          _complainantNameController.text = session.userName;
+        });
+      } else {
+        // Handle case where no session is found (optional)
+        _showErrorSnackBar('No active session found');
+      }
+    } catch (e) {
+      _showErrorSnackBar('Failed to fetch user name: $e');
+    }
   }
 
   @override
@@ -50,6 +69,7 @@ class _TicketSubmissionPageState extends State<TicketSubmissionPage> {
     _emailController.dispose();
     _subjectController.dispose();
     _messageController.dispose();
+    _complainantNameController.dispose();
     super.dispose();
   }
 
@@ -60,41 +80,96 @@ class _TicketSubmissionPageState extends State<TicketSubmissionPage> {
         title: const Text('Submit Support Ticket'),
         backgroundColor: primaryColor,
         foregroundColor: Colors.white,
+        elevation: 0, // Remove shadow for a cleaner look
       ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(20),
         child: Form(
           key: _formKey,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                "Submit a ticket for delivery or app-related issues. We'll respond promptly.",
-                style: TextStyle(fontSize: 14),
-              ),
-              const SizedBox(height: 24),
-              TextFormField(
-                controller: _agentIdController,
-                decoration: const InputDecoration(
-                  labelText: 'Agent ID',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.badge_outlined),
+              Container(
+                padding: const EdgeInsets.all(16),
+                width: double.infinity,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.grey.withOpacity(0.1),
+                      spreadRadius: 1,
+                      blurRadius: 5,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                  border: Border.all(color: primaryColor.withOpacity(0.2)),
                 ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(
+                      Icons.info_outline,
+                      color: primaryColor,
+                      size: 24,
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Text(
+                        "Submit a support ticket for delivery, app, or account issues. Our dedicated team reviews each request carefully and will get back to you promptly with a tailored solution.",
+                        style: TextStyle(
+                          fontSize: 14,
+                          height: 1.5,
+                          color: Colors.grey[800],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 28),
+
+              // Section title
+              const Padding(
+                padding: EdgeInsets.only(bottom: 16),
+                child: Text(
+                  "Contact Information",
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+
+              // Improved form fields with consistent styling
+              _buildFormField(
+                controller: _agentIdController,
+                label: 'Agent ID',
+                icon: Icons.badge_outlined,
+                validator: (value) {
+                  // if (value == null || value.isEmpty) {
+                  //   return 'Please enter your Agent ID';
+                  // }
+                  // return null;
+                },
+              ),
+
+              _buildFormField(
+                controller: _complainantNameController,
+                label: 'Complainant Name',
+                icon: Icons.person_outline,
                 validator: (value) {
                   if (value == null || value.isEmpty) {
-                    return 'Please enter your Agent ID';
+                    return 'Please enter the complainant\'s name';
                   }
                   return null;
                 },
               ),
-              const SizedBox(height: 16),
-              TextFormField(
+
+              _buildFormField(
                 controller: _emailController,
-                decoration: const InputDecoration(
-                  labelText: 'Work Email',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.email_outlined),
-                ),
+                label: 'Work Email',
+                icon: Icons.email_outlined,
                 keyboardType: TextInputType.emailAddress,
                 validator: (value) {
                   if (value == null || value.isEmpty) {
@@ -106,141 +181,256 @@ class _TicketSubmissionPageState extends State<TicketSubmissionPage> {
                   return null;
                 },
               ),
-              const SizedBox(height: 16),
-              DropdownButtonFormField<String>(
-                value: _selectedCategory,
-                decoration: const InputDecoration(
-                  labelText: 'Issue Category',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.category_outlined),
+
+              const SizedBox(height: 28),
+              const Padding(
+                padding: EdgeInsets.only(bottom: 16),
+                child: Text(
+                  "Ticket Details",
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
-                items: _categories.map((String category) {
-                  return DropdownMenuItem<String>(
-                    value: category,
-                    child: Text(category),
-                  );
-                }).toList(),
-                onChanged: (String? newValue) {
-                  if (newValue != null) {
-                    setState(() {
-                      _selectedCategory = newValue;
-                    });
-                  }
-                },
-                validator: (value) {
-                  if (value == null) {
-                    return 'Please select a category';
-                  }
-                  return null;
-                },
               ),
-              const SizedBox(height: 16),
-              TextFormField(
-                controller: _subjectController,
-                decoration: const InputDecoration(
-                  labelText: 'Subject',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.subject),
+
+              // Dropdown with consistent styling
+              Container(
+                margin: const EdgeInsets.only(bottom: 16),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(12),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.grey.withOpacity(0.1),
+                      spreadRadius: 1,
+                      blurRadius: 5,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
                 ),
+                child: DropdownButtonFormField<String>(
+                  value: _selectedCategory,
+                  decoration: InputDecoration(
+                    labelText: 'Issue Category',
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(color: Colors.grey.shade300),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(color: Colors.grey.shade300),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(color: primaryColor, width: 2),
+                    ),
+                    filled: true,
+                    fillColor: Colors.white,
+                    prefixIcon:
+                        Icon(Icons.category_outlined, color: primaryColor),
+                    contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 16, vertical: 16),
+                  ),
+                  items: _categories.map((String category) {
+                    return DropdownMenuItem<String>(
+                      value: category,
+                      child: Text(category),
+                    );
+                  }).toList(),
+                  onChanged: (String? newValue) {
+                    if (newValue != null) {
+                      setState(() {
+                        _selectedCategory = newValue;
+                      });
+                    }
+                  },
+                  validator: (value) {
+                    if (value == null) {
+                      return 'Please select a category';
+                    }
+                    return null;
+                  },
+                  icon: Icon(Icons.arrow_drop_down, color: primaryColor),
+                  isExpanded: true,
+                  dropdownColor: Colors.white,
+                ),
+              ),
+
+              _buildFormField(
+                controller: _subjectController,
+                label: 'Subject',
+                icon: Icons.subject,
                 validator: (value) {
                   if (value == null || value.isEmpty) {
                     return 'Please enter a subject';
                   }
                   return null;
                 },
+                maxLines: 1,
               ),
-              const SizedBox(height: 16),
-              TextFormField(
-                controller: _messageController,
-                decoration: const InputDecoration(
-                  labelText: 'Describe the Issue',
-                  border: OutlineInputBorder(),
-                  alignLabelWithHint: true,
-                  prefixIcon: Icon(Icons.message_outlined),
+
+              // Description field with more space
+              Container(
+                margin: const EdgeInsets.only(bottom: 24),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(12),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.grey.withOpacity(0.1),
+                      spreadRadius: 1,
+                      blurRadius: 5,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
                 ),
-                maxLines: 5,
-                validator: (value) {
-                  if (value == null || value.isEmpty) {
-                    return 'Please describe the issue';
-                  }
-                  return null;
-                },
+                child: TextFormField(
+                  controller: _messageController,
+                  decoration: InputDecoration(
+                    labelText: 'Describe the Issue',
+                    alignLabelWithHint: true,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(color: Colors.grey.shade300),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(color: Colors.grey.shade300),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(color: primaryColor, width: 2),
+                    ),
+                    filled: true,
+                    fillColor: Colors.white,
+                    prefixIcon: Icon(
+                      Icons.message_outlined,
+                      color: primaryColor,
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 16, vertical: 16),
+                  ),
+                  maxLines: 6,
+                  validator: (value) {
+                    if (value == null || value.isEmpty) {
+                      return 'Please describe the issue';
+                    }
+                    return null;
+                  },
+                ),
               ),
-              const SizedBox(height: 24),
+
+              // Enhanced attachments card
               Card(
-                elevation: 1,
-                margin: const EdgeInsets.only(bottom: 20),
+                elevation: 2,
+                margin: const EdgeInsets.only(bottom: 28),
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  side: BorderSide(color: Colors.grey.shade300),
+                  borderRadius: BorderRadius.circular(12),
                 ),
                 child: Padding(
-                  padding: const EdgeInsets.all(12.0),
+                  padding: const EdgeInsets.all(20.0),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
-                        'Attachments',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                        ),
+                      Row(
+                        children: [
+                          Icon(Icons.attach_file, color: primaryColor),
+                          const SizedBox(width: 8),
+                          const Text(
+                            'Attachments',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
                       ),
-                      const SizedBox(height: 8),
+                      const SizedBox(height: 16),
                       if (_attachments.isNotEmpty) ...[
-                        const Divider(),
-                        ListView.builder(
-                          shrinkWrap: true,
-                          physics: const NeverScrollableScrollPhysics(),
-                          itemCount: _attachments.length,
-                          itemBuilder: (context, index) {
-                            final attachment = _attachments[index];
-                            return ListTile(
-                              leading: _getFileIcon(attachment.type),
-                              title: Text(
-                                attachment.name,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                              subtitle: Text(
-                                '${_formatFileSize(attachment.size)} - ${attachment.type}',
-                                style: TextStyle(
-                                    fontSize: 12, color: Colors.grey.shade600),
-                              ),
-                              trailing: IconButton(
-                                icon: const Icon(Icons.delete_outline,
-                                    color: Colors.red),
-                                onPressed: () => _removeAttachment(index),
-                              ),
-                              contentPadding: EdgeInsets.zero,
-                              dense: true,
-                              onTap: () => _previewAttachment(attachment),
-                            );
-                          },
+                        Container(
+                          decoration: BoxDecoration(
+                            color: Colors.grey.shade50,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: ListView.separated(
+                            shrinkWrap: true,
+                            physics: const NeverScrollableScrollPhysics(),
+                            itemCount: _attachments.length,
+                            separatorBuilder: (context, index) =>
+                                Divider(height: 1, color: Colors.grey.shade200),
+                            itemBuilder: (context, index) {
+                              final attachment = _attachments[index];
+                              return ListTile(
+                                leading: Container(
+                                  padding: const EdgeInsets.all(8),
+                                  decoration: BoxDecoration(
+                                    color: Colors.grey.withOpacity(0.1),
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: _getFileIcon(attachment.type),
+                                ),
+                                title: Text(
+                                  attachment.name,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.w500),
+                                ),
+                                subtitle: Text(
+                                  '${_formatFileSize(attachment.size)} - ${attachment.type}',
+                                  style: TextStyle(
+                                      fontSize: 12,
+                                      color: Colors.grey.shade600),
+                                ),
+                                trailing: IconButton(
+                                  icon: Icon(Icons.delete_outline,
+                                      color: Colors.red.shade400),
+                                  onPressed: () => _removeAttachment(index),
+                                ),
+                                contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 12, vertical: 4),
+                                onTap: () => _previewAttachment(attachment),
+                              );
+                            },
+                          ),
                         ),
-                        const Divider(),
+                        const SizedBox(height: 16),
                       ],
                       Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                         children: [
                           Expanded(
-                            child: OutlinedButton.icon(
+                            child: ElevatedButton.icon(
                               onPressed: _addImageAttachment,
                               icon: const Icon(Icons.photo_camera),
                               label: const Text('Camera'),
-                              style: OutlinedButton.styleFrom(
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.white,
                                 foregroundColor: primaryColor,
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 12),
+                                elevation: 0,
+                                side: BorderSide(color: primaryColor),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
                               ),
                             ),
                           ),
-                          const SizedBox(width: 8),
+                          const SizedBox(width: 12),
                           Expanded(
-                            child: OutlinedButton.icon(
+                            child: ElevatedButton.icon(
                               onPressed: _addGalleryAttachment,
                               icon: const Icon(Icons.photo_library),
                               label: const Text('Gallery'),
-                              style: OutlinedButton.styleFrom(
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.white,
                                 foregroundColor: primaryColor,
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 12),
+                                elevation: 0,
+                                side: BorderSide(color: primaryColor),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
                               ),
                             ),
                           ),
@@ -250,31 +440,98 @@ class _TicketSubmissionPageState extends State<TicketSubmissionPage> {
                   ),
                 ),
               ),
+
+              // Enhanced submit button
               SizedBox(
                 width: double.infinity,
+                height: 54,
                 child: ElevatedButton(
                   onPressed: _isSubmitting ? null : _submitTicket,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: primaryColor,
                     foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    elevation: 3,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
                   ),
                   child: _isSubmitting
                       ? const SizedBox(
-                          height: 20,
-                          width: 20,
+                          height: 24,
+                          width: 24,
                           child: CircularProgressIndicator(
-                            strokeWidth: 2,
+                            strokeWidth: 2.5,
                             valueColor:
                                 AlwaysStoppedAnimation<Color>(Colors.white),
                           ),
                         )
-                      : const Text('SUBMIT TICKET'),
+                      : const Text(
+                          'SUBMIT TICKET',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: 1.2,
+                          ),
+                        ),
                 ),
               ),
+              const SizedBox(height: 32),
             ],
           ),
         ),
+      ),
+    );
+  }
+
+// Helper method for consistent form field styling
+  Widget _buildFormField({
+    required TextEditingController controller,
+    required String label,
+    required IconData icon,
+    TextInputType? keyboardType,
+    String? Function(String?)? validator,
+    int? maxLines, // New parameter
+  }) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.grey.withOpacity(0.1),
+            spreadRadius: 1,
+            blurRadius: 5,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: TextFormField(
+        controller: controller,
+        decoration: InputDecoration(
+          labelText: label,
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: BorderSide(color: Colors.grey.shade300),
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: BorderSide(color: Colors.grey.shade300),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: BorderSide(color: primaryColor, width: 2),
+          ),
+          filled: true,
+          fillColor: Colors.white,
+          prefixIcon: Icon(icon, color: primaryColor),
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+        ),
+        keyboardType: keyboardType,
+        validator: validator,
+        maxLines: maxLines ?? 1,
+        // Apply maxLines, default to 1
+        enabled: true,
       ),
     );
   }
@@ -457,20 +714,21 @@ class _TicketSubmissionPageState extends State<TicketSubmissionPage> {
           throw Exception('No active Odoo session');
         }
 
-        // Find or create partner based on email
         final partnerId = await _resolvePartnerId(_emailController.text);
         if (partnerId == null) {
           throw Exception('Could not find or create partner for email');
         }
 
-        // Create a sales order as a support ticket
+        final ticketNumber = await _generateTicketNumber();
         final ticketData = {
           'partner_id': partnerId,
-          'name': await _generateTicketNumber(),
-          'note': 'Support Ticket: ${_subjectController.text}\n'
-              'Category: $_selectedCategory\n'
-              'Description: ${_messageController.text}\n'
-              'Agent ID: ${_agentIdController.text}',
+          'name': ticketNumber,
+          'note':
+              'Support Ticket: ${_subjectController.text.replaceAll(RegExp(r'\s+'), ' ').trim()}\n'
+                  'Category: $_selectedCategory\n'
+                  'Description: ${_messageController.text}\n'
+                  'Agent ID: ${_agentIdController.text}\n'
+                  'Complainant Name: ${_complainantNameController.text}',
           'order_line': [
             [
               0,
@@ -484,6 +742,7 @@ class _TicketSubmissionPageState extends State<TicketSubmissionPage> {
             ],
           ],
         };
+        print('Submitting ticket with note: ${ticketData['note']}');
 
         final ticketId = await client.callKw({
           'model': 'sale.order',
@@ -500,13 +759,14 @@ class _TicketSubmissionPageState extends State<TicketSubmissionPage> {
           _isSubmitting = false;
         });
 
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Support ticket submitted successfully!'),
-            backgroundColor: Colors.green,
-          ),
+        showProfessionalTicketSubmissionDialog(
+          context,
+          ticketNumber: ticketNumber,
+          submissionDate: DateTime.now(),
+          onConfirm: () {
+            Navigator.pop(context);
+          },
         );
-        Navigator.pop(context);
       } catch (e) {
         setState(() {
           _isSubmitting = false;
@@ -662,31 +922,43 @@ class TicketListPage extends StatefulWidget {
   State<TicketListPage> createState() => _TicketListPageState();
 }
 
-class _TicketListPageState extends State<TicketListPage> {
+class _TicketListPageState extends State<TicketListPage>
+    with SingleTickerProviderStateMixin {
   bool _isLoading = true;
   List<TicketModel> _tickets = [];
   String _errorMessage = '';
   final _searchController = TextEditingController();
-  String _filterStatus = 'All';
   DateTime? _filterStartDate;
   DateTime? _filterEndDate;
-
+  late AnimationController _fabAnimationController; // New
+  late Animation<double> _fabScaleAnimation; // New
   @override
   void initState() {
     super.initState();
     _fetchTickets();
+    _fabAnimationController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 100),
+    );
+    _fabScaleAnimation = Tween<double>(begin: 1.0, end: 0.9).animate(
+      CurvedAnimation(parent: _fabAnimationController, curve: Curves.easeInOut),
+    );
   }
 
   @override
   void dispose() {
     _searchController.dispose();
+    _fabAnimationController.dispose(); // New
     super.dispose();
   }
 
   String stripHtmlTags(String htmlString) {
+    String text =
+        htmlString.replaceAll(RegExp(r'<br\s*/?>', caseSensitive: false), '\n');
     final RegExp exp =
         RegExp(r'<[^>]*>', multiLine: true, caseSensitive: false);
-    return htmlString.replaceAll(exp, '');
+    text = text.replaceAll(exp, '');
+    return text;
   }
 
   Future<void> _fetchTickets() async {
@@ -789,24 +1061,33 @@ class _TicketListPageState extends State<TicketListPage> {
 
       final tickets = ordersResponse.map((order) {
         final note = order['note'] ?? '';
-
+        final cleanedNote = stripHtmlTags(note); // Clean HTML first
+        final noteLines = cleanedNote.split('\n'); // Split by newlines
         String subject = '';
         String category = '';
         String description = '';
         String agentId = '';
+        String complainantName = '';
 
-        final noteLines = note.split('\n');
+        print('Note content: $note'); // Log original note
         for (var line in noteLines) {
-          if (line.startsWith('Support Ticket:')) {
-            subject =
-                stripHtmlTags(line.replaceFirst('Support Ticket:', '').trim());
-          } else if (line.startsWith('Category:')) {
-            category = stripHtmlTags(line.replaceFirst('Category:', '').trim());
-          } else if (line.startsWith('Description:')) {
-            description =
-                stripHtmlTags(line.replaceFirst('Description:', '').trim());
-          } else if (line.startsWith('Agent ID:')) {
-            agentId = stripHtmlTags(line.replaceFirst('Agent ID:', '').trim());
+          final trimmedLine = line.trim();
+          if (trimmedLine.startsWith('Support Ticket:')) {
+            subject = trimmedLine.replaceFirst('Support Ticket:', '').trim();
+            print('Extracted subject: $subject');
+          } else if (trimmedLine.startsWith('Category:')) {
+            category = trimmedLine.replaceFirst('Category:', '').trim();
+            print('Extracted category: $category');
+          } else if (trimmedLine.startsWith('Description:')) {
+            description = trimmedLine.replaceFirst('Description:', '').trim();
+            print('Extracted description: $description');
+          } else if (trimmedLine.startsWith('Agent ID:')) {
+            agentId = trimmedLine.replaceFirst('Agent ID:', '').trim();
+            print('Extracted Agent ID: $agentId');
+          } else if (trimmedLine.startsWith('Complainant Name:')) {
+            complainantName =
+                trimmedLine.replaceFirst('Complainant Name:', '').trim();
+            print('Extracted complainantName: $complainantName');
           }
         }
 
@@ -826,6 +1107,7 @@ class _TicketListPageState extends State<TicketListPage> {
           category: category,
           description: description,
           agentId: agentId,
+          complainantName: complainantName,
           userId:
               order['user_id'] is List ? order['user_id'][0] : order['user_id'],
           userName: order['user_id'] is List ? order['user_id'][1] : 'System',
@@ -1038,11 +1320,6 @@ class _TicketListPageState extends State<TicketListPage> {
 
   List<TicketModel> _getFilteredTickets() {
     return _tickets.where((ticket) {
-      if (_filterStatus != 'All' &&
-          ticket.state != _filterStatus.toLowerCase()) {
-        return false;
-      }
-
       if (_filterStartDate != null &&
           ticket.createDate != null &&
           ticket.createDate!.isBefore(_filterStartDate!)) {
@@ -1062,6 +1339,7 @@ class _TicketListPageState extends State<TicketListPage> {
             ticket.orderNumber.toLowerCase().contains(searchText) ||
             ticket.partnerName.toLowerCase().contains(searchText) ||
             ticket.agentId.toLowerCase().contains(searchText) ||
+            ticket.complainantName.toLowerCase().contains(searchText) ||
             ticket.category.toLowerCase().contains(searchText);
       }
 
@@ -1073,76 +1351,110 @@ class _TicketListPageState extends State<TicketListPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Support Tickets'),
+        title: const Text(
+          'Support Tickets',
+        ),
         backgroundColor: primaryColor,
         foregroundColor: Colors.white,
+        elevation: 0,
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: _fetchTickets,
+            tooltip: 'Refresh tickets',
           ),
         ],
       ),
       body: Column(
         children: [
-          Padding(
-            padding: const EdgeInsets.all(8.0),
-            child: Column(
-              children: [
-                TextField(
-                  controller: _searchController,
-                  decoration: InputDecoration(
-                    hintText: 'Search tickets...',
-                    prefixIcon: const Icon(Icons.search),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    contentPadding: const EdgeInsets.symmetric(vertical: 0),
-                  ),
-                  onChanged: (value) => setState(() {}),
+          Container(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.grey.withOpacity(0.1),
+                  spreadRadius: 0,
+                  blurRadius: 6,
+                  offset: const Offset(0, 2),
                 ),
-                const SizedBox(height: 8),
-                SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8),
-                        decoration: BoxDecoration(
-                          border: Border.all(color: Colors.grey.shade300),
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: DropdownButton<String>(
-                          value: _filterStatus,
-                          underline: const SizedBox(),
-                          items:
-                              ['All', 'Draft', 'Sent', 'Sale', 'Done', 'Cancel']
-                                  .map((status) => DropdownMenuItem(
-                                        value: status,
-                                        child: Text(status),
-                                      ))
-                                  .toList(),
-                          onChanged: (value) {
-                            if (value != null) {
-                              setState(() {
-                                _filterStatus = value;
-                              });
-                            }
-                          },
-                          hint: const Text('Status'),
-                        ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Improved search field
+                Container(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(12),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.grey.withOpacity(0.1),
+                        spreadRadius: 1,
+                        blurRadius: 5,
+                        offset: const Offset(0, 2),
                       ),
-                      const SizedBox(width: 8),
-                      ElevatedButton.icon(
-                        icon: const Icon(Icons.calendar_today, size: 16),
-                        label: Text(_filterStartDate == null
-                            ? 'Start Date'
-                            : DateFormat('MM/dd/yy').format(_filterStartDate!)),
+                    ],
+                  ),
+                  child: TextField(
+                    controller: _searchController,
+                    decoration: InputDecoration(
+                      hintText: 'Search tickets...',
+                      hintStyle: TextStyle(color: Colors.grey.shade400),
+                      prefixIcon: Icon(Icons.search, color: primaryColor),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide(color: Colors.grey.shade300),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide(color: Colors.grey.shade300),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide(color: primaryColor, width: 2),
+                      ),
+                      filled: true,
+                      fillColor: Colors.white,
+                      contentPadding: const EdgeInsets.symmetric(
+                          vertical: 12, horizontal: 16),
+                    ),
+                    onChanged: (value) => setState(() {}),
+                  ),
+                ),
+                const SizedBox(height: 16),
+
+                // Date filter section with improved design
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        icon: Icon(Icons.calendar_today,
+                            size: 16, color: primaryColor),
+                        label: Text(
+                          _filterStartDate == null
+                              ? 'Start Date'
+                              : DateFormat('MM/dd/yy')
+                                  .format(_filterStartDate!),
+                          style: TextStyle(
+                            color: _filterStartDate == null
+                                ? Colors.grey.shade600
+                                : primaryColor,
+                            fontWeight: _filterStartDate == null
+                                ? FontWeight.normal
+                                : FontWeight.w600,
+                          ),
+                        ),
                         style: ElevatedButton.styleFrom(
                           foregroundColor: primaryColor,
                           backgroundColor: Colors.white,
                           elevation: 0,
+                          padding: const EdgeInsets.symmetric(vertical: 12),
                           side: BorderSide(color: Colors.grey.shade300),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
                         ),
                         onPressed: () async {
                           final date = await showDatePicker(
@@ -1150,6 +1462,16 @@ class _TicketListPageState extends State<TicketListPage> {
                             initialDate: _filterStartDate ?? DateTime.now(),
                             firstDate: DateTime(2020),
                             lastDate: DateTime.now(),
+                            builder: (context, child) {
+                              return Theme(
+                                data: Theme.of(context).copyWith(
+                                  colorScheme: ColorScheme.light(
+                                    primary: primaryColor,
+                                  ),
+                                ),
+                                child: child!,
+                              );
+                            },
                           );
                           if (date != null) {
                             setState(() {
@@ -1158,17 +1480,34 @@ class _TicketListPageState extends State<TicketListPage> {
                           }
                         },
                       ),
-                      const SizedBox(width: 8),
-                      ElevatedButton.icon(
-                        icon: const Icon(Icons.calendar_today, size: 16),
-                        label: Text(_filterEndDate == null
-                            ? 'End Date'
-                            : DateFormat('MM/dd/yy').format(_filterEndDate!)),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        icon: Icon(Icons.calendar_today,
+                            size: 16, color: primaryColor),
+                        label: Text(
+                          _filterEndDate == null
+                              ? 'End Date'
+                              : DateFormat('MM/dd/yy').format(_filterEndDate!),
+                          style: TextStyle(
+                            color: _filterEndDate == null
+                                ? Colors.grey.shade600
+                                : primaryColor,
+                            fontWeight: _filterEndDate == null
+                                ? FontWeight.normal
+                                : FontWeight.w600,
+                          ),
+                        ),
                         style: ElevatedButton.styleFrom(
                           foregroundColor: primaryColor,
                           backgroundColor: Colors.white,
                           elevation: 0,
+                          padding: const EdgeInsets.symmetric(vertical: 12),
                           side: BorderSide(color: Colors.grey.shade300),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
                         ),
                         onPressed: () async {
                           final date = await showDatePicker(
@@ -1176,6 +1515,16 @@ class _TicketListPageState extends State<TicketListPage> {
                             initialDate: _filterEndDate ?? DateTime.now(),
                             firstDate: DateTime(2020),
                             lastDate: DateTime.now(),
+                            builder: (context, child) {
+                              return Theme(
+                                data: Theme.of(context).copyWith(
+                                  colorScheme: ColorScheme.light(
+                                    primary: primaryColor,
+                                  ),
+                                ),
+                                child: child!,
+                              );
+                            },
                           );
                           if (date != null) {
                             setState(() {
@@ -1184,102 +1533,245 @@ class _TicketListPageState extends State<TicketListPage> {
                           }
                         },
                       ),
-                      const SizedBox(width: 8),
-                      TextButton.icon(
-                        icon: const Icon(Icons.clear, size: 16),
-                        label: const Text('Clear Filters'),
-                        onPressed: () {
-                          setState(() {
-                            _searchController.clear();
-                            _filterStatus = 'All';
-                            _filterStartDate = null;
-                            _filterEndDate = null;
-                          });
-                        },
-                      ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
+
+                // Clear filters button with improved design
+                if (_filterStartDate != null ||
+                    _filterEndDate != null ||
+                    _searchController.text.isNotEmpty)
+                  Container(
+                    width: double.infinity,
+                    margin: const EdgeInsets.only(top: 12),
+                    child: TextButton.icon(
+                      icon: Icon(Icons.filter_alt_off,
+                          size: 18, color: primaryColor.withOpacity(0.8)),
+                      label: Text(
+                        'Clear Date Filters',
+                        style: TextStyle(
+                          color: primaryColor.withOpacity(0.8),
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      style: TextButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
+                      onPressed: () {
+                        setState(() {
+                          _searchController.clear();
+                          _filterStartDate = null;
+                          _filterEndDate = null;
+                        });
+                      },
+                    ),
+                  ),
               ],
             ),
           ),
+
+          // Status section
           Expanded(
             child: _errorMessage.isNotEmpty
-                ? Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Text(
-                          _errorMessage,
-                          style: const TextStyle(color: Colors.red),
-                          textAlign: TextAlign.center,
-                        ),
-                        const SizedBox(height: 16),
-                        ElevatedButton(
-                          onPressed: _fetchTickets,
-                          child: const Text('Try Again'),
-                        ),
-                      ],
-                    ),
-                  )
+                ? _buildErrorView()
                 : _isLoading
                     ? _buildShimmerTicketList()
                     : _buildTicketsList(),
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () {
-          Navigator.push(
-              context,
-              SlidingPageTransitionRL(
-                page: TicketSubmissionPage(agentEmail: widget.agentEmail),
-              )).then((_) => _fetchTickets());
-        },
-        backgroundColor: primaryColor,
-        child: const Icon(Icons.add, color: Colors.white),
-        tooltip: 'Create Support Ticket',
+
+      // Enhanced floating action button
+      floatingActionButton: GestureDetector(
+        onTapDown: (_) => _fabAnimationController.forward(),
+        onTapUp: (_) => _fabAnimationController.reverse(),
+        onTapCancel: () => _fabAnimationController.reverse(),
+        child: ScaleTransition(
+          scale: _fabScaleAnimation,
+          child: FloatingActionButton.extended(
+            onPressed: () {
+              Navigator.push(
+                context,
+                SlidingPageTransitionRL(
+                  page: TicketSubmissionPage(agentEmail: widget.agentEmail),
+                ),
+              ).then((_) => _fetchTickets());
+            },
+            label: const Text(
+              'New Ticket',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w600,
+                fontSize: 14,
+              ),
+            ),
+            icon: const Icon(
+              Icons.add,
+              color: Colors.white,
+              size: 20,
+            ),
+            backgroundColor: primaryColor,
+            elevation: 4,
+            hoverElevation: 8,
+            focusElevation: 8,
+            tooltip: 'Create a New Support Ticket',
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
+            extendedPadding:
+                const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+            splashColor: Colors.white.withOpacity(0.2),
+            heroTag: 'createTicketFab',
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildErrorView() {
+    return Center(
+      child: Container(
+        margin: const EdgeInsets.all(24),
+        padding: const EdgeInsets.all(24),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.grey.withOpacity(0.1),
+              spreadRadius: 1,
+              blurRadius: 10,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.error_outline_rounded,
+              size: 64,
+              color: Colors.red.shade400,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'Something went wrong',
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: Colors.grey.shade800,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              _errorMessage,
+              style: TextStyle(color: Colors.red.shade700),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 24),
+            SizedBox(
+              width: 200,
+              height: 48,
+              child: ElevatedButton.icon(
+                onPressed: _fetchTickets,
+                icon: const Icon(Icons.refresh),
+                label: const Text('Try Again'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: primaryColor,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
 
   Widget _buildShimmerTicketList() {
     return ListView.builder(
-      padding: const EdgeInsets.all(8.0),
+      padding: const EdgeInsets.all(16.0),
       itemCount: 6,
       itemBuilder: (context, index) {
         return Shimmer.fromColors(
           baseColor: Colors.grey.shade300,
           highlightColor: Colors.grey.shade100,
           child: Container(
-            margin: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 4.0),
-            padding: const EdgeInsets.all(16.0),
+            margin: const EdgeInsets.only(bottom: 16.0),
+            padding: const EdgeInsets.all(0),
             decoration: BoxDecoration(
               color: Colors.white,
-              borderRadius: BorderRadius.circular(8.0),
-              border: Border.all(color: Colors.grey.shade200),
+              borderRadius: BorderRadius.circular(12.0),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.grey.withOpacity(0.05),
+                  spreadRadius: 1,
+                  blurRadius: 5,
+                  offset: const Offset(0, 2),
+                ),
+              ],
             ),
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // Header part
                 Container(
-                  width: double.infinity,
-                  height: 20.0,
-                  color: Colors.grey.shade300,
-                ),
-                const SizedBox(height: 8.0),
-
-                Container(
-                  width: 150.0,
-                  height: 16.0,
-                  color: Colors.grey.shade300,
-                ),
-                const SizedBox(height: 8.0),
-                // Date or metadata placeholder
-                Container(
-                  width: 100.0,
-                  height: 16.0,
-                  color: Colors.grey.shade300,
+                  padding: const EdgeInsets.all(12.0),
+                  child: Row(
+                    children: [
+                      // Circle avatar
+                      Container(
+                        width: 40,
+                        height: 40,
+                        decoration: const BoxDecoration(
+                          color: Colors.white,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // Title
+                            Container(
+                              width: double.infinity,
+                              height: 18.0,
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            // Subtitle
+                            Container(
+                              width: 150.0,
+                              height: 14.0,
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      // Expansion icon
+                      Container(
+                        width: 24,
+                        height: 24,
+                        decoration: const BoxDecoration(
+                          color: Colors.white,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ],
             ),
@@ -1293,101 +1785,330 @@ class _TicketListPageState extends State<TicketListPage> {
     final filteredTickets = _getFilteredTickets();
 
     if (filteredTickets.isEmpty) {
-      return const Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.receipt_long, size: 64, color: Colors.grey),
-            SizedBox(height: 16),
-            Text(
-              'No tickets found',
-              style: TextStyle(fontSize: 18, color: Colors.grey),
-            ),
-            SizedBox(height: 8),
-            Text(
-              'Try adjusting your filters or create a new ticket',
-              style: TextStyle(color: Colors.grey),
-              textAlign: TextAlign.center,
-            ),
-          ],
+      return Center(
+        child: Container(
+          padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.grey.withOpacity(0.1),
+                spreadRadius: 1,
+                blurRadius: 5,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                Icons.receipt_long,
+                size: 72,
+                color: Colors.grey.shade400,
+              ),
+              const SizedBox(height: 20),
+              Text(
+                'No tickets found',
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.grey.shade700,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Container(
+                width: 260,
+                alignment: Alignment.center,
+                child: Text(
+                  'Try adjusting your filters or create a new ticket',
+                  style: TextStyle(
+                    color: Colors.grey.shade600,
+                    fontSize: 14,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+              const SizedBox(height: 24),
+              SizedBox(
+                width: 200,
+                child: ElevatedButton.icon(
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      SlidingPageTransitionRL(
+                        page:
+                            TicketSubmissionPage(agentEmail: widget.agentEmail),
+                      ),
+                    ).then((_) => _fetchTickets());
+                  },
+                  icon: const Icon(Icons.add),
+                  label: const Text('Create New Ticket'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: primaryColor,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       );
     }
 
     return ListView.builder(
+      padding: const EdgeInsets.all(16),
       itemCount: filteredTickets.length,
       itemBuilder: (context, index) {
         final ticket = filteredTickets[index];
-        return Card(
-          margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
-          child: ExpansionTile(
-            title: Text(
-              ticket.subject.isNotEmpty
-                  ? ticket.subject
-                  : 'Ticket #${ticket.id}',
-              style: const TextStyle(fontWeight: FontWeight.bold),
-            ),
-            subtitle: Text(
-              '${ticket.orderNumber} - ${_getStatusLabel(ticket.state)}',
-              style: TextStyle(color: _getStatusColor(ticket.state)),
-            ),
-            leading: CircleAvatar(
-              backgroundColor: _getCategoryColor(ticket.category),
-              child: Text(
-                ticket.category.isNotEmpty
-                    ? ticket.category[0].toUpperCase()
-                    : '?',
-                style: const TextStyle(color: Colors.white),
+        return Container(
+          margin: const EdgeInsets.only(bottom: 12),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.grey.withOpacity(0.1),
+                spreadRadius: 1,
+                blurRadius: 5,
+                offset: const Offset(0, 2),
               ),
+            ],
+          ),
+          child: Theme(
+            data: Theme.of(context).copyWith(
+              dividerColor: Colors.transparent,
+              colorScheme: ColorScheme.light(primary: primaryColor),
             ),
-            children: [
-              Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+            child: ExpansionTile(
+              childrenPadding: EdgeInsets.zero,
+              tilePadding:
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+              expandedAlignment: Alignment.topLeft,
+              title: Text(
+                ticket.subject.isNotEmpty
+                    ? ticket.subject
+                    : 'Ticket #${ticket.id}',
+                style: const TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 16,
+                ),
+              ),
+              subtitle: Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Row(
                   children: [
-                    _infoRow('Category', ticket.category),
-                    _infoRow(
-                        'Created',
-                        ticket.createDate != null
-                            ? DateFormat('MM/dd/yyyy HH:mm')
-                                .format(ticket.createDate!)
-                            : 'Unknown'),
-                    _infoRow('Customer', ticket.partnerName),
-                    _infoRow('Agent ID', ticket.agentId),
-                    _infoRow('Status', _getStatusLabel(ticket.state)),
-                    const Divider(),
-                    const Text(
-                      'Description:',
-                      style: TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      ticket.description.isNotEmpty
-                          ? ticket.description
-                          : 'No description provided',
-                      style: TextStyle(
-                        color: ticket.description.isEmpty ? Colors.grey : null,
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: [
-                        OutlinedButton.icon(
-                          icon: const Icon(Icons.attach_file),
-                          label: const Text('View Attachments'),
-                          onPressed: () => _fetchAttachments(ticket.id),
+                    Expanded(
+                      child: Text(
+                        'Order No: ${ticket.orderNumber}',
+                        style: TextStyle(
+                          color: Colors.grey.shade700,
+                          fontSize: 12,
                         ),
-                      ],
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ),
                   ],
                 ),
               ),
-            ],
+              leading: CircleAvatar(
+                backgroundColor: _getCategoryColor(ticket.category),
+                child: Text(
+                  ticket.category.isNotEmpty
+                      ? ticket.category[0].toUpperCase()
+                      : '?',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+              trailing: Icon(
+                Icons.keyboard_arrow_down,
+                color: primaryColor,
+              ),
+              children: [
+                Container(
+                  width: double.infinity,
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade50,
+                    borderRadius: const BorderRadius.only(
+                      bottomLeft: Radius.circular(12),
+                      bottomRight: Radius.circular(12),
+                    ),
+                  ),
+                  padding: const EdgeInsets.all(16.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Ticket information in a card format
+                      Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.grey.shade200),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // First row of information
+                            Row(
+                              children: [
+                                _infoColumn(
+                                    'Sent From', ticket.complainantName),
+                                _infoColumn('Agent ID', ticket.agentId),
+                              ],
+                            ),
+                            const SizedBox(height: 16),
+
+                            // Second row of information
+                            Row(
+                              children: [
+                                _infoColumn(
+                                    'Subject',
+                                    ticket.subject.isNotEmpty
+                                        ? ticket.subject
+                                        : 'Ticket #${ticket.id}'),
+                                _infoColumn('Category', ticket.category),
+                              ],
+                            ),
+                            const SizedBox(height: 16),
+
+                            // Third row with date information
+                            Row(
+                              children: [
+                                _infoColumn(
+                                  'Created',
+                                  ticket.createDate != null
+                                      ? DateFormat('MM/dd/yyyy HH:mm')
+                                          .format(ticket.createDate!)
+                                      : 'Unknown',
+                                ),
+                                _infoColumn(
+                                    'Status', _getStatusLabel(ticket.state)),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+
+                      const SizedBox(height: 16),
+
+                      // Description section with enhanced styling
+                      Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.grey.shade200),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Icon(
+                                  Icons.description_outlined,
+                                  size: 18,
+                                  color: primaryColor,
+                                ),
+                                const SizedBox(width: 8),
+                                const Text(
+                                  'Description',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 15,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            const Divider(),
+                            const SizedBox(height: 8),
+                            Text(
+                              ticket.description.isNotEmpty
+                                  ? ticket.description
+                                  : 'No description provided',
+                              style: TextStyle(
+                                color: ticket.description.isEmpty
+                                    ? Colors.grey
+                                    : Colors.black87,
+                                height: 1.5,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+
+                      const SizedBox(height: 16),
+
+                      // Action buttons with improved design
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          OutlinedButton.icon(
+                            icon: Icon(
+                              Icons.attach_file,
+                              size: 18,
+                              color: primaryColor,
+                            ),
+                            label: const Text('View Attachments'),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: primaryColor,
+                              side: BorderSide(color: primaryColor),
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 16, vertical: 12),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                            ),
+                            onPressed: () => _fetchAttachments(ticket.id),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
         );
       },
+    );
+  }
+
+  Widget _infoColumn(String label, String value) {
+    return Expanded(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              color: Colors.grey.shade600,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            value.isNotEmpty ? value : 'N/A',
+            style: TextStyle(
+              fontWeight: FontWeight.w500,
+              color: value.isEmpty ? Colors.grey : Colors.black87,
+            ),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
+      ),
     );
   }
 
@@ -1398,7 +2119,7 @@ class _TicketListPageState extends State<TicketListPage> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SizedBox(
-            width: 80,
+            width: 100,
             child: Text(
               '$label:',
               style: const TextStyle(fontWeight: FontWeight.bold),
@@ -1481,6 +2202,7 @@ class TicketModel {
   final String category;
   final String description;
   final String agentId;
+  final String complainantName; // New field
   final dynamic userId;
   final String userName;
   final DateTime? createDate;
@@ -1496,6 +2218,7 @@ class TicketModel {
     required this.category,
     required this.description,
     required this.agentId,
+    required this.complainantName, // Add to constructor
     required this.userId,
     required this.userName,
     this.createDate,

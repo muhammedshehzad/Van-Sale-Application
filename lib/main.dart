@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:latest_van_sale_application/assets/widgets%20and%20consts/create_sale_order_dialog.dart';
 import 'package:latest_van_sale_application/authentication/login_provider.dart';
@@ -6,16 +7,20 @@ import 'package:latest_van_sale_application/providers/data_provider.dart';
 import 'package:latest_van_sale_application/providers/invoice_creation_provider.dart';
 import 'package:latest_van_sale_application/providers/invoice_details_provider.dart';
 import 'package:latest_van_sale_application/providers/invoice_provider.dart';
+import 'package:latest_van_sale_application/providers/module_check_provider.dart';
 import 'package:latest_van_sale_application/providers/order_picking_provider.dart';
 import 'package:latest_van_sale_application/providers/sale_order_detail_provider.dart';
 import 'package:latest_van_sale_application/providers/sale_order_provider.dart';
-import 'package:latest_van_sale_application/secondary_pages/settings_page.dart';
+import 'package:odoo_rpc/odoo_rpc.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'assets/widgets and consts/cached_data.dart';
+import 'authentication/cyllo_session_model.dart';
 import 'authentication/login_page.dart';
 import 'main_page/main_page.dart';
+import 'main_page/module_check_page.dart';
 
+final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 final appTheme = ThemeData(
   primaryColor: primaryColor,
   colorScheme: ColorScheme.fromSwatch().copyWith(
@@ -41,7 +46,7 @@ void main() async {
         ChangeNotifierProvider(create: (_) => DataSyncManager()),
         ChangeNotifierProvider(create: (_) => DataProvider()),
         ChangeNotifierProvider(create: (_) => InvoiceCreationProvider()),
-        ChangeNotifierProvider(create: (_) => SettingsProvider()),
+        ChangeNotifierProvider(create: (_) => ModuleCheckProvider()),
         ChangeNotifierProvider(
             create: (_) => SaleOrderDetailProvider(orderData: {})),
       ],
@@ -57,58 +62,198 @@ class MyApp extends StatefulWidget {
   State<MyApp> createState() => _MyAppState();
 }
 
-class _MyAppState extends State<MyApp> {
-  bool _isLoading = true;
-  bool _isLoggedIn = false;
+class _MyAppState extends State<MyApp> with TickerProviderStateMixin {
+  AppLoadingState _loadingState = AppLoadingState.initializing;
   String? _errorMessage;
-  double _progress = 0.0;
-
-  // Create a ProgressTracker instance as a class member
-  late ProgressTracker _progressTracker;
-
-  // Create an instance of DataSyncManager
+  late AppLoadingController _loadingController;
   final DataSyncManager _syncManager = DataSyncManager();
+  bool _isLoggedIn = false;
+  List<String> _syncErrors = [];
 
   @override
   void initState() {
     super.initState();
-    _checkLoginStatus();
+    _loadingController = AppLoadingController(vsync: this);
+    _initializeApp();
   }
 
   @override
   void dispose() {
-    _progressTracker.dispose();
+    _loadingController.dispose();
     super.dispose();
   }
 
-  void _showSyncErrorDialog(BuildContext context, List<String> errors) {
+  Future<void> _initializeApp() async {
+    try {
+      setState(() {
+        _loadingState = AppLoadingState.checkingLogin;
+        _errorMessage = null;
+      });
+
+      await _loadingController.executeWithProgress(
+        steps: [
+          LoadingStep(
+            name: 'Checking authentication',
+            duration: const Duration(milliseconds: 800),
+            action: _checkLoginStatus,
+          ),
+          if (_isLoggedIn) ...[
+            LoadingStep(
+              name: 'Loading cached data',
+              duration: const Duration(milliseconds: 1200),
+              action: () => _syncManager.loadCachedData(context),
+            ),
+            LoadingStep(
+              name: 'Checking for updates',
+              duration: const Duration(milliseconds: 600),
+              action: () => _syncManager.needsSync(),
+            ),
+            LoadingStep(
+              name: 'Verifying modules',
+              duration: const Duration(milliseconds: 1000),
+              action: _checkModules,
+            ),
+            LoadingStep(
+              name: 'Synchronizing data',
+              duration: const Duration(milliseconds: 2000),
+              action: _performDataSync,
+            ),
+          ],
+          LoadingStep(
+            name: 'Finalizing setup',
+            duration: const Duration(milliseconds: 600),
+            action: () async =>
+                await Future.delayed(const Duration(milliseconds: 300)),
+          ),
+        ],
+      );
+
+      setState(() {
+        _loadingState = AppLoadingState.completed;
+      });
+
+      // Show sync errors if any
+      if (_syncErrors.isNotEmpty) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _showSyncErrorDialog();
+        });
+      }
+    } catch (e) {
+      setState(() {
+        _loadingState = AppLoadingState.error;
+        _errorMessage = e.toString();
+      });
+    }
+  }
+
+  Future<void> _checkLoginStatus() async {
+    final prefs = await SharedPreferences.getInstance();
+    _isLoggedIn = prefs.getBool('isLoggedIn') ?? false;
+  }
+
+  Future<void> _checkModules() async {
+    if (!_isLoggedIn) return;
+
+    final session = await SessionManager.getCurrentSession();
+    if (session != null && session.hasCheckedModules) {
+      final client = await SessionManager.getActiveClient();
+      if (client != null) {
+        final moduleProvider = ModuleCheckProvider();
+        await moduleProvider.checkRequiredModules(client);
+
+        if (moduleProvider.missingModules.isNotEmpty) {
+          setState(() {
+            _loadingState = AppLoadingState.moduleCheckRequired;
+          });
+          return;
+        }
+      } else {
+        throw Exception('Unable to connect to server');
+      }
+    }
+  }
+
+  Future<void> _performDataSync() async {
+    if (!_isLoggedIn) return;
+
+    final needsSync = await _syncManager.needsSync();
+    if (needsSync) {
+      _syncErrors = await _syncManager.performFullSync(context);
+    }
+  }
+
+  void _showSyncErrorDialog() {
     showDialog(
       context: context,
+      barrierDismissible: false,
       builder: (BuildContext context) {
         return AlertDialog(
-          title: const Text('Data Sync Issues'),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Row(
+            children: [
+              Icon(Icons.warning_amber_rounded, color: Colors.orange[700]),
+              const SizedBox(width: 8),
+              const Text('Data Sync Issues'),
+            ],
+          ),
           content: SingleChildScrollView(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
                 const Text(
-                    'Some data could not be loaded. Using cached data if available:'),
-                const SizedBox(height: 8),
-                ...errors.map((error) => Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 4.0),
-                      child: Text('• $error',
-                          style: const TextStyle(color: Colors.red)),
-                    )),
+                  'Some data could not be synchronized. The app will use cached data where available:',
+                  style: TextStyle(fontSize: 14),
+                ),
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.red[50],
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.red[200]!),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: _syncErrors
+                        .map((error) => Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 2),
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Icon(Icons.error_outline,
+                                      size: 16, color: Colors.red[700]),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      error,
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        color: Colors.red[700],
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ))
+                        .toList(),
+                  ),
+                ),
               ],
             ),
           ),
           actions: [
             TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Continue'),
+            ),
+            ElevatedButton(
               onPressed: () {
                 Navigator.of(context).pop();
+                _retryInitialization();
               },
-              child: const Text('OK'),
+              child: const Text('Retry Sync'),
             ),
           ],
         );
@@ -116,90 +261,19 @@ class _MyAppState extends State<MyApp> {
     );
   }
 
-  Future<void> _checkLoginStatus() async {
-    _progressTracker = ProgressTracker(
-      tasks: [
-        ProgressTask(name: 'Checking login', weight: 0.1),
-        ProgressTask(name: 'Loading cached data', weight: 0.2),
-        ProgressTask(name: 'Checking for updates', weight: 0.1),
-        ProgressTask(name: 'Syncing data', weight: 0.5),
-        ProgressTask(name: 'Finalizing', weight: 0.1),
-      ],
-      onProgressUpdate: (progress) {
-        setState(() {
-          _progress = progress;
-        });
-      },
-    );
-
-    List<String> syncErrors = [];
-
-    try {
-      // Create artificial delay for smoother progress visualization
-      await Future.delayed(const Duration(milliseconds: 300));
-
-      // Task 1: Check login status
-      final prefs = await SharedPreferences.getInstance();
-      final isLoggedIn = prefs.getBool('isLoggedIn') ?? false;
-      _progressTracker.completeTask('Checking login');
-
-      // Small delay for visual smoothness
-      await Future.delayed(const Duration(milliseconds: 200));
-
-      if (isLoggedIn) {
-        // Task 2: Load cached data first (fast)
-        await _syncManager.loadCachedData(context);
-        _progressTracker.completeTask('Loading cached data');
-
-        // Small delay for visual smoothness
-        await Future.delayed(const Duration(milliseconds: 200));
-
-        // Task 3: Check if we need to sync
-        final needsSync = await _syncManager.needsSync();
-        _progressTracker.completeTask('Checking for updates');
-
-        // Small delay for visual smoothness
-        await Future.delayed(const Duration(milliseconds: 200));
-
-        // Task 4: Sync data if needed
-        if (needsSync) {
-          syncErrors = await _syncManager.performFullSync(context);
-        }
-        _progressTracker.completeTask('Syncing data');
-
-        // Small delay for visual smoothness
-        await Future.delayed(const Duration(milliseconds: 300));
-      }
-
-      // Always complete the finalizing task
-      _progressTracker.completeTask('Finalizing');
-
-      // Ensure we reach 100% before finishing
-      _progressTracker.completeAll();
-
-      // Give time for the progress to visually reach 100%
-      await Future.delayed(const Duration(milliseconds: 500));
-
-      setState(() {
-        _isLoggedIn = isLoggedIn;
-        _isLoading = false;
-      });
-
-      // Show dialog if there were sync errors
-      if (syncErrors.isNotEmpty) {
-        _showSyncErrorDialog(context, syncErrors);
-      }
-    } catch (e) {
-      setState(() {
-        _isLoading = false;
-        _errorMessage = 'Failed to load: $e';
-      });
-    }
+  void _retryInitialization() {
+    setState(() {
+      _loadingState = AppLoadingState.initializing;
+      _syncErrors.clear();
+    });
+    _loadingController.reset();
+    _initializeApp();
   }
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: navigatorKey,
       title: 'Van Sale Application',
       theme: appTheme,
       debugShowCheckedModeBanner: false,
@@ -208,310 +282,656 @@ class _MyAppState extends State<MyApp> {
   }
 
   Widget _buildContent() {
-    if (_isLoading) {
-      return LoadingScreen(
-        message: 'Loading...',
-        progress: _progress,
-      );
-    }
-    if (_errorMessage != null) {
-      return ErrorScreen(
-        errorMessage: _errorMessage!,
-        onRetry: () {
-          setState(() {
-            _isLoading = true;
-            _errorMessage = null;
-            _progress = 0.0;
-          });
-          _checkLoginStatus();
-        },
-      );
-    }
-    if (_isLoggedIn) {
-      return MainPageWrapper(syncManager: _syncManager);
-    }
-    return Login();
-  }
-}
+    switch (_loadingState) {
+      case AppLoadingState.initializing:
+      case AppLoadingState.checkingLogin:
+        return ProfessionalLoadingScreen(
+          controller: _loadingController,
+          title: 'Van Sale Application',
+          subtitle: 'Initializing your workspace',
+        );
 
-// A wrapper for MainPage that provides access to the syncManager
-class MainPageWrapper extends StatelessWidget {
-  final DataSyncManager syncManager;
+      case AppLoadingState.moduleCheckRequired:
+        return MultiProvider(
+          providers: [
+            ChangeNotifierProvider(create: (_) => ModuleCheckProvider()),
+          ],
+          child: ModuleCheckScreen(datasync: _syncManager),
+        );
 
-  const MainPageWrapper({super.key, required this.syncManager});
+      case AppLoadingState.error:
+        return ProfessionalErrorScreen(
+          title: 'Initialization Failed',
+          message: _errorMessage ?? 'An unexpected error occurred',
+          onRetry: _retryInitialization,
+          onGoToLogin: () {
+            Navigator.pushAndRemoveUntil(
+              context,
+              MaterialPageRoute(builder: (context) => Login()),
+              (route) => false,
+            );
+          },
+        );
 
-  @override
-  Widget build(BuildContext context) {
-    return MainPage(syncManager: syncManager);
-  }
-}
-
-// ProgressTask and ProgressTracker classes (unchanged from second snippet)
-class ProgressTask {
-  final String name;
-  final double weight;
-
-  ProgressTask({required this.name, required this.weight});
-}
-
-class ProgressTracker {
-  final List<ProgressTask> tasks;
-  final Function(double) onProgressUpdate;
-  final Map<String, bool> _completedTasks = {};
-
-  // Add a timer for smoother updates
-  Timer? _smoothingTimer;
-  double _displayedProgress = 0.0;
-  double _actualProgress = 0.0;
-  bool _isCompleting = false;
-
-  ProgressTracker({required this.tasks, required this.onProgressUpdate}) {
-    for (var task in tasks) {
-      _completedTasks[task.name] = false;
-    }
-
-    // Start a timer that slowly increases progress even between task completions
-    _smoothingTimer =
-        Timer.periodic(const Duration(milliseconds: 100), (timer) {
-      if (_isCompleting) {
-        // When completing, move faster toward 100%
-        _displayedProgress += (_actualProgress - _displayedProgress) * 0.2;
-
-        // Ensure we reach exactly 100% at the end
-        if (_actualProgress >= 0.99 && _displayedProgress > 0.95) {
-          _displayedProgress = 1.0;
-          timer.cancel();
+      case AppLoadingState.completed:
+        if (_isLoggedIn) {
+          return MainPageWrapper(syncManager: _syncManager);
         }
-      } else if (_displayedProgress < _actualProgress) {
-        // Normal progression: move toward actual progress
-        _displayedProgress += (_actualProgress - _displayedProgress) * 0.1;
+        return Login();
+    }
+  }
+}
+
+enum AppLoadingState {
+  initializing,
+  checkingLogin,
+  moduleCheckRequired,
+  error,
+  completed,
+}
+
+class LoadingStep {
+  final String name;
+  final Duration duration;
+  final Future<dynamic> Function() action;
+
+  LoadingStep({
+    required this.name,
+    required this.duration,
+    required this.action,
+  });
+}
+
+class AppLoadingController {
+  final TickerProvider vsync;
+  late AnimationController _progressController;
+  late AnimationController _pulseController;
+
+  Animation<double> get progressAnimation => _progressAnimation;
+
+  Animation<double> get pulseAnimation => _pulseAnimation;
+
+  late Animation<double> _progressAnimation;
+  late Animation<double> _pulseAnimation;
+
+  String _currentStep = '';
+  double _currentProgress = 0.0;
+  bool _isCompleted = false;
+
+  String get currentStep => _currentStep;
+
+  double get currentProgress => _currentProgress;
+
+  bool get isCompleted => _isCompleted;
+
+  AppLoadingController({required this.vsync}) {
+    _progressController = AnimationController(
+      duration: const Duration(milliseconds: 800),
+      vsync: vsync,
+    );
+
+    _pulseController = AnimationController(
+      duration: const Duration(milliseconds: 1500),
+      vsync: vsync,
+    )..repeat(reverse: true);
+
+    _progressAnimation = Tween<double>(
+      begin: 0.0,
+      end: 1.0,
+    ).animate(CurvedAnimation(
+      parent: _progressController,
+      curve: Curves.easeInOut,
+    ));
+
+    _pulseAnimation = Tween<double>(
+      begin: 0.6,
+      end: 1.0,
+    ).animate(CurvedAnimation(
+      parent: _pulseController,
+      curve: Curves.easeInOut,
+    ));
+  }
+
+  Future<void> executeWithProgress({required List<LoadingStep> steps}) async {
+    final totalSteps = steps.length;
+
+    for (int i = 0; i < steps.length; i++) {
+      final step = steps[i];
+      _currentStep = step.name;
+
+      // Animate to current step progress
+      final targetProgress = (i + 1) / totalSteps;
+      _progressController.animateTo(targetProgress);
+
+      // Execute the step action
+      try {
+        await Future.wait([
+          step.action(),
+          Future.delayed(step.duration), // Minimum duration for UX
+        ]);
+      } catch (e) {
+        rethrow; // Let the parent handle the error
       }
 
-      onProgressUpdate(_displayedProgress);
-    });
-  }
+      _currentProgress = targetProgress;
 
-  void completeTask(String taskName) {
-    if (_completedTasks.containsKey(taskName) && !_completedTasks[taskName]!) {
-      _completedTasks[taskName] = true;
-      _updateProgress();
+      // Small delay between steps for smooth UX
+      if (i < steps.length - 1) {
+        await Future.delayed(const Duration(milliseconds: 200));
+      }
     }
+
+    _isCompleted = true;
+    await _progressController.forward();
   }
 
-  void _updateProgress() {
-    double totalWeight = tasks.fold(0.0, (sum, task) => sum + task.weight);
-    double completedWeight = tasks.fold(0.0, (sum, task) {
-      return sum + (_completedTasks[task.name]! ? task.weight : 0.0);
-    });
-    _actualProgress = totalWeight > 0 ? completedWeight / totalWeight : 0.0;
-  }
-
-  // Call this when all tasks are actually finished
-  void completeAll() {
-    _isCompleting = true;
-    _actualProgress = 1.0;
+  void reset() {
+    _progressController.reset();
+    _currentStep = '';
+    _currentProgress = 0.0;
+    _isCompleted = false;
   }
 
   void dispose() {
-    _smoothingTimer?.cancel();
+    _progressController.dispose();
+    _pulseController.dispose();
   }
 }
 
-// LoadingScreen and RadialProgressPainter (unchanged from second snippet)
-class LoadingScreen extends StatefulWidget {
-  final String message;
-  final double progress;
+class ProfessionalLoadingScreen extends StatelessWidget {
+  final AppLoadingController controller;
+  final String title;
+  final String subtitle;
 
-  const LoadingScreen({
+  const ProfessionalLoadingScreen({
     Key? key,
-    required this.message,
-    required this.progress,
+    required this.controller,
+    required this.title,
+    required this.subtitle,
   }) : super(key: key);
 
   @override
-  State<LoadingScreen> createState() => _LoadingScreenState();
-}
-
-class _LoadingScreenState extends State<LoadingScreen>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
-  late Animation<double> _progressAnimation;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(
-      duration: const Duration(milliseconds: 500),
-      vsync: this,
-    );
-    _progressAnimation =
-        Tween<double>(begin: 0.0, end: widget.progress).animate(
-      CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
-    );
-    _controller.forward();
-  }
-
-  @override
-  void didUpdateWidget(covariant LoadingScreen oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.progress != widget.progress) {
-      _progressAnimation = Tween<double>(
-        begin: _progressAnimation.value,
-        end: widget.progress,
-      ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeInOut));
-      _controller
-        ..reset()
-        ..forward();
-    }
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final size = MediaQuery.of(context).size;
+
     return Scaffold(
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            SizedBox(
-              width: 100,
-              height: 100,
-              child: AnimatedBuilder(
-                animation: _progressAnimation,
-                builder: (context, child) {
-                  return CustomPaint(
-                    painter: RadialProgressPainter(
-                      progress: _progressAnimation.value,
-                      progressColor: primaryColor,
-                      backgroundColor: Colors.grey[300]!,
-                    ),
-                    child: Center(
-                      child: Text(
-                        '${(_progressAnimation.value * 100).toStringAsFixed(0)}%',
-                        style: const TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                        ),
+      backgroundColor: theme.scaffoldBackgroundColor,
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            // Center children horizontally
+            mainAxisAlignment: MainAxisAlignment.center,
+            // Center vertically for better balance
+            children: [
+              // Top spacer
+              const Spacer(flex: 2),
+
+              // App branding section
+              Column(
+                mainAxisSize: MainAxisSize.min,
+                // Prevent Column from taking unnecessary space
+                children: [
+                  // App icon or logo placeholder
+                  Center(
+                    child: Container(
+                      width: 80,
+                      height: 80,
+                      decoration: BoxDecoration(
+                        color: primaryColor,
+                        borderRadius: BorderRadius.circular(20),
+                        boxShadow: [
+                          BoxShadow(
+                            color: primaryColor.withOpacity(0.3),
+                            blurRadius: 20,
+                            offset: const Offset(0, 8),
+                          ),
+                        ],
+                      ),
+                      child: const Icon(
+                        Icons.local_shipping_rounded,
+                        size: 40,
+                        color: Colors.white,
                       ),
                     ),
+                  ),
+                  const SizedBox(height: 24),
+
+                  Text(
+                    title,
+                    style: theme.textTheme.headlineSmall?.copyWith(
+                      fontWeight: FontWeight.bold,
+                      color: theme.colorScheme.onSurface,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 8),
+
+                  Text(
+                    subtitle,
+                    style: theme.textTheme.bodyLarge?.copyWith(
+                      color: theme.colorScheme.onSurface.withOpacity(0.7),
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ],
+              ),
+
+              const Spacer(flex: 1),
+
+              // Loading progress section
+              AnimatedBuilder(
+                animation: Listenable.merge([
+                  controller.progressAnimation,
+                  controller.pulseAnimation,
+                ]),
+                builder: (context, child) {
+                  return Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // Circular progress indicator
+                      Center(
+                        child: SizedBox(
+                          width: 120,
+                          height: 120,
+                          child: Stack(
+                            alignment: Alignment.center,
+                            children: [
+                              // Background circle
+                              CustomPaint(
+                                size: const Size(120, 120),
+                                painter: CircularProgressPainter(
+                                  progress: 1.0,
+                                  color: theme.colorScheme.outline
+                                      .withOpacity(0.2),
+                                  strokeWidth: 6,
+                                ),
+                              ),
+                              // Progress circle
+                              CustomPaint(
+                                size: const Size(120, 120),
+                                painter: CircularProgressPainter(
+                                  progress: controller.progressAnimation.value,
+                                  color: primaryColor,
+                                  strokeWidth: 6,
+                                ),
+                              ),
+                              // Percentage text
+                              AnimatedBuilder(
+                                animation: controller.pulseAnimation,
+                                builder: (context, child) {
+                                  return Transform.scale(
+                                    scale: controller.pulseAnimation.value,
+                                    child: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Text(
+                                          '${(controller.progressAnimation.value * 100).toInt()}%',
+                                          style: theme.textTheme.headlineSmall
+                                              ?.copyWith(
+                                            fontWeight: FontWeight.bold,
+                                            color: primaryColor,
+                                          ),
+                                          textAlign: TextAlign.center,
+                                        ),
+                                        if (controller.currentStep.isNotEmpty)
+                                          Container(
+                                            margin:
+                                                const EdgeInsets.only(top: 4),
+                                            child: Icon(
+                                              Icons.sync,
+                                              size: 16,
+                                              color:
+                                                  primaryColor.withOpacity(0.7),
+                                            ),
+                                          ),
+                                      ],
+                                    ),
+                                  );
+                                },
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+
+                      const SizedBox(height: 32),
+
+                      // Current step text
+                      AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 300),
+                        child: Text(
+                          controller.currentStep.isNotEmpty
+                              ? controller.currentStep
+                              : 'Getting ready...',
+                          key: ValueKey(controller.currentStep),
+                          style: theme.textTheme.bodyLarge?.copyWith(
+                            fontWeight: FontWeight.w500,
+                            color: theme.colorScheme.onSurface.withOpacity(0.8),
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+
+                      const SizedBox(height: 16),
+
+                      // Progress bar
+                      Center(
+                        child: Container(
+                          width: size.width * 0.7,
+                          height: 4,
+                          decoration: BoxDecoration(
+                            color: theme.colorScheme.outline.withOpacity(0.2),
+                            borderRadius: BorderRadius.circular(2),
+                          ),
+                          child: FractionallySizedBox(
+                            alignment: Alignment.centerLeft,
+                            widthFactor: controller.progressAnimation.value,
+                            child: Container(
+                              decoration: BoxDecoration(
+                                color: primaryColor,
+                                borderRadius: BorderRadius.circular(2),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: primaryColor.withOpacity(0.4),
+                                    blurRadius: 8,
+                                    offset: const Offset(0, 2),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
                   );
                 },
               ),
-            ),
-            const SizedBox(height: 16),
-            Text(widget.message, style: const TextStyle(fontSize: 16)),
-          ],
+              const Spacer(flex: 2),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 24.0),
+                child: Text(
+                  'Please wait while we prepare everything for you',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurface.withOpacity(0.6),
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
 }
 
-class RadialProgressPainter extends CustomPainter {
+class CircularProgressPainter extends CustomPainter {
   final double progress;
-  final Color progressColor;
-  final Color backgroundColor;
+  final Color color;
+  final double strokeWidth;
 
-  RadialProgressPainter({
+  CircularProgressPainter({
     required this.progress,
-    required this.progressColor,
-    required this.backgroundColor,
+    required this.color,
+    required this.strokeWidth,
   });
 
   @override
   void paint(Canvas canvas, Size size) {
     final center = Offset(size.width / 2, size.height / 2);
-    final radius = size.width / 2;
+    final radius = (size.width - strokeWidth) / 2;
 
-    final backgroundPaint = Paint()
-      ..color = backgroundColor
+    final paint = Paint()
+      ..color = color
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 8;
-    canvas.drawCircle(center, radius, backgroundPaint);
-
-    final progressPaint = Paint()
-      ..color = progressColor
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 8
+      ..strokeWidth = strokeWidth
       ..strokeCap = StrokeCap.round;
+
+    const startAngle = -math.pi / 2;
+    final sweepAngle = 2 * math.pi * progress;
+
     canvas.drawArc(
       Rect.fromCircle(center: center, radius: radius),
-      -90 * (3.14159 / 180),
-      2 * 3.14159 * progress,
+      startAngle,
+      sweepAngle,
       false,
-      progressPaint,
+      paint,
     );
   }
 
   @override
-  bool shouldRepaint(covariant RadialProgressPainter oldDelegate) {
+  bool shouldRepaint(covariant CircularProgressPainter oldDelegate) {
     return oldDelegate.progress != progress ||
-        oldDelegate.progressColor != progressColor ||
-        oldDelegate.backgroundColor != backgroundColor;
+        oldDelegate.color != color ||
+        oldDelegate.strokeWidth != strokeWidth;
   }
 }
 
-class ErrorScreen extends StatelessWidget {
-  final String errorMessage;
+class ProfessionalErrorScreen extends StatelessWidget {
+  final String title;
+  final String message;
   final VoidCallback onRetry;
+  final VoidCallback onGoToLogin;
 
-  const ErrorScreen({
+  const ProfessionalErrorScreen({
     super.key,
-    required this.errorMessage,
+    required this.title,
+    required this.message,
     required this.onRetry,
+    required this.onGoToLogin,
   });
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
     return Scaffold(
+      backgroundColor: theme.scaffoldBackgroundColor,
       body: SafeArea(
-        child: Center(
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Icon(Icons.error_outline, color: Colors.red, size: 60),
-                const SizedBox(height: 16),
-                const Text(
-                  'Something went wrong',
-                  style: TextStyle(fontSize: 20),
+        child: Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            children: [
+              const Spacer(flex: 2),
+
+              // Error icon
+              Container(
+                width: 80,
+                height: 80,
+                decoration: BoxDecoration(
+                  color: Colors.red[50],
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: Colors.red[200]!),
                 ),
-                const SizedBox(height: 8),
-                Text(
-                  errorMessage,
-                  style: const TextStyle(fontSize: 16),
+                child: Icon(
+                  Icons.error_outline_rounded,
+                  size: 40,
+                  color: Colors.red[600],
+                ),
+              ),
+
+              const SizedBox(height: 24),
+
+              Text(
+                title,
+                style: theme.textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.bold,
+                  color: theme.colorScheme.onSurface,
+                ),
+                textAlign: TextAlign.center,
+              ),
+
+              const SizedBox(height: 16),
+
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.red[50],
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.red[200]!),
+                ),
+                child: Text(
+                  message,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: Colors.red[700],
+                  ),
                   textAlign: TextAlign.center,
                 ),
-                const SizedBox(height: 16),
-                ElevatedButton(
-                  onPressed: onRetry,
-                  child: const Text('Retry'),
-                ),
-                const SizedBox(height: 8),
-                TextButton(
-                  onPressed: () {
-                    // Navigate to Login page and clear the navigation stack
-                    Navigator.pushAndRemoveUntil(
-                      context,
-                      MaterialPageRoute(builder: (context) => Login()),
-                      (route) => false, // Remove all previous routes
-                    );
-                  },
-                  child: const Text(
-                    'Go to Login',
-                    style: TextStyle(color: primaryColor),
+              ),
+
+              const Spacer(flex: 1),
+
+              // Action buttons
+              Column(
+                children: [
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: onRetry,
+                      icon: const Icon(Icons.refresh_rounded),
+                      label: const Text('Try Again'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: primaryColor,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                    ),
                   ),
-                ),
-              ],
-            ),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: onGoToLogin,
+                      icon: const Icon(Icons.login_rounded),
+                      label: const Text('Go to Login'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: primaryColor,
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        side: BorderSide(color: primaryColor),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+
+              const Spacer(flex: 2),
+            ],
           ),
         ),
       ),
     );
+  }
+}
+
+class MainPageWrapper extends StatefulWidget {
+  final DataSyncManager syncManager;
+
+  const MainPageWrapper({super.key, required this.syncManager});
+
+  @override
+  _MainPageWrapperState createState() => _MainPageWrapperState();
+}
+
+class _MainPageWrapperState extends State<MainPageWrapper>
+    with TickerProviderStateMixin {
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<CylloSessionModel?>(
+      future: SessionManager.getCurrentSession(),
+      builder: (context, sessionSnapshot) {
+        if (sessionSnapshot.connectionState == ConnectionState.waiting) {
+          return ProfessionalLoadingScreen(
+            controller: AppLoadingController(vsync: this),
+            // Use `this` as the TickerProvider
+            title: 'Van Sale Application',
+            subtitle: 'Checking session...',
+          );
+        }
+
+        final session = sessionSnapshot.data;
+        if (session == null) {
+          return Login();
+        }
+
+        if (!session.hasCheckedModules) {
+          return MultiProvider(
+            providers: [
+              ChangeNotifierProvider(create: (_) => ModuleCheckProvider()),
+            ],
+            child: ModuleCheckScreen(datasync: widget.syncManager),
+          );
+        }
+
+        return FutureBuilder<OdooClient?>(
+          future: SessionManager.getActiveClient(),
+          builder: (context, clientSnapshot) {
+            if (clientSnapshot.connectionState == ConnectionState.waiting) {
+              return ProfessionalLoadingScreen(
+                controller: AppLoadingController(vsync: this),
+                // Use `this` as the TickerProvider
+                title: 'Van Sale Application',
+                subtitle: 'Connecting to server...',
+              );
+            }
+
+            final client = clientSnapshot.data;
+            if (client == null) {
+              return Login();
+            }
+
+            return FutureBuilder<bool>(
+              future: _checkModules(client),
+              builder: (context, moduleSnapshot) {
+                if (moduleSnapshot.connectionState == ConnectionState.waiting) {
+                  return ProfessionalLoadingScreen(
+                    controller: AppLoadingController(vsync: this),
+                    // Use `this` as the TickerProvider
+                    title: 'Van Sale Application',
+                    subtitle: 'Checking modules...',
+                  );
+                }
+
+                final moduleProvider = Provider.of<ModuleCheckProvider>(
+                  context,
+                  listen: false,
+                );
+
+                if (moduleSnapshot.data == false ||
+                    moduleProvider.missingModules.isNotEmpty) {
+                  return MultiProvider(
+                    providers: [
+                      ChangeNotifierProvider.value(value: moduleProvider),
+                    ],
+                    child: ModuleCheckScreen(datasync: widget.syncManager),
+                  );
+                }
+
+                return MainPage(syncManager: widget.syncManager);
+              },
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<bool> _checkModules(OdooClient client) async {
+    final moduleProvider = ModuleCheckProvider();
+    Provider.of<ModuleCheckProvider>(navigatorKey.currentContext!,
+        listen: false)
+      ..isLoading = false
+      ..errorMessage = null
+      ..missingModules.clear()
+      ..installedModules.clear();
+    return await moduleProvider.checkRequiredModules(client);
   }
 }

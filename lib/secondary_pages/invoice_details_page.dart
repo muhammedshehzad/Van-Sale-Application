@@ -3,13 +3,12 @@ import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import 'package:shimmer/shimmer.dart';
 import '../assets/widgets and consts/page_transition.dart';
-import '../authentication/cyllo_session_model.dart';
 import '../providers/invoice_details_provider.dart';
 import 'payment_page.dart';
 
 class InvoiceDetailsPage extends StatefulWidget {
   final String invoiceId;
-  final VoidCallback? onInvoiceUpdated; // Add callback
+  final VoidCallback? onInvoiceUpdated;
 
   const InvoiceDetailsPage({
     Key? key,
@@ -22,24 +21,226 @@ class InvoiceDetailsPage extends StatefulWidget {
 }
 
 class _InvoiceDetailsPageState extends State<InvoiceDetailsPage> {
+  bool _hasChanges = false; // Track changes
+
   @override
   void initState() {
     super.initState();
-    debugPrint(
-        'InvoiceDetailsPage: Initializing with invoiceId = ${widget.invoiceId}');
-    // Reset provider state on page load to avoid showing previous invoice data
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      final provider =
-          Provider.of<InvoiceDetailsProvider>(context, listen: false);
-      // Clear previous data before fetching new data
-      provider.resetState();
+    debugPrint('InvoiceDetailsPage: Initializing with invoiceId = ${widget.invoiceId}');
 
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final provider = Provider.of<InvoiceDetailsProvider>(context, listen: false);
+      provider.resetState();
       if (widget.invoiceId.isNotEmpty) {
         provider.fetchInvoiceDetails(widget.invoiceId);
       } else {
         debugPrint('InvoiceDetailsPage: No invoiceId provided');
       }
     });
+  }
+
+  // Update action buttons to set _hasChanges
+  Widget _buildPrimaryActionButtons(InvoiceDetailsProvider provider) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _buildActionButton(
+          icon: Icons.download_rounded,
+          label: 'Download PDF',
+          color: Colors.blue[800]!,
+          onPressed: () => provider.generateAndSharePdf(context), // No change
+        ),
+        const SizedBox(height: 12),
+        if (provider.invoiceState != 'draft' && provider.invoiceState != 'cancel')
+          _buildActionButton(
+            icon: Icons.payment,
+            label: 'Record Payment',
+            color: provider.isFullyPaid ? Colors.grey[400]! : const Color(0xFFA12424),
+            onPressed: provider.isFullyPaid
+                ? null
+                : () async {
+              debugPrint('Record Payment button pressed');
+              try {
+                final result = await Navigator.push(
+                  context,
+                  SlidingPageTransitionRL(
+                    page: PaymentPage(invoiceData: provider.invoiceData),
+                  ),
+                );
+                debugPrint('PaymentPage result: $result');
+                if (result is Map<dynamic, dynamic>) {
+                  provider.updateInvoiceData(Map<String, dynamic>.from(result));
+                  setState(() {
+                    _hasChanges = true; // Mark as changed
+                  });
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Payment recorded successfully'),
+                      backgroundColor: Colors.green,
+                    ),
+                  );
+                }
+              } catch (e) {
+                debugPrint('Navigation error: $e');
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+                );
+              }
+            },
+          ),
+        if (provider.invoiceState == 'draft')
+          _buildActionButton(
+            icon: Icons.check_circle,
+            label: 'Validate Invoice',
+            color: Colors.green[700]!,
+            onPressed: () async {
+              debugPrint('Validate Invoice button pressed');
+              final success = await provider.postInvoice(widget.invoiceId);
+              if (success) {
+                setState(() {
+                  _hasChanges = true; // Mark as changed
+                });
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Invoice validated successfully'),
+                    backgroundColor: Colors.green,
+                  ),
+                );
+                widget.onInvoiceUpdated?.call();
+              } else {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text(provider.errorMessage), backgroundColor: Colors.red),
+                );
+              }
+            },
+          ),
+      ],
+    );
+  }
+
+  Widget _buildSecondaryActionButtons(InvoiceDetailsProvider provider) {
+    if (provider.invoiceState != 'posted' &&
+        provider.invoiceState != 'draft' &&
+        provider.invoiceState != 'cancel') {
+      return Container();
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            const Expanded(child: Divider(color: Colors.grey)),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Text(
+                'More Actions',
+                style: TextStyle(color: Colors.grey[600], fontWeight: FontWeight.w500),
+              ),
+            ),
+            const Expanded(child: Divider(color: Colors.grey)),
+          ],
+        ),
+        const SizedBox(height: 16),
+        if (provider.invoiceState == 'posted')
+          _buildActionButton(
+            icon: Icons.restore,
+            label: 'Reset to Draft',
+            color: Colors.orange[700]!,
+            onPressed: () async {
+              debugPrint('Reset to Draft button pressed');
+              final success = await provider.resetToDraft(widget.invoiceId);
+              if (success) {
+                setState(() {
+                  _hasChanges = true; // Mark as changed
+                });
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Invoice reset to draft successfully'),
+                    backgroundColor: Colors.green,
+                  ),
+                );
+              } else {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text(provider.errorMessage), backgroundColor: Colors.red),
+                );
+              }
+            },
+          ),
+        if (provider.invoiceState == 'draft')
+          _buildActionButton(
+            icon: Icons.cancel,
+            label: 'Cancel Invoice',
+            color: Colors.red[700]!,
+            onPressed: () async {
+              debugPrint('Cancel Invoice button pressed');
+              final success = await provider.cancelInvoice(widget.invoiceId);
+              if (success) {
+                setState(() {
+                  _hasChanges = true; // Mark as changed
+                });
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Invoice cancelled successfully'),
+                    backgroundColor: Colors.green,
+                  ),
+                );
+              } else {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text(provider.errorMessage), backgroundColor: Colors.red),
+                );
+              }
+            },
+          ),
+        if (provider.invoiceState == 'draft' || provider.invoiceState == 'cancel')
+          _buildActionButton(
+            icon: Icons.delete,
+            label: 'Delete Invoice',
+            color: Colors.red[900]!,
+            isDestructive: true,
+            onPressed: () async {
+              debugPrint('Delete Invoice button pressed');
+              final confirm = await showDialog<bool>(
+                context: context,
+                builder: (context) => AlertDialog(
+                  title: const Text('Delete Invoice'),
+                  content: const Text(
+                      'Are you sure you want to delete this invoice? This action cannot be undone.'),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.of(context).pop(false),
+                      child: const Text('Cancel'),
+                    ),
+                    TextButton(
+                      onPressed: () => Navigator.of(context).pop(true),
+                      child: const Text('Delete', style: TextStyle(color: Colors.red)),
+                    ),
+                  ],
+                ),
+              );
+              if (confirm == true) {
+                final success = await provider.deleteInvoice(widget.invoiceId);
+                if (success) {
+                  setState(() {
+                    _hasChanges = true; // Mark as changed
+                  });
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Invoice deleted successfully'),
+                      backgroundColor: Colors.green,
+                    ),
+                  );
+                  Navigator.of(context).pop(true); // Return true immediately
+                } else {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text(provider.errorMessage), backgroundColor: Colors.red),
+                  );
+                }
+              }
+            },
+          ),
+      ],
+    );
   }
 
   @override
@@ -51,15 +252,12 @@ class _InvoiceDetailsPageState extends State<InvoiceDetailsPage> {
           appBar: AppBar(
             title: Text(
               'Invoice ${provider.invoiceNumber.isEmpty ? "Loading..." : provider.invoiceNumber}',
-              style: const TextStyle(
-                fontWeight: FontWeight.bold,
-                color: Colors.white,
-              ),
+              style: const TextStyle(color: Colors.white),
             ),
             elevation: 0,
             leading: IconButton(
               icon: const Icon(Icons.arrow_back, color: Colors.white),
-              onPressed: () => Navigator.of(context).pop(),
+              onPressed: () => Navigator.of(context).pop(_hasChanges), // Return change status
             ),
             backgroundColor: const Color(0xFFA12424),
             actions: [
@@ -72,79 +270,74 @@ class _InvoiceDetailsPageState extends State<InvoiceDetailsPage> {
               ),
             ],
           ),
+          // Rest of the build method remains unchanged
           body: SafeArea(
             child: provider.isLoading || provider.invoiceNumber.isEmpty
                 ? Center(
-                    child: Shimmer.fromColors(
-                      baseColor: Colors.grey[300]!,
-                      highlightColor: Colors.grey[100]!,
-                      child: SingleChildScrollView(
-                        padding: const EdgeInsets.all(16.0),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            // Status Banner
-                            Container(
-                              width: double.infinity,
-                              height: 80,
-                              margin: const EdgeInsets.only(bottom: 16),
-                              color: Colors.white,
-                            ),
-                            // Invoice Header
-                            Container(
-                              width: double.infinity,
-                              height: 200,
-                              margin: const EdgeInsets.only(bottom: 20),
-                              color: Colors.white,
-                            ),
-                            // Payment Progress
-                            Container(
-                              width: double.infinity,
-                              height: 100,
-                              margin: const EdgeInsets.only(bottom: 20),
-                              color: Colors.white,
-                            ),
-                            // Invoice Lines Title
-                            Container(
-                              width: 150,
-                              height: 20,
-                              margin: const EdgeInsets.only(bottom: 12),
-                              color: Colors.white,
-                            ),
-                            // Invoice Lines
-                            ...List.generate(
-                              3,
-                                  (index) => Container(
-                                width: double.infinity,
-                                height: 120,
-                                margin: const EdgeInsets.only(bottom: 12),
-                                color: Colors.white,
-                              ),
-                            ),
-                            // Pricing Summary
-                            Container(
-                              width: double.infinity,
-                              height: 150,
-                              margin: const EdgeInsets.only(bottom: 20),
-                              color: Colors.white,
-                            ),
-                            // Action Buttons
-                            ...List.generate(
-                              2,
-                                  (index) => Container(
-                                width: double.infinity,
-                                height: 50,
-                                margin: const EdgeInsets.only(bottom: 12),
-                                color: Colors.white,
-                              ),
-                            ),
-                          ],
+              child: Shimmer.fromColors(
+                baseColor: Colors.grey[300]!,
+                highlightColor: Colors.grey[100]!,
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                        width: double.infinity,
+                        height: 80,
+                        margin: const EdgeInsets.only(bottom: 16),
+                        color: Colors.white,
+                      ),
+                      Container(
+                        width: double.infinity,
+                        height: 200,
+                        margin: const EdgeInsets.only(bottom: 20),
+                        color: Colors.white,
+                      ),
+                      Container(
+                        width: double.infinity,
+                        height: 100,
+                        margin: const EdgeInsets.only(bottom: 20),
+                        color: Colors.white,
+                      ),
+                      Container(
+                        width: 150,
+                        height: 20,
+                        margin: const EdgeInsets.only(bottom: 12),
+                        color: Colors.white,
+                      ),
+                      ...List.generate(
+                        3,
+                            (index) => Container(
+                          width: double.infinity,
+                          height: 120,
+                          margin: const EdgeInsets.only(bottom: 12),
+                          color: Colors.white,
                         ),
                       ),
-                    ))
+                      Container(
+                        width: double.infinity,
+                        height: 150,
+                        margin: const EdgeInsets.only(bottom: 20),
+                        color: Colors.white,
+                      ),
+                      ...List.generate(
+                        2,
+                            (index) => Container(
+                          width: double.infinity,
+                          height: 50,
+                          margin: const EdgeInsets.only(bottom: 12),
+                          color: Colors.white,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            )
                 : provider.errorMessage.isNotEmpty
-                    ? _buildErrorState(provider)
-                    : _buildContent(provider),
+                ? _buildErrorState(provider)
+                : _buildContent(provider),
           ),
         );
       },
@@ -670,12 +863,8 @@ class _InvoiceDetailsPageState extends State<InvoiceDetailsPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // Primary action buttons section
             _buildPrimaryActionButtons(provider),
-
             const SizedBox(height: 24),
-
-            // Secondary action buttons section
             _buildSecondaryActionButtons(provider),
           ],
         ),
@@ -683,236 +872,7 @@ class _InvoiceDetailsPageState extends State<InvoiceDetailsPage> {
     );
   }
 
-  Widget _buildPrimaryActionButtons(InvoiceDetailsProvider provider) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        // Download PDF Button - Always visible
-        _buildActionButton(
-          icon: Icons.download_rounded,
-          label: 'Download PDF',
-          color: Colors.blue[800]!,
-          onPressed: () => provider.generateAndSharePdf(context),
-        ),
 
-        const SizedBox(height: 12),
-
-        // Record Payment Button - For non-draft and non-cancelled invoices
-        if (provider.invoiceState != 'draft' &&
-            provider.invoiceState != 'cancel')
-          _buildActionButton(
-            icon: Icons.payment,
-            label: 'Record Payment',
-            color: provider.isFullyPaid
-                ? Colors.grey[400]!
-                : const Color(0xFFA12424),
-            onPressed: provider.isFullyPaid
-                ? null
-                : () async {
-                    debugPrint('Record Payment button pressed');
-                    try {
-                      final result = await Navigator.push(
-                        context,
-                        SlidingPageTransitionRL(
-                          page: PaymentPage(invoiceData: provider.invoiceData),
-                        ),
-                      );
-                      debugPrint('PaymentPage result: $result');
-                      if (result is Map<dynamic, dynamic>) {
-                        provider.updateInvoiceData(
-                            Map<String, dynamic>.from(result));
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('Payment recorded successfully'),
-                            backgroundColor: Colors.green,
-                          ),
-                        );
-                      }
-                    } catch (e) {
-                      debugPrint('Navigation error: $e');
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text('Error: $e'),
-                          backgroundColor: Colors.red,
-                        ),
-                      );
-                    }
-                  },
-          ),
-
-        // Validate Invoice Button - For draft invoices
-        if (provider.invoiceState == 'draft')
-          _buildActionButton(
-            icon: Icons.check_circle,
-            label: 'Validate Invoice',
-            color: Colors.green[700]!,
-            onPressed: () async {
-              debugPrint('Validate Invoice button pressed');
-              final success = await provider.postInvoice(widget.invoiceId);
-              if (success) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Invoice validated successfully'),
-                    backgroundColor: Colors.green,
-                  ),
-                );
-                widget.onInvoiceUpdated?.call(); // Notify parent
-              } else {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(provider.errorMessage),
-                    backgroundColor: Colors.red,
-                  ),
-                );
-              }
-            },
-          ),
-      ],
-    );
-  }
-
-  Widget _buildSecondaryActionButtons(InvoiceDetailsProvider provider) {
-    // If there are no secondary actions to show, return an empty container
-    if (provider.invoiceState != 'posted' &&
-        provider.invoiceState != 'draft' &&
-        provider.invoiceState != 'cancel') {
-      return Container();
-    }
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        // Optional divider with "More Actions" text
-        Row(
-          children: [
-            const Expanded(child: Divider(color: Colors.grey)),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              child: Text(
-                'More Actions',
-                style: TextStyle(
-                  color: Colors.grey[600],
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ),
-            const Expanded(child: Divider(color: Colors.grey)),
-          ],
-        ),
-
-        const SizedBox(height: 16),
-
-        // Reset to Draft Button - For posted invoices
-        if (provider.invoiceState == 'posted')
-          _buildActionButton(
-            icon: Icons.restore,
-            label: 'Reset to Draft',
-            color: Colors.orange[700]!,
-            onPressed: () async {
-              debugPrint('Reset to Draft button pressed');
-              final success = await provider.resetToDraft(widget.invoiceId);
-              if (success) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Invoice reset to draft successfully'),
-                    backgroundColor: Colors.green,
-                  ),
-                );
-              } else {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(provider.errorMessage),
-                    backgroundColor: Colors.red,
-                  ),
-                );
-              }
-            },
-          ),
-
-        // Cancel Invoice Button - For draft invoices
-        if (provider.invoiceState == 'draft')
-          _buildActionButton(
-            icon: Icons.cancel,
-            label: 'Cancel Invoice',
-            color: Colors.red[700]!,
-            onPressed: () async {
-              debugPrint('Cancel Invoice button pressed');
-              final success = await provider.cancelInvoice(widget.invoiceId);
-              if (success) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Invoice cancelled successfully'),
-                    backgroundColor: Colors.green,
-                  ),
-                );
-              } else {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(provider.errorMessage),
-                    backgroundColor: Colors.red,
-                  ),
-                );
-              }
-            },
-          ),
-
-        // Delete Invoice Button - For draft or cancelled invoices
-        if (provider.invoiceState == 'draft' ||
-            provider.invoiceState == 'cancel')
-          _buildActionButton(
-            icon: Icons.delete,
-            label: 'Delete Invoice',
-            color: Colors.red[900]!,
-            isDestructive: true,
-            onPressed: () async {
-              debugPrint('Delete Invoice button pressed');
-              // Show confirmation dialog
-              final confirm = await showDialog<bool>(
-                context: context,
-                builder: (context) => AlertDialog(
-                  title: const Text('Delete Invoice'),
-                  content: const Text(
-                      'Are you sure you want to delete this invoice? This action cannot be undone.'),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.of(context).pop(false),
-                      child: const Text('Cancel'),
-                    ),
-                    TextButton(
-                      onPressed: () => Navigator.of(context).pop(true),
-                      child: const Text('Delete',
-                          style: TextStyle(color: Colors.red)),
-                    ),
-                  ],
-                ),
-              );
-              if (confirm == true) {
-                final success = await provider.deleteInvoice(widget.invoiceId);
-                if (success) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Invoice deleted successfully'),
-                      backgroundColor: Colors.green,
-                    ),
-                  );
-                  // Navigate back after deletion
-                  Navigator.of(context).pop();
-                } else {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(provider.errorMessage),
-                      backgroundColor: Colors.red,
-                    ),
-                  );
-                }
-              }
-            },
-          ),
-      ],
-    );
-  }
-
-// Helper method to create consistently styled buttons
   Widget _buildActionButton({
     required IconData icon,
     required String label,

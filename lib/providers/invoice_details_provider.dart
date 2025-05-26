@@ -3,7 +3,6 @@ import 'package:intl/intl.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
-
 import '../authentication/cyllo_session_model.dart';
 
 class InvoiceDetailsProvider extends ChangeNotifier {
@@ -11,7 +10,7 @@ class InvoiceDetailsProvider extends ChangeNotifier {
   bool _isLoading = false;
   String _errorMessage = '';
   NumberFormat currencyFormat =
-  NumberFormat.currency(symbol: '\$', decimalDigits: 2);
+      NumberFormat.currency(symbol: '\$', decimalDigits: 2);
 
   void resetState() {
     _invoiceData = {};
@@ -21,14 +20,12 @@ class InvoiceDetailsProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  // Getters
   Map<String, dynamic> get invoiceData => _invoiceData;
 
   bool get isLoading => _isLoading;
 
   String get errorMessage => _errorMessage;
 
-  // Derived properties
   String get invoiceNumber {
     final name = _invoiceData['name'];
     if (name == null || name == false) return 'Draft';
@@ -62,7 +59,6 @@ class InvoiceDetailsProvider extends ChangeNotifier {
               ?.map((line) => line is Map ? line : {'id': line}) ??
           []);
 
-  // Customer info
   String get customerName {
     final partner = _invoiceData['partner_id'];
     if (partner is List && partner.length > 1) return partner[1].toString();
@@ -100,7 +96,6 @@ class InvoiceDetailsProvider extends ChangeNotifier {
     return '';
   }
 
-  // Payment status
   double get percentagePaid => invoiceAmount > 0
       ? ((invoiceAmount - amountResidual) / invoiceAmount * 100).clamp(0, 100)
       : 0.0;
@@ -109,9 +104,7 @@ class InvoiceDetailsProvider extends ChangeNotifier {
 
   double get amountTax => _invoiceData['amount_tax'] as double? ?? 0.0;
 
-  // Initialize with invoice data
   void setInvoiceData(Map<String, dynamic> data) {
-    // Always update the data to ensure state changes are reflected
     _invoiceData = Map<String, dynamic>.from(data);
     currencyFormat = NumberFormat.currency(
       symbol: currency == 'USD' ? '\$' : currency,
@@ -121,7 +114,7 @@ class InvoiceDetailsProvider extends ChangeNotifier {
         'InvoiceDetailsProvider: setInvoiceData with invoiceNumber=$invoiceNumber, state=${data['state']}, lines=${invoiceLines.length}');
     notifyListeners();
   }
-  // Fetch invoice details
+
   Future<void> fetchInvoiceDetails(String invoiceId) async {
     if (invoiceId.isEmpty) {
       _errorMessage = 'Invalid invoice ID';
@@ -132,7 +125,7 @@ class InvoiceDetailsProvider extends ChangeNotifier {
 
     _isLoading = true;
     _errorMessage = '';
-    _invoiceData = {}; // Clear previous data
+    _invoiceData = {};
     notifyListeners();
 
     try {
@@ -187,27 +180,27 @@ class InvoiceDetailsProvider extends ChangeNotifier {
         final lineIds = List<int>.from(invoiceData['invoice_line_ids'] ?? []);
         final lines = lineIds.isNotEmpty
             ? await client.callKw({
-          'model': 'account.move.line',
-          'method': 'search_read',
-          'args': [
-            [
-              ['id', 'in', lineIds]
-            ],
-            [
-              'name',
-              'quantity',
-              'price_unit',
-              'price_subtotal',
-              'price_total',
-              'discount',
-              'tax_ids',
-              'product_id',
-            ],
-          ],
-          'kwargs': {},
-        }).timeout(const Duration(seconds: 3), onTimeout: () {
-          throw Exception('Invoice lines fetch timed out');
-        })
+                'model': 'account.move.line',
+                'method': 'search_read',
+                'args': [
+                  [
+                    ['id', 'in', lineIds]
+                  ],
+                  [
+                    'name',
+                    'quantity',
+                    'price_unit',
+                    'price_subtotal',
+                    'price_total',
+                    'discount',
+                    'tax_ids',
+                    'product_id',
+                  ],
+                ],
+                'kwargs': {},
+              }).timeout(const Duration(seconds: 3), onTimeout: () {
+                throw Exception('Invoice lines fetch timed out');
+              })
             : [];
         invoiceData['line_details'] = lines;
         setInvoiceData(invoiceData);
@@ -222,7 +215,7 @@ class InvoiceDetailsProvider extends ChangeNotifier {
     _isLoading = false;
     notifyListeners();
   }
-  // Post (validate) invoice
+
   Future<bool> postInvoice(String invoiceId) async {
     _isLoading = true;
     _errorMessage = '';
@@ -246,7 +239,6 @@ class InvoiceDetailsProvider extends ChangeNotifier {
         throw Exception('Invoice validation timed out');
       });
 
-      // Refresh invoice details to reflect the new state
       await fetchInvoiceDetails(invoiceId);
       debugPrint('postInvoice: Successfully validated invoice ID $invoiceId');
       _isLoading = false;
@@ -261,7 +253,7 @@ class InvoiceDetailsProvider extends ChangeNotifier {
       return false;
     }
   }
-  // Reset invoice to draft
+
   Future<bool> resetToDraft(String invoiceId) async {
     _isLoading = true;
     _errorMessage = '';
@@ -274,7 +266,6 @@ class InvoiceDetailsProvider extends ChangeNotifier {
         throw Exception('No active session');
       }
 
-      // Call action_draft to reset the invoice to draft
       await client.callKw({
         'model': 'account.move',
         'method': 'button_draft',
@@ -286,7 +277,6 @@ class InvoiceDetailsProvider extends ChangeNotifier {
         throw Exception('Invoice reset to draft timed out');
       });
 
-      // Refresh invoice details to reflect the new state
       await fetchInvoiceDetails(invoiceId);
       _isLoading = false;
       notifyListeners();
@@ -301,7 +291,6 @@ class InvoiceDetailsProvider extends ChangeNotifier {
     }
   }
 
-  // Cancel invoice
   Future<bool> cancelInvoice(String invoiceId) async {
     _isLoading = true;
     _errorMessage = '';
@@ -314,7 +303,6 @@ class InvoiceDetailsProvider extends ChangeNotifier {
         throw Exception('No active session');
       }
 
-      // Call action_cancel to cancel the invoice
       await client.callKw({
         'model': 'account.move',
         'method': 'button_cancel',
@@ -326,7 +314,6 @@ class InvoiceDetailsProvider extends ChangeNotifier {
         throw Exception('Invoice cancellation timed out');
       });
 
-      // Refresh invoice details to reflect the new state
       await fetchInvoiceDetails(invoiceId);
       _isLoading = false;
       notifyListeners();
@@ -341,7 +328,6 @@ class InvoiceDetailsProvider extends ChangeNotifier {
     }
   }
 
-  // Delete invoice
   Future<bool> deleteInvoice(String invoiceId) async {
     _isLoading = true;
     _errorMessage = '';
@@ -354,7 +340,6 @@ class InvoiceDetailsProvider extends ChangeNotifier {
         throw Exception('No active session');
       }
 
-      // Call unlink to delete the invoice
       await client.callKw({
         'model': 'account.move',
         'method': 'unlink',
@@ -379,7 +364,6 @@ class InvoiceDetailsProvider extends ChangeNotifier {
     }
   }
 
-  // Helper methods
   String formatInvoiceState(String state, bool isFullyPaid) {
     if (isFullyPaid) return 'Paid';
     switch (state.toLowerCase()) {
@@ -414,7 +398,6 @@ class InvoiceDetailsProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  // Generate and share PDF
   Future<void> generateAndSharePdf(BuildContext context) async {
     final pdf = pw.Document(
       theme: pw.ThemeData.withFont(
@@ -429,8 +412,6 @@ class InvoiceDetailsProvider extends ChangeNotifier {
       final primaryColor = PdfColor.fromHex('#A12424');
       final accentColor = PdfColor.fromHex('#F5F5F5');
       final borderColor = PdfColor.fromHex('#DDDDDD');
-
-      // Fetch company details
       final client = await SessionManager.getActiveClient();
       final companyId = _invoiceData['company_id']?[0];
 
@@ -438,7 +419,9 @@ class InvoiceDetailsProvider extends ChangeNotifier {
         'model': 'res.company',
         'method': 'search_read',
         'args': [
-          [['id', '=', companyId]],
+          [
+            ['id', '=', companyId]
+          ],
           ['name', 'street', 'email', 'phone', 'website'],
         ],
         'kwargs': {},
@@ -451,7 +434,6 @@ class InvoiceDetailsProvider extends ChangeNotifier {
       final companyPhone = companyData['phone'] ?? 'Phone Not Available';
       final companyWebsite = companyData['website'] ?? 'Website Not Available';
 
-      // Helper function to build the main header
       pw.Widget buildMainHeader() {
         return pw.Container(
           padding: const pw.EdgeInsets.all(12),
@@ -539,7 +521,7 @@ class InvoiceDetailsProvider extends ChangeNotifier {
                 decoration: pw.BoxDecoration(
                   color: primaryColor,
                   borderRadius:
-                  const pw.BorderRadius.all(pw.Radius.circular(6)),
+                      const pw.BorderRadius.all(pw.Radius.circular(6)),
                 ),
                 child: pw.Row(
                   mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
@@ -577,7 +559,7 @@ class InvoiceDetailsProvider extends ChangeNotifier {
                   decoration: pw.BoxDecoration(
                     color: primaryColor,
                     borderRadius:
-                    const pw.BorderRadius.all(pw.Radius.circular(6)),
+                        const pw.BorderRadius.all(pw.Radius.circular(6)),
                   ),
                   child: pw.Text(
                     'Thank you for your business!',
@@ -606,7 +588,6 @@ class InvoiceDetailsProvider extends ChangeNotifier {
           build: (pw.Context context) {
             final widgets = <pw.Widget>[];
 
-            // Center the main content with a constrained width
             widgets.add(
               pw.Align(
                 alignment: pw.Alignment.center,
@@ -615,13 +596,12 @@ class InvoiceDetailsProvider extends ChangeNotifier {
                   child: pw.Column(
                     crossAxisAlignment: pw.CrossAxisAlignment.start,
                     children: [
-                      // Company Information
                       pw.Container(
                         padding: const pw.EdgeInsets.all(10),
                         decoration: pw.BoxDecoration(
                           border: pw.Border.all(color: borderColor),
                           borderRadius:
-                          const pw.BorderRadius.all(pw.Radius.circular(6)),
+                              const pw.BorderRadius.all(pw.Radius.circular(6)),
                         ),
                         child: pw.Column(
                           crossAxisAlignment: pw.CrossAxisAlignment.start,
@@ -679,14 +659,12 @@ class InvoiceDetailsProvider extends ChangeNotifier {
                         ),
                       ),
                       pw.SizedBox(height: 15),
-
-                      // Invoice Information
                       pw.Container(
                         padding: const pw.EdgeInsets.all(10),
                         decoration: pw.BoxDecoration(
                           border: pw.Border.all(color: borderColor),
                           borderRadius:
-                          const pw.BorderRadius.all(pw.Radius.circular(6)),
+                              const pw.BorderRadius.all(pw.Radius.circular(6)),
                         ),
                         child: pw.Column(
                           crossAxisAlignment: pw.CrossAxisAlignment.start,
@@ -751,8 +729,6 @@ class InvoiceDetailsProvider extends ChangeNotifier {
                         ),
                       ),
                       pw.SizedBox(height: 15),
-
-                      // Invoice Lines
                       pw.Text(
                         'INVOICE LINES',
                         style: pw.TextStyle(
@@ -766,7 +742,7 @@ class InvoiceDetailsProvider extends ChangeNotifier {
                         decoration: pw.BoxDecoration(
                           border: pw.Border.all(color: borderColor),
                           borderRadius:
-                          const pw.BorderRadius.all(pw.Radius.circular(6)),
+                              const pw.BorderRadius.all(pw.Radius.circular(6)),
                         ),
                         child: pw.Table(
                           border: null,
@@ -878,19 +854,19 @@ class InvoiceDetailsProvider extends ChangeNotifier {
                               final discount =
                                   line['discount'] as double? ?? 0.0;
                               final taxName = (line['tax_ids'] is List &&
-                                  (line['tax_ids'] as List?)?.isNotEmpty ==
-                                      true &&
-                                  (line['tax_ids'] as List?)?.elementAt(0)
-                                  is List &&
-                                  ((line['tax_ids'] as List?)?.elementAt(0)
-                                  as List?)!
-                                      .length >
-                                      1)
+                                      (line['tax_ids'] as List?)?.isNotEmpty ==
+                                          true &&
+                                      (line['tax_ids'] as List?)?.elementAt(0)
+                                          is List &&
+                                      ((line['tax_ids'] as List?)?.elementAt(0)
+                                                  as List?)!
+                                              .length >
+                                          1)
                                   ? ((line['tax_ids'] as List?)?.elementAt(0)
-                              as List?)
-                                  ?.elementAt(1)
-                                  ?.toString() ??
-                                  ''
+                                              as List?)
+                                          ?.elementAt(1)
+                                          ?.toString() ??
+                                      ''
                                   : '';
 
                               return pw.TableRow(
@@ -910,7 +886,7 @@ class InvoiceDetailsProvider extends ChangeNotifier {
                                     child: pw.Text(
                                       quantity.toStringAsFixed(
                                           quantity.truncateToDouble() ==
-                                              quantity
+                                                  quantity
                                               ? 0
                                               : 2),
                                       style: const pw.TextStyle(fontSize: 11),
@@ -960,8 +936,6 @@ class InvoiceDetailsProvider extends ChangeNotifier {
                         ),
                       ),
                       pw.SizedBox(height: 15),
-
-                      // Totals
                       pw.Align(
                         alignment: pw.Alignment.centerRight,
                         child: pw.Container(

@@ -637,7 +637,7 @@ class _OrderTrackingWidgetState extends State<OrderTrackingWidget> {
           'description': 'This order has been cancelled.',
           'details': widget.orderData['note'] != null &&
                   widget.orderData['note'] != false
-              ? 'Cancellation reason: ${widget.orderData['note']}'
+              ? 'Cancellation reason: ${widget.orderData['subject'] ?? ''}'
               : 'Order was cancelled on ${DateFormat('MMM dd, yyyy').format(dateOrder.add(const Duration(hours: 1)))}',
           'actionable': false,
         },

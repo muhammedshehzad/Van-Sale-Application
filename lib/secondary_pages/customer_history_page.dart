@@ -210,7 +210,7 @@ class _CustomerHistoryPageState extends State<CustomerHistoryPage> {
     return Scaffold(
       backgroundColor: Colors.grey[100],
       appBar: AppBar(
-        title: Text('${widget.customer.name}\'s Order History',style: TextStyle(fontWeight: FontWeight.bold),),
+        title: Text('${widget.customer.name}\'s Order History',),
         backgroundColor: primaryColor,
         foregroundColor: Colors.white,
         elevation: 0,
@@ -477,7 +477,7 @@ class _CustomerHistoryPageState extends State<CustomerHistoryPage> {
   }
 
   void showCreateOrderSheet(BuildContext context, Customer customer) {
-    FocusScope.of(context).unfocus(); // Add this line
+    FocusScope.of(context).unfocus();
     Navigator.push(
       context,
       SlidingPageTransitionRL(
@@ -821,7 +821,7 @@ class _CustomerHistoryPageState extends State<CustomerHistoryPage> {
   }
 }
 
-// Extension to capitalize string
+
 extension StringExtension on String {
   String capitalize() {
     return isNotEmpty ? "${this[0].toUpperCase()}${substring(1)}" : this;

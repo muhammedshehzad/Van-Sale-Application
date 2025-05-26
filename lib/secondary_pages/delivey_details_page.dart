@@ -16,6 +16,8 @@ import 'package:share_plus/share_plus.dart';
 import 'package:shimmer/shimmer.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../../../authentication/cyllo_session_model.dart';
+import '../assets/widgets and consts/confirmation_dialogs.dart';
+import '../providers/order_picking_provider.dart';
 import '../providers/sale_order_detail_provider.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -111,12 +113,10 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
     Map<int, List<TextEditingController>>? serialNumberControllers,
     Map<int, TextEditingController>? lotNumberControllers,
   }) async {
-    // Initialize logging
     debugPrint('Generating professional delivery receipt PDF');
 
     final client = await SessionManager.getActiveClient();
 
-    // Retrieve company information
     final companyId = pickingDetail['company_id'] is List<dynamic>
         ? (pickingDetail['company_id'] as List<dynamic>)[0]
         : pickingDetail['company_id'] ?? 1;
@@ -164,7 +164,6 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
         ? companyData['vat'] as String
         : '';
 
-    // Initialize PDF document with professional fonts
     final pdf = pw.Document(
       theme: pw.ThemeData.withFont(
         base: pw.Font.helvetica(),
@@ -174,15 +173,12 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
       ),
     );
 
-    // Define formatting and styling constants
     final dateFormat = DateFormat('MMM dd, yyyy • hh:mm a');
     final primaryColor = PdfColor.fromHex('#A12424');
     final secondaryColor = PdfColor.fromHex('#F5F5F5');
     final borderColor = PdfColor.fromHex('#DDDDDD');
-    final tableHeaderColor = PdfColor.fromHex('#00457C');
     final tableAlternateColor = PdfColor.fromHex('#F5F9FF');
 
-    // Helper function to decode base64 image
     pw.Widget buildImage(String base64Image,
         {double width = 100, double height = 100, bool isSignature = false}) {
       try {
@@ -219,7 +215,6 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
       }
     }
 
-    // Build company logo placeholder
     pw.Widget buildCompanyLogo() {
       return pw.Container(
         width: 120,
@@ -260,13 +255,11 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
       );
     }
 
-    // Format currency
     String formatCurrency(double amount) {
       final format = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
       return format.format(amount);
     }
 
-    // Calculate totals
     double calculateSubtotal() {
       double subtotal = 0.0;
       for (final line in moveLines) {
@@ -277,14 +270,12 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
       return subtotal;
     }
 
-    // Build header with company information and delivery details
     pw.Widget buildHeader() {
       return pw.Container(
         padding: const pw.EdgeInsets.only(bottom: 10),
         child: pw.Row(
           crossAxisAlignment: pw.CrossAxisAlignment.start,
           children: [
-            // Left column - Company info
             pw.Expanded(
               flex: 5,
               child: pw.Column(
@@ -317,7 +308,6 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
                 ],
               ),
             ),
-            // Right column - Document title and reference
             pw.Expanded(
               flex: 5,
               child: pw.Column(
@@ -364,7 +354,6 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
     }
 
     pw.Widget buildCustomerSection() {
-      // Extract customer information
       final partnerId = pickingDetail['partner_id'] is List<dynamic>
           ? (pickingDetail['partner_id'] as List<dynamic>)
           : null;
@@ -377,8 +366,12 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
 
       if (partnerAddress != null) {
         final street = partnerAddress['street'] as String? ?? '';
-        final street2 = partnerAddress['street2'] as String? ?? '';
-        final city = partnerAddress['city'] as String? ?? '';
+        final street2 = (partnerAddress['street2'] is bool)
+            ? ''
+            : (partnerAddress['street2'] as String? ?? '');
+        final city = (partnerAddress['city'] is bool)
+            ? ''
+            : (partnerAddress['city'] as String? ?? '');
         final state = partnerAddress['state_id'] is List<dynamic>
             ? (partnerAddress['state_id'] as List<dynamic>)[1] ?? ''
             : '';
@@ -396,8 +389,7 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
         ].where((part) => part.isNotEmpty).toList();
 
         shippingAddress = addressParts.join('\n');
-        billingAddress =
-            shippingAddress; // Use same address for billing unless specified otherwise
+        billingAddress = shippingAddress;
       }
 
       return pw.Container(
@@ -405,7 +397,6 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
         child: pw.Row(
           crossAxisAlignment: pw.CrossAxisAlignment.start,
           children: [
-            // Customer information
             pw.Expanded(
               child: pw.Container(
                 padding: const pw.EdgeInsets.all(10),
@@ -443,7 +434,6 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
               ),
             ),
             pw.SizedBox(width: 10),
-            // Shipping information
             pw.Expanded(
               child: pw.Container(
                 padding: const pw.EdgeInsets.all(10),
@@ -498,7 +488,6 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
       );
     }
 
-    // Build products table
     pw.Widget buildProductsTable() {
       return pw.Container(
         margin: const pw.EdgeInsets.only(bottom: 15),
@@ -541,7 +530,6 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
                 4: const pw.FlexColumnWidth(1.5),
               },
               children: [
-                // Table header
                 pw.TableRow(
                   decoration: pw.BoxDecoration(color: secondaryColor),
                   children: [
@@ -553,7 +541,6 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
                     buildTableCell('AMOUNT', isHeader: true),
                   ],
                 ),
-                // Table rows for products
                 ...moveLines.asMap().entries.map((entry) {
                   final index = entry.key;
                   final line = entry.value;
@@ -574,7 +561,6 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
                   final tracking = line['tracking'] as String? ?? 'none';
                   final moveLineId = line['id'] as int? ?? 0;
 
-                  // Get serial or lot information
                   String trackingInfo = '';
                   if (tracking == 'serial' &&
                       serialNumberControllers != null &&
@@ -612,11 +598,9 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
                     ],
                   );
                 }),
-                // Empty row as separator
                 pw.TableRow(
                   children: List<pw.Widget>.filled(5, pw.SizedBox(height: 5)),
                 ),
-                // Totals row
                 pw.TableRow(
                   decoration: pw.BoxDecoration(
                     border: pw.Border(top: pw.BorderSide(color: borderColor)),
@@ -638,11 +622,6 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
       );
     }
 
-    // Helper for table cells
-
-    // Build customer signature section
-
-    // Build delivery notes section if available
     pw.Widget buildNotesSection() {
       return pw.Container(
         margin: const pw.EdgeInsets.only(bottom: 15),
@@ -673,7 +652,6 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
       );
     }
 
-    // Build delivery photos section if available
     pw.Widget buildDeliveryPhotosSection() {
       return pw.Container(
         margin: const pw.EdgeInsets.only(bottom: 15),
@@ -704,7 +682,7 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
                 ? pw.Wrap(
                     spacing: 10,
                     runSpacing: 10,
-                    children: deliveryPhotos.take(8).map((photo) {
+                    children: deliveryPhotos.take(2).map((photo) {
                       return buildImage(photo, width: 100, height: 100);
                     }).toList(),
                   )
@@ -719,7 +697,6 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
       );
     }
 
-    // Create the footer
     pw.Widget buildFooter(pw.Context context) {
       final pageNumber = context.pageNumber;
       final totalPages = context.pagesCount;
@@ -750,7 +727,6 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
       );
     }
 
-    // Add all pages to the PDF
     pdf.addPage(
       pw.MultiPage(
         pageFormat: PdfPageFormat.a4,
@@ -758,28 +734,15 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
         footer: buildFooter,
         build: (pw.Context context) {
           final widgets = <pw.Widget>[];
-
-          // Add header
           widgets.add(buildHeader());
-
-          // Add customer section
           widgets.add(buildCustomerSection());
-
-          // Add products table
           widgets.add(buildProductsTable());
-
-          // Add signature section
-
-          // Add notes section if available
           if (note != null && note.isNotEmpty) {
             widgets.add(buildNotesSection());
           }
-
-          // Add delivery photos section if available
           if (deliveryPhotos.isNotEmpty) {
             widgets.add(buildDeliveryPhotosSection());
           }
-
           return widgets;
         },
       ),
@@ -840,14 +803,30 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
       } else if (tracking == 'lot' && quantity > 0) {
         final controller = _lotNumberControllers[moveLineId];
         final lotNumber = controller?.text.trim() ?? '';
+        final lotName = line['lot_name'] != false
+            ? line['lot_name'] as String?
+            : null; // Original lot_name from Odoo
+
+        debugPrint(
+            'Validating lot number for $productName: "$lotNumber", original lot_name: "$lotName"');
+
         if (lotNumber.isEmpty) {
           errorMessage = 'Lot number for $productName is required.';
           break;
         }
-        if (!RegExp(r'^[a-zA-Z0-9]{3,}$').hasMatch(lotNumber)) {
-          errorMessage =
-              'Lot number for $productName is invalid. Use alphanumeric characters (minimum 3 characters).';
-          break;
+
+        // Skip strict validation if lotNumber matches the original lot_name from Odoo
+        if (lotName != null && lotNumber == lotName) {
+          debugPrint(
+              'Lot number for $productName matches Odoo data, skipping strict validation.');
+        } else {
+          // Apply strict validation for user-modified or new input
+          if (!RegExp(r'^[a-zA-Z0-9]{3,}$').hasMatch(lotNumber)) {
+            errorMessage =
+                'Lot number "$lotNumber" for $productName is invalid. Use only letters and numbers (minimum 3 characters).';
+            debugPrint(errorMessage);
+            break;
+          }
         }
       }
     }
@@ -865,9 +844,7 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
 
     try {
       await _submitDelivery(context, pickingId);
-    } catch (e) {
-      // Error handling in _submitDelivery
-    }
+    } catch (e) {}
   }
 
   Future<void> _submitDelivery(BuildContext context, int pickingId) async {
@@ -897,7 +874,6 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
       final currentState = pickingData['state'] as String;
 
       if (currentState == 'done') {
-        // Fetch updated details before updating state
         final updatedDetails = await _fetchDeliveryDetails(context);
         setState(() {
           _deliveryDetailsFuture = Future.value(updatedDetails);
@@ -925,7 +901,6 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
             'Picking must be in "Confirmed" or "Assigned" state to validate. Current state: $currentState');
       }
 
-      // Handle stock moves and move lines (serial/lot numbers)
       debugPrint('Fetching stock.move records for picking ID: $pickingId');
       final moveRecords = await client.callKw({
         'model': 'stock.move',
@@ -976,7 +951,6 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
             'No stock moves or move lines found for picking ID $pickingId.');
       }
 
-      // Process stock moves and move lines (serial/lot handling)
       for (var move in moveRecords) {
         final moveId = move['id'] as int;
         final demandedQty =
@@ -1282,8 +1256,6 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
           }
         }
       }
-
-      // Validate the picking
       debugPrint('Validating stock.picking with ID: $pickingId');
       final validationResult = await client.callKw({
         'model': 'stock.picking',
@@ -1311,8 +1283,6 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
         });
         debugPrint('stock.immediate.transfer processed');
       }
-
-      // Verify the picking state
       debugPrint(
           'Verifying picking state for stock.picking with ID: $pickingId');
       final updatedPickingStateResult = await client.callKw({
@@ -1333,8 +1303,6 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
         throw Exception(
             'Failed to validate delivery. Picking state is not "done".');
       }
-
-      // Create attachments and post messages
       List<int> attachmentIds = [];
       if (_signature != null) {
         final signatureArgs = {
@@ -1499,15 +1467,28 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
         }
       }
 
-      // Update UI after all operations
       final updatedDetails = await _fetchDeliveryDetails(context);
       setState(() {
         _deliveryDetailsFuture = Future.value(updatedDetails);
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Delivery confirmed successfully')),
-      );
-      // Navigator.pop(context, true);
+      // ScaffoldMessenger.of(context).showSnackBar(
+      //   const SnackBar(content: Text('Delivery confirmed successfully')),
+      // );
+
+      if (updatedPickingStateResult.isEmpty ||
+          updatedPickingStateResult[0]['state'] != 'done') {
+        throw Exception(
+            'Failed to validate delivery. Picking state is not "done".');
+      }
+
+      setState(() {
+        _deliveryDetailsFuture = Future.value(updatedDetails);
+      });
+      // ScaffoldMessenger.of(context).showSnackBar(
+      //   const SnackBar(content: Text('Delivery confirmed successfully')),
+      // );
+
+      showProfessionalDeliveryConfirmedDialog(context, DateTime.now());
     } catch (e) {
       debugPrint('Caught exception in _submitDelivery: $e');
       String errorMessage = 'An error occurred while confirming the delivery.';
@@ -1548,6 +1529,17 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
   }
 
   Future<void> _capturePhoto() async {
+    if (_deliveryPhotos.length >= 2) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Maximum of 2 photos allowed.'),
+          backgroundColor: Colors.red,
+          duration: Duration(seconds: 3),
+        ),
+      );
+      return;
+    }
+
     final status = await Permission.camera.request();
     if (status.isGranted) {
       final picker = ImagePicker();
@@ -1597,13 +1589,15 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
 
   @override
   Widget build(BuildContext context) {
-    final pickingName = widget.pickingData['name'] as String;
+    final pickingName = widget.pickingData['name'] ?? '' as String;
     final theme = Theme.of(context);
 
     return Scaffold(
       appBar: AppBar(
         title: Text(pickingName,
-            style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+            style: TextStyle(
+              color: Colors.white,
+            )),
         backgroundColor: Color(0xFFA12424),
         leading: IconButton(
           icon: Icon(Icons.arrow_back, color: Colors.white),
@@ -1627,186 +1621,37 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
         future: _deliveryDetailsFuture,
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
-            return Center(
-              child: SingleChildScrollView(
-                padding: EdgeInsets.all(16.0),
-                child: Shimmer.fromColors(
-                  baseColor: Colors.grey[300]!,
-                  highlightColor: Colors.grey[100]!,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // Delivery Status Card
-                      Card(
-                        elevation: 2,
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12)),
-                        child: Padding(
-                          padding: EdgeInsets.all(16.0),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                mainAxisAlignment:
-                                    MainAxisAlignment.spaceBetween,
-                                children: [
-                                  Container(
-                                    width: 120,
-                                    height: 20,
-                                    color: Colors.white,
-                                  ),
-                                  Container(
-                                    width: 80,
-                                    height: 30,
-                                    color: Colors.white,
-                                  ),
-                                ],
-                              ),
-                              SizedBox(height: 16),
-                              // Info Rows
-                              ...List.generate(
-                                6,
-                                (index) => Padding(
-                                  padding: EdgeInsets.only(bottom: 12.0),
-                                  child: Row(
-                                    children: [
-                                      Container(
-                                        width: 20,
-                                        height: 20,
-                                        color: Colors.white,
-                                      ),
-                                      SizedBox(width: 12),
-                                      Expanded(
-                                        child: Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: [
-                                            Container(
-                                              width: 100,
-                                              height: 14,
-                                              color: Colors.white,
-                                            ),
-                                            SizedBox(height: 4),
-                                            Container(
-                                              width: double.infinity,
-                                              height: 16,
-                                              color: Colors.white,
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                      SizedBox(height: 16),
-                      // Activity History Card
-                      Card(
-                        elevation: 2,
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12)),
-                        child: Padding(
-                          padding: EdgeInsets.all(16.0),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Container(
-                                width: 150,
-                                height: 20,
-                                color: Colors.white,
-                              ),
-                              SizedBox(height: 8),
-                              // Timeline Items
-                              ...List.generate(
-                                3,
-                                (index) => Padding(
-                                  padding: EdgeInsets.only(bottom: 16.0),
-                                  child: Row(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Column(
-                                        children: [
-                                          Container(
-                                            width: 12,
-                                            height: 12,
-                                            decoration: BoxDecoration(
-                                              shape: BoxShape.circle,
-                                              color: Colors.white,
-                                            ),
-                                          ),
-                                          if (index < 2)
-                                            Container(
-                                              width: 2,
-                                              height: 70,
-                                              color: Colors.white,
-                                            ),
-                                        ],
-                                      ),
-                                      SizedBox(width: 12),
-                                      Expanded(
-                                        child: Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: [
-                                            Container(
-                                              width: 120,
-                                              height: 14,
-                                              color: Colors.white,
-                                            ),
-                                            SizedBox(height: 4),
-                                            Container(
-                                              width: 80,
-                                              height: 16,
-                                              color: Colors.white,
-                                            ),
-                                            SizedBox(height: 4),
-                                            Container(
-                                              width: double.infinity,
-                                              height: 40,
-                                              color: Colors.white,
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
+            return TabBarView(
+              controller: _tabController,
+              children: [
+                _buildDetailsShimmer(context),
+                _buildProductsShimmer(context),
+                _buildConfirmationShimmer(context),
+              ],
             );
           }
           if (snapshot.hasError) {
             return Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.error_outline, color: Colors.red, size: 48),
-                  SizedBox(height: 16),
-                  Text('Error: ${snapshot.error}',
-                      style: theme.textTheme.bodyLarge),
-                  SizedBox(height: 16),
-                  ElevatedButton(
-                    onPressed: () => setState(() => _deliveryDetailsFuture =
-                        _fetchDeliveryDetails(context)),
-                    child: Text('Retry'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Color(0xFFA12424),
-                      foregroundColor: Colors.white,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.error_outline, color: Colors.red, size: 48),
+                    const SizedBox(height: 16),
+                    Text('Error: ${snapshot.error}',
+                        style: theme.textTheme.bodyLarge),
+                    const SizedBox(height: 16),
+                    ElevatedButton(
+                      onPressed: () => setState(() => _deliveryDetailsFuture =
+                          _fetchDeliveryDetails(context)),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFFA12424),
+                        foregroundColor: Colors.white,
+                      ),
+                      child: const Text('Retry'),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             );
           }
@@ -1820,7 +1665,6 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
           final moveLines = data['moveLines'] as List<Map<String, dynamic>>;
           final totalPicked = data['totalPicked'] as double;
           final totalOrdered = data['totalOrdered'] as double;
-          final totalValue = data['totalValue'] as double;
           final pickingDetail = data['pickingDetail'] as Map<String, dynamic>;
           final partnerAddress =
               data['partnerAddress'] as Map<String, dynamic>?;
@@ -1850,6 +1694,7 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
               _lotNumberControllers[moveLineId] = TextEditingController();
             }
           }
+
           Widget _buildEmptyState() {
             return Container(
               height: 300,
@@ -1879,9 +1724,9 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
           return TabBarView(
             controller: _tabController,
             children: [
-              // Details Tab (unchanged)
+              // Details Tab
               SingleChildScrollView(
-                padding: EdgeInsets.all(16.0),
+                padding: const EdgeInsets.all(16.0),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -1890,7 +1735,7 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
                       shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12)),
                       child: Padding(
-                        padding: EdgeInsets.all(16.0),
+                        padding: const EdgeInsets.all(16.0),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
@@ -1905,92 +1750,78 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
                                 _buildDeliveryStatusChip(pickingState),
                               ],
                             ),
-                            SizedBox(height: 16),
-                            _buildInfoRow(Icons.confirmation_number_outlined,
+                            const SizedBox(height: 16),
+                            _buildInfoRow1(Icons.confirmation_number_outlined,
                                 'Delivery Reference', pickingName),
                             if (pickingDetail['origin'] != false)
-                              _buildInfoRow(
+                              _buildInfoRow1(
                                   Icons.source_outlined,
                                   'Source Document',
                                   pickingDetail['origin'] as String),
                             if (pickingDetail['user_id'] != false)
-                              _buildInfoRow(
+                              _buildInfoRow1(
                                   Icons.person_outline,
                                   'Responsible',
                                   (pickingDetail['user_id'] as List)[1]
                                       as String),
                             if (scheduledDate != null)
-                              _buildInfoRow(
+                              _buildInfoRow1(
                                   Icons.calendar_today,
                                   'Scheduled Date',
                                   DateFormat('yyyy-MM-dd HH:mm')
                                       .format(scheduledDate)),
                             if (dateCompleted != null)
-                              _buildInfoRow(
+                              _buildInfoRow1(
                                   Icons.check_circle_outline,
                                   'Completed Date',
                                   DateFormat('yyyy-MM-dd HH:mm')
                                       .format(dateCompleted)),
                             if (pickingDetail['location_id'] != false)
-                              _buildInfoRow(
+                              _buildInfoRow1(
                                   Icons.location_on_outlined,
                                   'Source Location',
                                   (pickingDetail['location_id'] as List)[1]
                                       as String),
                             if (pickingDetail['location_dest_id'] != false)
-                              _buildInfoRow(
+                              _buildInfoRow1(
                                   Icons.pin_drop_outlined,
                                   'Destination Location',
                                   (pickingDetail['location_dest_id'] as List)[1]
                                       as String),
                             if (partnerAddress != null) ...[
-                              // Divider(height: 12),
-                              _buildInfoRow(
+                              _buildInfoRow1(
                                   Icons.business_outlined,
                                   'Customer',
                                   (pickingDetail['partner_id'] as List)[1]
                                       as String),
-                              _buildInfoRow(Icons.location_city_outlined,
+                              _buildInfoRow1(Icons.location_city_outlined,
                                   'Address', _formatAddress(partnerAddress)),
                               if (partnerAddress['phone'] != false)
-                                _buildInfoRow(Icons.phone_outlined, 'Phone',
+                                _buildInfoRow1(Icons.phone_outlined, 'Phone',
                                     partnerAddress['phone'] as String),
                               if (partnerAddress['email'] != false)
-                                _buildInfoRow(Icons.email_outlined, 'Email',
+                                _buildInfoRow1(Icons.email_outlined, 'Email',
                                     partnerAddress['email'] as String),
-                            ],
-                            if (pickingDetail['carrier_id'] != false ||
-                                pickingDetail['weight'] != false) ...[
-                              // Divider(height: 24),
-                              if (pickingDetail['carrier_id'] != false)
-                                _buildInfoRow(
-                                    Icons.local_shipping_outlined,
-                                    'Carrier',
-                                    (pickingDetail['carrier_id'] as List)[1]
-                                        as String),
-                              if (pickingDetail['weight'] != false)
-                                _buildInfoRow(Icons.scale_outlined, 'Weight',
-                                    '${pickingDetail['weight']} kg'),
                             ],
                           ],
                         ),
                       ),
                     ),
                     if (statusHistory.isNotEmpty) ...[
-                      SizedBox(height: 16),
+                      const SizedBox(height: 16),
                       Card(
                         elevation: 2,
                         shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(12)),
                         child: Padding(
-                          padding: EdgeInsets.all(16.0),
+                          padding: const EdgeInsets.all(16.0),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text('Activity History',
                                   style: theme.textTheme.titleMedium
                                       ?.copyWith(fontWeight: FontWeight.bold)),
-                              SizedBox(height: 8),
+                              const SizedBox(height: 8),
                               TimelineWidget(
                                   events: statusHistory.map((event) {
                                 final date =
@@ -2032,8 +1863,7 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
                   ],
                 ),
               ),
-
-              // Products Tab (unchanged)
+              // Products Tab
               SingleChildScrollView(
                 padding: const EdgeInsets.all(16.0),
                 child: Column(
@@ -2219,7 +2049,6 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
                                                         .onSurfaceVariant,
                                                   ),
                                                 ),
-                                              const SizedBox(height: 8),
                                               Row(
                                                 mainAxisAlignment:
                                                     MainAxisAlignment
@@ -2268,688 +2097,239 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
                   ],
                 ),
               ),
-
-              // Confirmation Tab (Updated)
+              // Confirmation Tab
               Stack(
                 children: [
                   SingleChildScrollView(
-                    padding: EdgeInsets.all(16.0),
+                    padding: const EdgeInsets.all(20.0),
                     child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        Card(
-                          elevation: 4,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Padding(
-                            padding: EdgeInsets.all(16.0),
+                        // Header Section
+                        if (pickingState == 'done')
+                          Container(
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(16),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(0.08),
+                                  blurRadius: 10,
+                                  offset: const Offset(0, 4),
+                                ),
+                              ],
+                            ),
+                            padding: const EdgeInsets.all(20),
                             child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Text(
-                                  'Delivery Confirmation',
-                                  style: theme.textTheme.titleLarge?.copyWith(
-                                    fontWeight: FontWeight.bold,
-                                    color: theme.colorScheme.primary,
+                                Container(
+                                  padding: const EdgeInsets.all(12),
+                                  decoration: const BoxDecoration(
+                                    color: Color(0xFFCA4B4B),
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: const Icon(
+                                    Icons.check,
+                                    color: Colors.white,
+                                    size: 32,
                                   ),
                                 ),
-                                SizedBox(height: 16),
-                                if (pickingDetail['state'] == 'done') ...[
-                                  Center(
-                                    child: Column(
-                                      children: [
-                                        Icon(Icons.check_circle,
-                                            color: Colors.green, size: 64),
-                                        SizedBox(height: 16),
-                                        Text(
-                                          'Delivery Completed',
-                                          style: theme.textTheme.titleLarge
-                                              ?.copyWith(
-                                            color: Colors.green,
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                        ),
-                                        SizedBox(height: 8),
-                                        Text(
-                                          'This delivery has been successfully confirmed.',
-                                          style: theme.textTheme.bodyLarge,
-                                          textAlign: TextAlign.center,
-                                        ),
-                                        SizedBox(height: 16),
-                                        Text(
-                                          dateCompleted != null
-                                              ? 'Confirmed on: ${DateFormat('yyyy-MM-dd HH:mm').format(dateCompleted)}'
-                                              : 'Confirmed on: May 12, 2025, 14:30',
-                                          style: theme.textTheme.bodyMedium
-                                              ?.copyWith(
-                                                  color: Colors.grey[600]),
-                                        ),
-                                      ],
+                                const SizedBox(height: 16),
+                                Text(
+                                  'Delivery Completed',
+                                  style:
+                                      theme.textTheme.headlineSmall?.copyWith(
+                                    fontWeight: FontWeight.w600,
+                                    color: const Color(0xFF6B1C1C),
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                Text(
+                                  'This delivery has been successfully confirmed and completed.',
+                                  style: theme.textTheme.bodyLarge?.copyWith(
+                                    color: const Color(0xFF4A4A4A),
+                                    fontStyle: FontStyle.italic,
+                                  ),
+                                  textAlign: TextAlign.center,
+                                ),
+                                const SizedBox(height: 12),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 12, vertical: 6),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFA12424)
+                                        .withOpacity(0.1),
+                                    borderRadius: BorderRadius.circular(6),
+                                  ),
+                                  child: Text(
+                                    dateCompleted != null
+                                        ? 'Completed: ${DateFormat('MMM dd, yyyy • HH:mm').format(dateCompleted)}'
+                                        : 'Completed: May 12, 2025 • 14:30',
+                                    style: theme.textTheme.bodySmall?.copyWith(
+                                      color: const Color(0xFF6B1C1C),
+                                      fontWeight: FontWeight.w500,
                                     ),
                                   ),
-                                  SizedBox(height: 24),
-                                  // Signature
-                                  if (_signature != null) ...[
-                                    Text(
-                                      'Customer Signature',
-                                      style: theme.textTheme.titleMedium
-                                          ?.copyWith(
-                                              fontWeight: FontWeight.w600),
-                                    ),
-                                    SizedBox(height: 12),
-                                    InkWell(
-                                      onTap: () {
-                                        Navigator.push(
-                                          context,
-                                          SlidingPageTransitionRL(
-                                            page: PhotoViewer(
-                                              imageUrl: _signature!,
-                                            ),
-                                          ),
-                                        );
-                                      },
-                                      child: Container(
-                                        height: 150,
-                                        width: double.infinity,
-                                        decoration: BoxDecoration(
-                                          border: Border.all(
-                                              color: Colors.grey[300]!),
-                                          borderRadius:
-                                              BorderRadius.circular(8),
-                                          color: Colors.white,
-                                          boxShadow: [
-                                            BoxShadow(
-                                              color:
-                                                  Colors.grey.withOpacity(0.1),
-                                              spreadRadius: 1,
-                                              blurRadius: 4,
-                                              offset: Offset(0, 2),
-                                            ),
-                                          ],
-                                        ),
-                                        child: Image.memory(
-                                          base64Decode(_signature!),
-                                          fit: BoxFit.contain,
-                                        ),
-                                      ),
-                                    ),
-                                    SizedBox(height: 24),
-                                  ],
-                                  if (_deliveryPhotos.isNotEmpty) ...[
-                                    Text(
-                                      'Delivery Photos',
-                                      style: theme.textTheme.titleMedium
-                                          ?.copyWith(
-                                              fontWeight: FontWeight.w600),
-                                    ),
-                                    SizedBox(height: 12),
-                                    SizedBox(
-                                      height: 120,
-                                      child: ListView.builder(
-                                        scrollDirection: Axis.horizontal,
-                                        itemCount: _deliveryPhotos.length,
-                                        itemBuilder: (context, index) {
-                                          return InkWell(
-                                            onTap: () {
-                                              Navigator.push(
-                                                  context,
-                                                  SlidingPageTransitionRL(
-                                                      page: PhotoViewer(
-                                                    imageUrl:
-                                                        _deliveryPhotos[index],
-                                                  )));
-                                            },
-                                            child: Container(
-                                              margin:
-                                                  EdgeInsets.only(right: 12),
-                                              width: 120,
-                                              decoration: BoxDecoration(
-                                                border: Border.all(
-                                                    color: Colors.grey[300]!),
-                                                borderRadius:
-                                                    BorderRadius.circular(8),
-                                                boxShadow: [
-                                                  BoxShadow(
-                                                    color: Colors.grey
-                                                        .withOpacity(0.1),
-                                                    spreadRadius: 1,
-                                                    blurRadius: 4,
-                                                    offset: Offset(0, 2),
-                                                  ),
-                                                ],
-                                              ),
-                                              child: ClipRRect(
-                                                borderRadius:
-                                                    BorderRadius.circular(8),
-                                                child: Image.memory(
-                                                  base64Decode(
-                                                      _deliveryPhotos[index]),
-                                                  fit: BoxFit.cover,
-                                                ),
-                                              ),
-                                            ),
-                                          );
-                                        },
-                                      ),
-                                    ),
-                                    SizedBox(height: 24),
-                                  ],
-                                  // Serial Numbers
-                                  if (moveLines.any((line) {
-                                    final tracking =
-                                        line['tracking'] as String? ?? 'none';
-                                    final quantity = line['quantity'] as double;
-                                    return tracking == 'serial' && quantity > 0;
-                                  })) ...[
-                                    Text(
-                                      'Serial Numbers',
-                                      style: theme.textTheme.titleMedium
-                                          ?.copyWith(
-                                              fontWeight: FontWeight.w600),
-                                    ),
-                                    SizedBox(height: 12),
-                                    ...moveLines.expand((line) {
-                                      final tracking =
-                                          line['tracking'] as String? ?? 'none';
-                                      final moveLineId = line['id'] as int;
-                                      final productName = (line['product_id']
-                                          as List)[1] as String;
-                                      final quantity =
-                                          line['quantity'] as double;
-                                      if (tracking == 'serial' &&
-                                          quantity > 0) {
-                                        final controllers =
-                                            _serialNumberControllers[
-                                                    moveLineId] ??
-                                                [];
-                                        return controllers
-                                            .asMap()
-                                            .entries
-                                            .map((entry) {
-                                          final index = entry.key;
-                                          final controller = entry.value;
-                                          return Padding(
-                                            padding:
-                                                EdgeInsets.only(bottom: 12.0),
-                                            child: TextField(
-                                              controller: controller,
-                                              readOnly: true,
-                                              decoration: InputDecoration(
-                                                labelText:
-                                                    'Serial Number ${index + 1} for $productName',
-                                                border: OutlineInputBorder(
-                                                  borderRadius:
-                                                      BorderRadius.circular(8),
-                                                ),
-                                                filled: true,
-                                                fillColor: Colors.grey[100],
-                                                contentPadding:
-                                                    EdgeInsets.symmetric(
-                                                        horizontal: 12,
-                                                        vertical: 16),
-                                              ),
-                                              style: theme.textTheme.bodyMedium,
-                                            ),
-                                          );
-                                        });
-                                      }
-                                      return [];
-                                    }).toList(),
-                                    SizedBox(height: 24),
-                                  ],
-                                  // Lot Numbers
-                                  if (moveLines.any((line) {
-                                    final tracking =
-                                        line['tracking'] as String? ?? 'none';
-                                    final quantity = line['quantity'] as double;
-                                    return tracking == 'lot' && quantity > 0;
-                                  })) ...[
-                                    Text(
-                                      'Lot Numbers',
-                                      style: theme.textTheme.titleMedium
-                                          ?.copyWith(
-                                              fontWeight: FontWeight.w600),
-                                    ),
-                                    SizedBox(height: 12),
-                                    ...moveLines.map((line) {
-                                      final tracking =
-                                          line['tracking'] as String? ?? 'none';
-                                      final moveLineId = line['id'] as int;
-                                      final productName = (line['product_id']
-                                          as List)[1] as String;
-                                      final quantity =
-                                          line['quantity'] as double;
-                                      if (tracking == 'lot' && quantity > 0) {
-                                        final controller =
-                                            _lotNumberControllers[moveLineId];
-                                        if (controller != null &&
-                                            controller.text.isNotEmpty) {
-                                          return Padding(
-                                            padding:
-                                                EdgeInsets.only(bottom: 12.0),
-                                            child: TextField(
-                                              controller: controller,
-                                              readOnly: true,
-                                              decoration: InputDecoration(
-                                                labelText:
-                                                    'Lot Number for $productName',
-                                                border: OutlineInputBorder(
-                                                  borderRadius:
-                                                      BorderRadius.circular(8),
-                                                ),
-                                                filled: true,
-                                                fillColor: Colors.grey[100],
-                                                contentPadding:
-                                                    EdgeInsets.symmetric(
-                                                        horizontal: 12,
-                                                        vertical: 16),
-                                              ),
-                                              style: theme.textTheme.bodyMedium,
-                                            ),
-                                          );
-                                        }
-                                      }
-                                      return SizedBox.shrink();
-                                    }).toList(),
-                                    SizedBox(height: 24),
-                                  ],
-                                  // Delivery Notes
-                                  if (_noteController.text.isNotEmpty) ...[
-                                    Text(
-                                      'Delivery Notes',
-                                      style: theme.textTheme.titleMedium
-                                          ?.copyWith(
-                                              fontWeight: FontWeight.w600),
-                                    ),
-                                    SizedBox(height: 12),
-                                    TextField(
-                                      controller: _noteController,
-                                      readOnly: true,
-                                      maxLines: 4,
-                                      decoration: InputDecoration(
-                                        border: OutlineInputBorder(
-                                          borderRadius:
-                                              BorderRadius.circular(8),
-                                        ),
-                                        filled: true,
-                                        fillColor: Colors.grey[100],
-                                        contentPadding: EdgeInsets.all(16),
-                                      ),
-                                      style: theme.textTheme.bodyMedium,
-                                    ),
-                                  ],
-                                ] else ...[
-                                  // Signature Section
-                                  Text(
-                                    'Customer Signature',
-                                    style: theme.textTheme.titleMedium
-                                        ?.copyWith(fontWeight: FontWeight.w600),
-                                  ),
-                                  SizedBox(height: 12),
-                                  _signature == null
-                                      ? OutlinedButton.icon(
-                                          onPressed: _captureSignature,
-                                          icon: Icon(Icons.draw,
-                                              color: Color(0xFFA12424)),
-                                          label: Text(
-                                            'Capture Signature',
-                                            style: TextStyle(
-                                                color: Color(0xFFA12424)),
-                                          ),
-                                          style: OutlinedButton.styleFrom(
-                                            side: BorderSide(
-                                                color: Color(0xFFA12424)),
-                                            minimumSize:
-                                                Size(double.infinity, 48),
-                                            shape: RoundedRectangleBorder(
-                                                borderRadius:
-                                                    BorderRadius.circular(8)),
-                                          ),
-                                        )
-                                      : Stack(
-                                          alignment: Alignment.topRight,
-                                          children: [
-                                            Container(
-                                              height: 150,
-                                              width: double.infinity,
-                                              decoration: BoxDecoration(
-                                                border: Border.all(
-                                                    color: Colors.grey[300]!),
-                                                borderRadius:
-                                                    BorderRadius.circular(8),
-                                                color: Colors.white,
-                                                boxShadow: [
-                                                  BoxShadow(
-                                                    color: Colors.grey
-                                                        .withOpacity(0.1),
-                                                    spreadRadius: 1,
-                                                    blurRadius: 4,
-                                                    offset: Offset(0, 2),
-                                                  ),
-                                                ],
-                                              ),
-                                              child: Image.memory(
-                                                base64Decode(_signature!),
-                                                fit: BoxFit.contain,
-                                              ),
-                                            ),
-                                            IconButton(
-                                              icon: Icon(Icons.refresh,
-                                                  color: Colors.grey[600]),
-                                              onPressed: () => setState(
-                                                  () => _signature = null),
-                                            ),
-                                          ],
-                                        ),
-                                  SizedBox(height: 24),
-                                  // Delivery Photos Section
-                                  // Delivery Photo Section
-                                  Text(
-                                    'Delivery Photo',
-                                    style: theme.textTheme.titleMedium
-                                        ?.copyWith(fontWeight: FontWeight.w600),
-                                  ),
-                                  SizedBox(height: 12),
-                                  if (_deliveryPhotos.isEmpty)
-                                    OutlinedButton.icon(
-                                      onPressed: _capturePhoto,
-                                      icon: Icon(Icons.camera_alt,
-                                          color: Color(0xFFA12424)),
-                                      label: Text(
-                                        'Take Photo',
-                                        style:
-                                            TextStyle(color: Color(0xFFA12424)),
-                                      ),
-                                      style: OutlinedButton.styleFrom(
-                                        side: BorderSide(
-                                            color: Color(0xFFA12424)),
-                                        minimumSize: Size(double.infinity, 48),
-                                        shape: RoundedRectangleBorder(
-                                            borderRadius:
-                                                BorderRadius.circular(8)),
-                                      ),
-                                    ),
-                                  if (_deliveryPhotos.isNotEmpty) ...[
-                                    SizedBox(
-                                      height: 120,
-                                      child: ListView.builder(
-                                        scrollDirection: Axis.horizontal,
-                                        itemCount: _deliveryPhotos.length,
-                                        itemBuilder: (context, index) {
-                                          return InkWell(
-                                            onTap: () {
-                                              Navigator.push(
-                                                  context,
-                                                  SlidingPageTransitionRL(
-                                                      page: PhotoViewer(
-                                                    imageUrl:
-                                                        _deliveryPhotos[index],
-                                                  )));
-                                            },
-                                            child: Container(
-                                              margin:
-                                                  EdgeInsets.only(right: 12),
-                                              width: 120,
-                                              decoration: BoxDecoration(
-                                                border: Border.all(
-                                                    color: Colors.grey[300]!),
-                                                borderRadius:
-                                                    BorderRadius.circular(8),
-                                                boxShadow: [
-                                                  BoxShadow(
-                                                    color: Colors.grey
-                                                        .withOpacity(0.1),
-                                                    spreadRadius: 1,
-                                                    blurRadius: 4,
-                                                    offset: Offset(0, 2),
-                                                  ),
-                                                ],
-                                              ),
-                                              child: Stack(
-                                                fit: StackFit.expand,
-                                                children: [
-                                                  ClipRRect(
-                                                    borderRadius:
-                                                        BorderRadius.circular(
-                                                            8),
-                                                    child: Image.memory(
-                                                      base64Decode(
-                                                          _deliveryPhotos[
-                                                              index]),
-                                                      fit: BoxFit.cover,
-                                                    ),
-                                                  ),
-                                                  Positioned(
-                                                    top: 8,
-                                                    right: 8,
-                                                    child: GestureDetector(
-                                                      onTap: () => setState(
-                                                          () => _deliveryPhotos
-                                                              .removeAt(index)),
-                                                      child: Container(
-                                                        padding:
-                                                            EdgeInsets.all(2),
-                                                        decoration:
-                                                            BoxDecoration(
-                                                          color:
-                                                              Color(0xFFA12424),
-                                                          shape:
-                                                              BoxShape.circle,
-                                                        ),
-                                                        child: Icon(Icons.close,
-                                                            size: 16,
-                                                            color:
-                                                                Colors.white),
-                                                      ),
-                                                    ),
-                                                  ),
-                                                ],
-                                              ),
-                                            ),
-                                          );
-                                        },
-                                      ),
-                                    ),
-                                  ],
-                                  SizedBox(height: 24),
-                                  // Serial Numbers Section
-                                  if (moveLines.any((line) {
-                                    final tracking =
-                                        line['tracking'] as String? ?? 'none';
-                                    final quantity = line['quantity'] as double;
-                                    return tracking == 'serial' && quantity > 0;
-                                  })) ...[
-                                    Text(
-                                      'Serial Numbers',
-                                      style: theme.textTheme.titleMedium
-                                          ?.copyWith(
-                                              fontWeight: FontWeight.w600),
-                                    ),
-                                    SizedBox(height: 12),
-                                    ...moveLines.expand((line) {
-                                      final tracking =
-                                          line['tracking'] as String? ?? 'none';
-                                      final moveLineId = line['id'] as int;
-                                      final productName = (line['product_id']
-                                          as List)[1] as String;
-                                      final quantity =
-                                          line['quantity'] as double;
-                                      if (tracking == 'serial' &&
-                                          quantity > 0) {
-                                        if (!_serialNumberControllers
-                                            .containsKey(moveLineId)) {
-                                          _serialNumberControllers[moveLineId] =
-                                              List.generate(
-                                                  quantity.toInt(),
-                                                  (_) =>
-                                                      TextEditingController());
-                                        }
-                                        return List.generate(quantity.toInt(),
-                                            (index) {
-                                          return Padding(
-                                            padding:
-                                                EdgeInsets.only(bottom: 12.0),
-                                            child: TextField(
-                                              controller:
-                                                  _serialNumberControllers[
-                                                      moveLineId]![index],
-                                              decoration: InputDecoration(
-                                                labelText:
-                                                    'Serial Number ${index + 1} for $productName',
-                                                border: OutlineInputBorder(
-                                                  borderRadius:
-                                                      BorderRadius.circular(8),
-                                                ),
-                                                filled: true,
-                                                fillColor: Colors.grey[50],
-                                                contentPadding:
-                                                    EdgeInsets.symmetric(
-                                                        horizontal: 12,
-                                                        vertical: 16),
-                                              ),
-                                              style: theme.textTheme.bodyMedium,
-                                            ),
-                                          );
-                                        });
-                                      }
-                                      return [SizedBox.shrink()];
-                                    }).toList(),
-                                    SizedBox(height: 24),
-                                  ],
-                                  // Lot Numbers Section
-                                  if (moveLines.any((line) {
-                                    final tracking =
-                                        line['tracking'] as String? ?? 'none';
-                                    final quantity = line['quantity'] as double;
-                                    return tracking == 'lot' && quantity > 0;
-                                  })) ...[
-                                    Text(
-                                      'Lot Numbers',
-                                      style: theme.textTheme.titleMedium
-                                          ?.copyWith(
-                                              fontWeight: FontWeight.w600),
-                                    ),
-                                    SizedBox(height: 12),
-                                    ...moveLines.map((line) {
-                                      final tracking =
-                                          line['tracking'] as String? ?? 'none';
-                                      final moveLineId = line['id'] as int;
-                                      final productName = (line['product_id']
-                                          as List)[1] as String;
-                                      final quantity =
-                                          line['quantity'] as double;
-                                      if (tracking == 'lot' && quantity > 0) {
-                                        if (!_lotNumberControllers
-                                            .containsKey(moveLineId)) {
-                                          _lotNumberControllers[moveLineId] =
-                                              TextEditingController();
-                                        }
-                                        return Padding(
-                                          padding:
-                                              EdgeInsets.only(bottom: 12.0),
-                                          child: TextField(
-                                            controller: _lotNumberControllers[
-                                                moveLineId],
-                                            decoration: InputDecoration(
-                                              labelText:
-                                                  'Lot Number for $productName',
-                                              border: OutlineInputBorder(
-                                                borderRadius:
-                                                    BorderRadius.circular(8),
-                                              ),
-                                              filled: true,
-                                              fillColor: Colors.grey[50],
-                                              contentPadding:
-                                                  EdgeInsets.symmetric(
-                                                      horizontal: 12,
-                                                      vertical: 16),
-                                            ),
-                                            style: theme.textTheme.bodyMedium,
-                                          ),
-                                        );
-                                      }
-                                      return SizedBox.shrink();
-                                    }).toList(),
-                                    SizedBox(height: 24),
-                                  ],
-                                  // Delivery Notes Section
-                                  Text(
-                                    'Delivery Notes',
-                                    style: theme.textTheme.titleMedium
-                                        ?.copyWith(fontWeight: FontWeight.w600),
-                                  ),
-                                  SizedBox(height: 12),
-                                  TextField(
-                                    controller: _noteController,
-                                    maxLines: 4,
-                                    decoration: InputDecoration(
-                                      hintText:
-                                          'Add any special notes about this delivery...',
-                                      border: OutlineInputBorder(
-                                        borderRadius: BorderRadius.circular(8),
-                                      ),
-                                      filled: true,
-                                      fillColor: Colors.grey[50],
-                                      contentPadding: EdgeInsets.all(16),
-                                    ),
-                                    style: theme.textTheme.bodyMedium,
-                                  ),
-                                  SizedBox(height: 24),
-                                  // Confirm Delivery Button
-                                  ElevatedButton(
-                                    onPressed: _isLoading ||
-                                            _deliveryPhotos.isEmpty ||
-                                            _signature == null
-                                        ? null
-                                        : () => _confirmDelivery(
-                                            context,
-                                            pickingDetail['id'] as int,
-                                            pickingDetail,
-                                            moveLines),
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: Colors.green,
-                                      foregroundColor: Colors.white,
-                                      minimumSize: Size(double.infinity, 56),
-                                      shape: RoundedRectangleBorder(
-                                          borderRadius:
-                                              BorderRadius.circular(8)),
-                                      elevation: 2,
-                                      shadowColor:
-                                          Colors.green.withOpacity(0.3),
-                                    ),
-                                    child: Row(
-                                      mainAxisAlignment:
-                                          MainAxisAlignment.center,
-                                      children: [
-                                        Icon(Icons.check_circle,
-                                            size: 24, color: Colors.white),
-                                        SizedBox(width: 8),
-                                        Text(
-                                          'Confirm Delivery',
-                                          style: theme.textTheme.titleMedium
-                                              ?.copyWith(
-                                            color: Colors.white,
-                                            fontWeight: FontWeight.w600,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ],
+                                ),
                               ],
                             ),
                           ),
+                        if (pickingState == 'done') const SizedBox(height: 24),
+                        // Delivery Details Section
+                        _buildSection(
+                          'Delivery Information',
+                          Icons.info_outline,
+                          Column(
+                            children: [
+                              _buildInfoRow(
+                                'Delivery Date',
+                                dateCompleted != null
+                                    ? DateFormat('MMM dd, yyyy • HH:mm')
+                                        .format(dateCompleted)
+                                    : 'Not completed',
+                                Icons.calendar_today,
+                              ),
+                              _buildInfoRow(
+                                'Receiver',
+                                pickingDetail['partner_id'] != false
+                                    ? (pickingDetail['partner_id'] as List)[1]
+                                        as String
+                                    : 'Not specified',
+                                Icons.person_outline,
+                              ),
+                              _buildInfoRow(
+                                'Location',
+                                partnerAddress != null
+                                    ? _formatAddress(partnerAddress)
+                                    : 'Not specified',
+                                Icons.location_on_outlined,
+                              ),
+                              _buildInfoRow(
+                                'Order Reference',
+                                pickingDetail['origin'] != false
+                                    ? pickingDetail['origin'] as String
+                                    : 'Not specified',
+                                Icons.receipt_long_outlined,
+                              ),
+                              _buildInfoRow(
+                                'Total Items',
+                                '${moveLines.length} items',
+                                Icons.inventory_2_outlined,
+                              ),
+                            ],
+                          ),
                         ),
+                        const SizedBox(height: 24),
+                        if (pickingDetail['state'] == 'done') ...[
+                          if (_signature != null) ...[
+                            _buildSection(
+                              'Customer Signature',
+                              Icons.edit_outlined,
+                              _buildSignatureDisplay(),
+                            ),
+                            const SizedBox(height: 24),
+                          ],
+                          if (_deliveryPhotos.isNotEmpty) ...[
+                            _buildSection(
+                              'Delivery Photos',
+                              Icons.photo_camera_outlined,
+                              _buildPhotosDisplay(),
+                            ),
+                            const SizedBox(height: 24),
+                          ],
+                        ] else ...[
+                          _buildSection(
+                            'Customer Signature',
+                            Icons.edit_outlined,
+                            _buildSignatureInput(),
+                          ),
+                          const SizedBox(height: 24),
+                          _buildSection(
+                            'Delivery Photos',
+                            Icons.photo_camera_outlined,
+                            _buildPhotosInput(),
+                          ),
+                          const SizedBox(height: 24),
+                        ],
+                        if (moveLines.any((line) {
+                          final tracking =
+                              line['tracking'] as String? ?? 'none';
+                          final quantity = line['quantity'] as double;
+                          return tracking == 'serial' && quantity > 0;
+                        })) ...[
+                          _buildSection(
+                            'Serial Numbers',
+                            Icons.qr_code_outlined,
+                            _buildSerialNumbersSection(
+                                context, pickingDetail, moveLines),
+                          ),
+                          const SizedBox(height: 24),
+                        ],
+                        if (moveLines.any((line) {
+                          final tracking =
+                              line['tracking'] as String? ?? 'none';
+                          final quantity = line['quantity'] as double;
+                          return tracking == 'lot' && quantity > 0;
+                        })) ...[
+                          _buildSection(
+                            'Lot Numbers',
+                            Icons.numbers_outlined,
+                            _buildLotNumbersSection(
+                                context, pickingDetail, moveLines),
+                          ),
+                          const SizedBox(height: 24),
+                        ],
+                        _buildSection(
+                          'Delivery Notes',
+                          Icons.note_outlined,
+                          _buildNotesSection(context, pickingDetail),
+                        ),
+                        if (pickingDetail['state'] != 'done') ...[
+                          const SizedBox(height: 32),
+                          _buildConfirmButton(
+                              context, pickingDetail, moveLines),
+                        ],
+                        const SizedBox(height: 24),
                       ],
                     ),
                   ),
                   if (_isLoading)
                     Container(
-                      color: Colors.black.withOpacity(0.5),
+                      color: Colors.black.withOpacity(0.6),
                       child: Center(
-                        child: CircularProgressIndicator(
-                          color: theme.colorScheme.primary,
+                        child: Card(
+                          elevation: 8,
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(16)),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                                vertical: 32, horizontal: 48),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                CircularProgressIndicator(
+                                  color: theme.colorScheme.primary,
+                                  strokeWidth: 3,
+                                ),
+                                const SizedBox(height: 24),
+                                Text(
+                                  'Processing Delivery...',
+                                  style: theme.textTheme.titleMedium?.copyWith(
+                                    fontWeight: FontWeight.w600,
+                                    color: theme.colorScheme.onSurface,
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                Text(
+                                  'Please wait while we confirm your delivery',
+                                  style: theme.textTheme.bodyMedium?.copyWith(
+                                    color: theme.colorScheme.onSurfaceVariant,
+                                  ),
+                                  textAlign: TextAlign.center,
+                                ),
+                              ],
+                            ),
+                          ),
                         ),
                       ),
                     ),
@@ -3052,11 +2432,43 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
     );
   }
 
+  Widget _buildDetailRow(BuildContext context,
+      {required IconData icon, required String label, required String value}) {
+    return Padding(
+      padding: EdgeInsets.only(bottom: 12.0),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 20, color: Colors.grey[600]),
+          SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Colors.grey[700],
+                        fontWeight: FontWeight.w500,
+                      ),
+                ),
+                SizedBox(height: 4),
+                Text(
+                  value,
+                  style: Theme.of(context).textTheme.bodyMedium,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _emailDeliverySlip() async {
     try {
       setState(() => _isLoading = true);
 
-      // Get delivery details
       final deliveryDetails = await _deliveryDetailsFuture;
       if (deliveryDetails == null) {
         throw Exception('Delivery details are not available');
@@ -3079,7 +2491,6 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
           deliveryDetails['moveLines'] as List<Map<String, dynamic>>;
       final pickingName = widget.pickingData['name'] as String;
 
-      // Extract receiver address details with proper type checking
       String? getAddressField(dynamic value) {
         if (value == null || value == false) return null;
         if (value is String) return value;
@@ -3096,12 +2507,10 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
         getAddressField(partnerAddress['country_id']),
       ];
 
-      // Build formatted address, filtering out null or empty fields
       final formattedAddress = addressFields
           .where((field) => field != null && field.isNotEmpty)
           .join(', ');
 
-      // Generate PDF
       final pdfBytes = await generateDeliveryPDF(
         pickingDetail: widget.pickingData,
         moveLines: moveLines,
@@ -3113,29 +2522,21 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
         lotNumberControllers: _lotNumberControllers,
       );
 
-      // Sanitize file name to avoid invalid characters
       final sanitizedPickingName =
           pickingName.replaceAll(RegExp(r'[^\w\d]'), '_');
       final fileName = 'Delivery_Slip_$sanitizedPickingName.pdf';
-
-      // Save PDF to temporary directory
       final tempDir = await getTemporaryDirectory();
       final pdfFile = File('${tempDir.path}/$fileName');
-
-      // Write PDF and verify
       await pdfFile.writeAsBytes(pdfBytes, flush: true);
       if (!await pdfFile.exists()) {
         throw Exception('PDF file was not created at ${pdfFile.path}');
       }
       debugPrint('PDF saved at: ${pdfFile.path}');
-
-      // Prepare email details
       final subject = 'Delivery Slip - $pickingName';
       final body =
           'Please find attached the delivery slip for $pickingName.\n\n'
           "Receiver Mail:\n$customerEmail\n";
 
-      // Launch mail app with proper email address handling
       final emailAddress =
           customerEmail is String ? customerEmail : customerEmail.toString();
       final mailtoUrl = 'mailto:$emailAddress'
@@ -3149,8 +2550,6 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
         debugPrint('Could not launch mail app with mailto URL');
         throw Exception('Could not launch mail app');
       }
-
-      // Share PDF to attach it to the email
       await Share.shareXFiles(
         [XFile(pdfFile.path, mimeType: 'application/pdf')],
         subject: subject,
@@ -3167,7 +2566,6 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
         );
       }
 
-      // Clean up the file
       await pdfFile.delete();
       debugPrint('Temporary PDF file deleted');
     } catch (e) {
@@ -3185,6 +2583,662 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
         setState(() => _isLoading = false);
       }
     }
+  }
+
+  Widget _buildSection(String title, IconData icon, Widget content) {
+    return Container(
+      padding: const EdgeInsets.all(24.0),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.08),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF3B82F6).withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Icon(
+                  icon,
+                  size: 20,
+                  color: const Color(0xFF3B82F6),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Text(
+                title,
+                style: TextStyle(
+                  fontWeight: FontWeight.w600,
+                  color: const Color(0xFF111827),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 20),
+          content,
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSignatureInput() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (_signature == null) ...[
+          Container(
+            height: 120,
+            decoration: BoxDecoration(
+              color: const Color(0xFFF9FAFB),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: const Color(0xFFE5E7EB)),
+            ),
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                onTap: _captureSignature,
+                borderRadius: BorderRadius.circular(12),
+                child: const Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      Icons.edit_outlined,
+                      size: 32,
+                      color: Color(0xFF6B7280),
+                    ),
+                    SizedBox(height: 8),
+                    Text(
+                      'Tap to capture signature',
+                      style: TextStyle(
+                        color: Color(0xFF6B7280),
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ] else ...[
+          Container(
+            height: 150,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: const Color(0xFFE5E7EB)),
+            ),
+            child: Stack(
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: Container(
+                    width: double.infinity,
+                    color: Colors.white,
+                    child: Image.memory(
+                      base64Decode(_signature!),
+                      fit: BoxFit.contain,
+                    ),
+                  ),
+                ),
+                Positioned(
+                  top: 8,
+                  right: 8,
+                  child: Material(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(20),
+                    elevation: 2,
+                    child: InkWell(
+                      onTap: () => setState(() => _signature = null),
+                      borderRadius: BorderRadius.circular(20),
+                      child: const Padding(
+                        padding: EdgeInsets.all(8),
+                        child: Icon(
+                          Icons.refresh,
+                          size: 16,
+                          color: Color(0xFF6B7280),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+// Signature display widget
+  Widget _buildSignatureDisplay() {
+    return InkWell(
+      onTap: () {
+        Navigator.push(
+          context,
+          SlidingPageTransitionRL(
+            page: PhotoViewer(imageUrl: _signature!),
+          ),
+        );
+      },
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        height: 150,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: const Color(0xFFE5E7EB)),
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(12),
+          child: Container(
+            color: Colors.white,
+            child: Image.memory(
+              base64Decode(_signature!),
+              fit: BoxFit.contain,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+// Photos input widget
+  Widget _buildPhotosInput() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (_deliveryPhotos.isEmpty) ...[
+          Container(
+            height: 120,
+            decoration: BoxDecoration(
+              color: const Color(0xFFF9FAFB),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: const Color(0xFFE5E7EB)),
+            ),
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                onTap: _capturePhoto,
+                borderRadius: BorderRadius.circular(12),
+                child: const Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      Icons.camera_alt_outlined,
+                      size: 32,
+                      color: Color(0xFF6B7280),
+                    ),
+                    SizedBox(height: 8),
+                    Text(
+                      'Tap to take photo',
+                      style: TextStyle(
+                        color: Color(0xFF6B7280),
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ] else ...[
+          SizedBox(
+            height: 120,
+            child: ListView.builder(
+              scrollDirection: Axis.horizontal,
+              itemCount:
+                  _deliveryPhotos.length + (_deliveryPhotos.length < 2 ? 1 : 0),
+              itemBuilder: (context, index) {
+                if (index == _deliveryPhotos.length &&
+                    _deliveryPhotos.length < 2) {
+                  // Add photo button
+                  return Container(
+                    width: 120,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF9FAFB),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: const Color(0xFFE5E7EB)),
+                    ),
+                    child: Material(
+                      color: Colors.transparent,
+                      child: InkWell(
+                        onTap: _capturePhoto,
+                        borderRadius: BorderRadius.circular(12),
+                        child: const Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.add_a_photo_outlined,
+                              size: 24,
+                              color: Color(0xFF6B7280),
+                            ),
+                            SizedBox(height: 4),
+                            Text(
+                              'Add Photo',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Color(0xFF6B7280),
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  );
+                }
+
+                return Container(
+                  width: 120,
+                  margin: EdgeInsets.only(right: 12),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: const Color(0xFFE5E7EB)),
+                  ),
+                  child: Stack(
+                    children: [
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(12),
+                        child: Material(
+                          child: InkWell(
+                            onTap: () {
+                              Navigator.push(
+                                context,
+                                SlidingPageTransitionRL(
+                                  page: PhotoViewer(
+                                      imageUrl: _deliveryPhotos[index]),
+                                ),
+                              );
+                            },
+                            child: Image.memory(
+                              base64Decode(_deliveryPhotos[index]),
+                              fit: BoxFit.cover,
+                              width: double.infinity,
+                              height: double.infinity,
+                            ),
+                          ),
+                        ),
+                      ),
+                      Positioned(
+                        top: 6,
+                        right: 6,
+                        child: Material(
+                          color: Colors.black.withOpacity(0.6),
+                          borderRadius: BorderRadius.circular(12),
+                          child: InkWell(
+                            onTap: () =>
+                                setState(() => _deliveryPhotos.removeAt(index)),
+                            borderRadius: BorderRadius.circular(12),
+                            child: const Padding(
+                              padding: EdgeInsets.all(4),
+                              child: Icon(
+                                Icons.close,
+                                size: 14,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+// Photos display widget
+  Widget _buildPhotosDisplay() {
+    return SizedBox(
+      height: 120,
+      child: ListView.builder(
+        scrollDirection: Axis.horizontal,
+        itemCount: _deliveryPhotos.length,
+        itemBuilder: (context, index) {
+          return Container(
+            width: 120,
+            margin: EdgeInsets.only(
+                right: index == _deliveryPhotos.length - 1 ? 0 : 12),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: const Color(0xFFE5E7EB)),
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: Material(
+                child: InkWell(
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      SlidingPageTransitionRL(
+                        page: PhotoViewer(imageUrl: _deliveryPhotos[index]),
+                      ),
+                    );
+                  },
+                  child: Image.memory(
+                    base64Decode(_deliveryPhotos[index]),
+                    fit: BoxFit.cover,
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+// Serial numbers section
+// Serial numbers section
+  Widget _buildSerialNumbersSection(
+      BuildContext context,
+      Map<String, dynamic> pickingDetail,
+      List<Map<String, dynamic>> moveLines) {
+    final serialFields = <Widget>[];
+
+    for (final line in moveLines) {
+      final tracking = line['tracking'] as String? ?? 'none';
+      final moveLineId = line['id'] as int;
+      final productName = (line['product_id'] as List)[1] as String;
+      final quantity = line['quantity'] as double;
+
+      if (tracking == 'serial' && quantity > 0) {
+        final controllers = pickingDetail['state'] == 'done'
+            ? _serialNumberControllers[moveLineId] ?? []
+            : _serialNumberControllers[moveLineId] ??
+                List.generate(quantity.toInt(), (_) => TextEditingController());
+
+        if (pickingDetail['state'] != 'done') {
+          _serialNumberControllers[moveLineId] = controllers;
+        }
+
+        for (int i = 0; i < controllers.length; i++) {
+          serialFields.add(
+            Padding(
+              padding: const EdgeInsets.only(bottom: 16.0),
+              child: TextFormField(
+                controller: controllers[i],
+                readOnly: pickingDetail['state'] == 'done',
+                decoration: InputDecoration(
+                  labelText: 'Serial Number ${i + 1}',
+                  hintText: 'Enter serial number',
+                  prefixText: '$productName - ',
+                  prefixStyle: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: const Color(0xFF6B7280),
+                        fontWeight: FontWeight.w500,
+                      ),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: Color(0xFFE5E7EB)),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: Color(0xFFE5E7EB)),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide:
+                        const BorderSide(color: Color(0xFF3B82F6), width: 2),
+                  ),
+                  filled: true,
+                  fillColor: pickingDetail['state'] == 'done'
+                      ? const Color(0xFFF9FAFB)
+                      : Colors.white,
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+                ),
+              ),
+            ),
+          );
+        }
+      }
+    }
+
+    return Column(children: serialFields);
+  }
+
+// Lot numbers section
+  Widget _buildLotNumbersSection(
+      BuildContext context,
+      Map<String, dynamic> pickingDetail,
+      List<Map<String, dynamic>> moveLines) {
+    final lotFields = <Widget>[];
+
+    for (final line in moveLines) {
+      final tracking = line['tracking'] as String? ?? 'none';
+      final moveLineId = line['id'] as int;
+      final productName = (line['product_id'] as List)[1] as String;
+      final quantity = line['quantity'] as double;
+
+      if (tracking == 'lot' && quantity > 0) {
+        if (!_lotNumberControllers.containsKey(moveLineId) &&
+            pickingDetail['state'] != 'done') {
+          _lotNumberControllers[moveLineId] = TextEditingController();
+        }
+
+        final controller = _lotNumberControllers[moveLineId];
+        if (controller != null &&
+            (pickingDetail['state'] == 'done'
+                ? controller.text.isNotEmpty
+                : true)) {
+          lotFields.add(
+            Padding(
+              padding: const EdgeInsets.only(bottom: 16.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8.0),
+                    child: Text(
+                      productName,
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                            color: const Color(0xFF6B7280),
+                            fontWeight: FontWeight.w500,
+                          ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  TextFormField(
+                    controller: controller,
+                    readOnly: pickingDetail['state'] == 'done',
+                    decoration: InputDecoration(
+                      labelText: 'Lot Number',
+                      hintText: 'Enter lot number',
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: const BorderSide(color: Color(0xFFE5E7EB)),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: const BorderSide(color: Color(0xFFE5E7EB)),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: const BorderSide(
+                            color: Color(0xFFA12424), width: 2),
+                      ),
+                      filled: true,
+                      fillColor: pickingDetail['state'] == 'done'
+                          ? const Color(0xFFF9FAFB)
+                          : Colors.white,
+                      contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 16),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        }
+      }
+    }
+
+    return Column(children: lotFields);
+  }
+
+// Notes section
+  Widget _buildNotesSection(
+      BuildContext context, Map<String, dynamic> pickingDetail) {
+    return TextFormField(
+      controller: _noteController,
+      readOnly: pickingDetail['state'] == 'done',
+      maxLines: 4,
+      decoration: InputDecoration(
+        labelText: 'Additional Notes',
+        hintText: 'Add any special notes about this delivery...',
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: Color(0xFFE5E7EB)),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: Color(0xFFE5E7EB)),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: Color(0xFF3B82F6), width: 2),
+        ),
+        filled: true,
+        fillColor: pickingDetail['state'] == 'done'
+            ? const Color(0xFFF9FAFB)
+            : Colors.white,
+        contentPadding: const EdgeInsets.all(16),
+      ),
+    );
+  }
+
+// Lot numbers section
+
+// Notes section
+
+// Confirm button
+  Widget _buildConfirmButton(
+      BuildContext context,
+      Map<String, dynamic> pickingDetail,
+      List<Map<String, dynamic>> moveLines) {
+    final isEnabled =
+        !_isLoading && _deliveryPhotos.isNotEmpty && _signature != null;
+
+    return Container(
+        height: 56,
+        width: double.infinity,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          gradient: isEnabled
+              ? const LinearGradient(
+                  colors: [primaryColor, primaryLightColor],
+                )
+              : null,
+          color: isEnabled ? null : const Color(0xFFE5E7EB),
+          boxShadow: isEnabled
+              ? [
+                  BoxShadow(
+                    color: primaryColor.withOpacity(0.3),
+                    blurRadius: 8,
+                    offset: const Offset(0, 4),
+                  ),
+                ]
+              : null,
+        ),
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: isEnabled
+                ? () => _confirmDelivery(
+                      context,
+                      pickingDetail['id'] as int,
+                      pickingDetail,
+                      moveLines,
+                    )
+                : null,
+            borderRadius: BorderRadius.circular(12),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                if (_isLoading) ...[
+                  const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                ] else ...[
+                  Icon(
+                    Icons.check_circle_outline,
+                    color: isEnabled ? Colors.white : const Color(0xFF9CA3AF),
+                    size: 24,
+                  ),
+                  const SizedBox(width: 12),
+                ],
+                Text(
+                  _isLoading ? 'Confirming Delivery...' : 'Confirm Delivery',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        color:
+                            isEnabled ? Colors.white : const Color(0xFF9CA3AF),
+                        fontWeight: FontWeight.w600,
+                      ),
+                ),
+              ],
+            ),
+          ),
+        ));
+  } // Helper method to build info rows
+
+  Widget _buildInfoRow(String label, String value, IconData icon) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16.0),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            icon,
+            size: 20,
+            color: const Color(0xFF6B7280),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: TextStyle(
+                    color: const Color(0xFF6B7280),
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  value,
+                  style: TextStyle(
+                    color: const Color(0xFF111827),
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _buildBottomNavButton({
@@ -3209,7 +3263,7 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
     );
   }
 
-  Widget _buildInfoRow(IconData icon, String label, String value) {
+  Widget _buildInfoRow1(IconData icon, String label, String value) {
     return Padding(
       padding: EdgeInsets.only(bottom: 12.0),
       child: Row(
@@ -3254,7 +3308,6 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
 
       final pickingId = widget.pickingData['id'] ?? 0 as int;
 
-      // Fetch stock.move.line
       debugPrint('Fetching stock.move.line for pickingId: $pickingId');
       final moveLinesResult = await client.callKw({
         'model': 'stock.move.line',
@@ -3277,8 +3330,6 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
         'kwargs': {},
       });
       final moveLines = List<Map<String, dynamic>>.from(moveLinesResult);
-
-      // Fetch stock.move
       final moveIds =
           moveLines.map((line) => (line['move_id'] as List)[0] as int).toList();
       debugPrint('Fetching stock.move for moveIds: $moveIds');
@@ -3294,8 +3345,6 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
         'kwargs': {},
       });
       final moveMap = {for (var move in moveResult) move['id'] as int: move};
-
-      // Fetch stock.picking
       debugPrint('Fetching stock.picking for pickingId: $pickingId');
       final pickingResult = await client.callKw({
         'model': 'stock.picking',
@@ -3313,12 +3362,8 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
         throw Exception('Picking not found');
       }
       final picking = pickingResult[0] as Map<String, dynamic>;
-
-      // Handle origin safely
       final dynamic origin = picking['origin'];
       final String? saleOrderName = origin is bool ? null : origin?.toString();
-
-      // Set note if available - strip HTML tags
       final dynamic note = picking['note'];
       if (note != null && note is String && note.isNotEmpty) {
         _noteController.text = note.replaceAll(RegExp(r'<[^>]*>'), '');
@@ -3358,13 +3403,15 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
           });
           salePriceMap = {
             for (var line in saleLineResult)
-              (line['product_id'] as List)[0] as int:
-                  line['price_unit'] as double
+              if (line['product_id'] != null &&
+                  line['product_id'] != false &&
+                  line['product_id'] is List)
+                (line['product_id'] as List)[0] as int:
+                    (line['price_unit'] ?? 0.0) as double
           };
         }
       }
 
-      // Update moveLines with ordered_qty, price_unit, and tracking
       for (var line in moveLines) {
         final moveId = (line['move_id'] as List)[0] as int;
         final move = moveMap[moveId];
@@ -3374,7 +3421,6 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
             salePriceMap[productId] ?? move?['price_unit'] as double? ?? 0.0;
       }
 
-      // Fetch product.product with tracking field
       final productIds = moveLines
           .map((line) => (line['product_id'] as List)[0] as int)
           .toSet()
@@ -3408,8 +3454,6 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
           }
         }
       }
-
-      // Fetch uom.uom
       final uomIds = moveLines
           .map((line) => (line['product_uom_id'] as List)[0] as int)
           .toSet()
@@ -3438,7 +3482,7 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
         }
       }
 
-      // Fetch stock.picking (full details)
+      debugPrint('Fetching stock.picking for pickingId: $pickingId');
       debugPrint('Fetching stock.picking for pickingId: $pickingId');
       final pickingResults = await client.callKw({
         'model': 'stock.picking',
@@ -3457,8 +3501,8 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
             'location_id',
             'location_dest_id',
             'origin',
-            'carrier_id',
-            'weight',
+            // 'carrier_id' removed to avoid the error
+            // 'weight' removed as a precaution
             'note',
             'picking_type_id',
             'company_id',
@@ -3472,8 +3516,6 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
         throw Exception('Picking not found');
       }
       final pickingDetail = pickingResults[0] as Map<String, dynamic>;
-
-      // Fetch attachments (signature and delivery photos)
       debugPrint('Fetching ir.attachment for pickingId: $pickingId');
       final attachmentResult = await client.callKw({
         'model': 'ir.attachment',
@@ -3495,7 +3537,6 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
       final attachments = List<Map<String, dynamic>>.from(attachmentResult);
       debugPrint('Fetched attachments: 1111');
 
-      // Process attachments
       String? signature;
       List<String> deliveryPhotos = [];
       for (var attachment in attachments) {
@@ -3504,7 +3545,6 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
         final mimetype = attachment['mimetype'] as String;
         if (datas != null) {
           try {
-            // Validate base64 string
             base64Decode(datas);
             if (name.contains('Delivery Signature') &&
                 mimetype == 'image/png') {
@@ -3523,7 +3563,6 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
         }
       }
 
-      // Update state with fetched signature and photos
       setState(() {
         _signature = signature;
         _deliveryPhotos = deliveryPhotos;
@@ -3531,7 +3570,6 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
             'Updated state: signature=$signature, photos=$deliveryPhotos');
       });
 
-      // Populate serial and lot numbers
       for (var line in moveLines) {
         final moveLineId = line['id'] as int;
         final tracking = line['tracking'] as String? ?? 'none';
@@ -3559,7 +3597,6 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
         }
       }
 
-      // Fetch partner - handle partner_id safely
       Map<String, dynamic>? partnerAddress;
       final dynamic partnerId = pickingDetail['partner_id'];
       if (partnerId != null && partnerId is List && partnerId.isNotEmpty) {
@@ -3592,7 +3629,6 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
         }
       }
 
-      // Fetch status history
       debugPrint('Fetching mail.message for pickingId: $pickingId');
       final statusHistoryResult = await client.callKw({
         'model': 'mail.message',
@@ -3609,7 +3645,6 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
       final statusHistory =
           List<Map<String, dynamic>>.from(statusHistoryResult);
 
-      // Calculate totals
       final totalPicked = moveLines.fold(
           0.0, (sum, line) => sum + (line['quantity'] as double? ?? 0.0));
       final totalOrdered = moveLines.fold(
@@ -3660,9 +3695,8 @@ class TimelineWidget extends StatelessWidget {
         final date = event['date'] as DateTime;
         final title = event['title'] as String;
         final description = event['description'] as String;
-        final status = event['status'] as String?; // New status field
-        final activityType =
-            event['activity_type'] as String?; // Optional activity type
+        final status = event['status'] as String?;
+        final activityType = event['activity_type'] as String?;
 
         return Row(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -3680,7 +3714,7 @@ class TimelineWidget extends StatelessWidget {
                 if (index < events.length - 1)
                   Container(
                     width: 2,
-                    height: 70, // Increased height to accommodate more content
+                    height: 70,
                     color: Colors.grey[300],
                   ),
               ],
@@ -3723,8 +3757,8 @@ class TimelineWidget extends StatelessWidget {
                   Text(
                     _cleanDescription(description),
                     style: TextStyle(fontSize: 13, color: Colors.grey[800]),
-                    maxLines: null, // Allow unlimited lines
-                    overflow: TextOverflow.visible, // Ensure text wraps
+                    maxLines: null,
+                    overflow: TextOverflow.visible,
                   ),
                   const SizedBox(height: 16),
                 ],
@@ -3736,8 +3770,6 @@ class TimelineWidget extends StatelessWidget {
     );
   }
 }
-
-// Example usage with statusHistory mapping
 
 class SignaturePad extends StatefulWidget {
   final String title;
@@ -3766,7 +3798,9 @@ class _SignaturePadState extends State<SignaturePad> {
             )),
         title: Text(
           widget.title,
-          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+          style: TextStyle(
+            color: Colors.white,
+          ),
         ),
         backgroundColor: const Color(0xFFA12424),
         actions: [
@@ -3984,4 +4018,402 @@ class TimelineTile extends StatelessWidget {
       ],
     );
   }
+}
+
+Widget _buildDetailsShimmer(BuildContext context) {
+  return SingleChildScrollView(
+    padding: const EdgeInsets.all(16.0),
+    child: Shimmer.fromColors(
+      baseColor: Colors.grey[300]!,
+      highlightColor: Colors.grey[100]!,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Card(
+            elevation: 2,
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            child: Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Container(width: 120, height: 20, color: Colors.white),
+                      Container(width: 80, height: 30, color: Colors.white),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  ...List.generate(
+                    6,
+                    (index) => Padding(
+                      padding: const EdgeInsets.only(bottom: 12.0),
+                      child: Row(
+                        children: [
+                          Container(width: 20, height: 20, color: Colors.white),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Container(
+                                    width: 100,
+                                    height: 14,
+                                    color: Colors.white),
+                                const SizedBox(height: 4),
+                                Container(
+                                    width: double.infinity,
+                                    height: 16,
+                                    color: Colors.white),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Card(
+            elevation: 2,
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            child: Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(width: 150, height: 20, color: Colors.white),
+                  const SizedBox(height: 8),
+                  ...List.generate(
+                    3,
+                    (index) => Padding(
+                      padding: const EdgeInsets.only(bottom: 16.0),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Column(
+                            children: [
+                              Container(
+                                width: 12,
+                                height: 12,
+                                decoration: const BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: Colors.white,
+                                ),
+                              ),
+                              if (index < 2)
+                                Container(
+                                  width: 2,
+                                  height: 70,
+                                  color: Colors.white,
+                                ),
+                            ],
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Container(
+                                    width: 120,
+                                    height: 14,
+                                    color: Colors.white),
+                                const SizedBox(height: 4),
+                                Container(
+                                    width: 80, height: 16, color: Colors.white),
+                                const SizedBox(height: 4),
+                                Container(
+                                    width: double.infinity,
+                                    height: 40,
+                                    color: Colors.white),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+Widget _buildProductsShimmer(BuildContext context) {
+  return SingleChildScrollView(
+    padding: const EdgeInsets.all(16.0),
+    child: Shimmer.fromColors(
+      baseColor: Colors.grey[300]!,
+      highlightColor: Colors.grey[100]!,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Container(width: 100, height: 24, color: Colors.white),
+              Container(width: 60, height: 16, color: Colors.white),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Container(width: 80, height: 16, color: Colors.white),
+              Container(width: 80, height: 16, color: Colors.white),
+            ],
+          ),
+          const SizedBox(height: 16),
+          ...List.generate(
+            3, // Show 3 placeholder cards
+            (index) => Card(
+              elevation: 3,
+              margin: const EdgeInsets.only(bottom: 12),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16)),
+              child: Padding(
+                padding: const EdgeInsets.all(12.0),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      width: 48,
+                      height: 48,
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Container(
+                              width: 150, height: 16, color: Colors.white),
+                          const SizedBox(height: 4),
+                          Container(
+                              width: 100, height: 12, color: Colors.white),
+                          const SizedBox(height: 4),
+                          Container(
+                              width: 100, height: 12, color: Colors.white),
+                          const SizedBox(height: 8),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Container(
+                                  width: 80, height: 12, color: Colors.white),
+                              Container(
+                                  width: 80, height: 12, color: Colors.white),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+Widget _buildConfirmationShimmer(BuildContext context) {
+  return SingleChildScrollView(
+    padding: const EdgeInsets.all(20.0),
+    child: Shimmer.fromColors(
+      baseColor: Colors.grey[300]!,
+      highlightColor: Colors.grey[100]!,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Header Section
+          Container(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+            ),
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              children: [
+                Container(
+                  width: 56,
+                  height: 56,
+                  decoration: const BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.white,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Container(width: 200, height: 24, color: Colors.white),
+                const SizedBox(height: 8),
+                Container(
+                    width: double.infinity, height: 40, color: Colors.white),
+                const SizedBox(height: 12),
+                Container(width: 150, height: 20, color: Colors.white),
+              ],
+            ),
+          ),
+          const SizedBox(height: 24),
+          // Delivery Information Section
+          _buildShimmerSection(
+            titlePlaceholder:
+                Container(width: 150, height: 20, color: Colors.white),
+            content: Column(
+              children: List.generate(
+                5,
+                (index) => Padding(
+                  padding: const EdgeInsets.only(bottom: 16.0),
+                  child: Row(
+                    children: [
+                      Container(width: 20, height: 20, color: Colors.white),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Container(
+                                width: 100, height: 14, color: Colors.white),
+                            const SizedBox(height: 4),
+                            Container(
+                                width: 200, height: 16, color: Colors.white),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 24),
+          // Signature Section
+          _buildShimmerSection(
+            titlePlaceholder:
+                Container(width: 150, height: 20, color: Colors.white),
+            content: Container(
+              height: 150,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.grey[300]!),
+              ),
+            ),
+          ),
+          const SizedBox(height: 24),
+          // Photos Section
+          _buildShimmerSection(
+            titlePlaceholder:
+                Container(width: 150, height: 20, color: Colors.white),
+            content: SizedBox(
+              height: 120,
+              child: ListView(
+                scrollDirection: Axis.horizontal,
+                children: List.generate(
+                  3,
+                  (index) => Container(
+                    width: 120,
+                    margin: EdgeInsets.only(right: index == 2 ? 0 : 12),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 24),
+          // Serial/Lot Numbers Section
+          _buildShimmerSection(
+            titlePlaceholder:
+                Container(width: 150, height: 20, color: Colors.white),
+            content: Column(
+              children: List.generate(
+                2,
+                (index) => Padding(
+                  padding: const EdgeInsets.only(bottom: 16.0),
+                  child: Container(
+                    height: 56,
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 24),
+          // Notes Section
+          _buildShimmerSection(
+            titlePlaceholder:
+                Container(width: 150, height: 20, color: Colors.white),
+            content: Container(
+              height: 100,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+          ),
+          const SizedBox(height: 24),
+          // Confirm Button
+          Container(
+            height: 56,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(12),
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+// Helper widget for shimmer sections
+Widget _buildShimmerSection(
+    {required Widget titlePlaceholder, required Widget content}) {
+  return Container(
+    padding: const EdgeInsets.all(24.0),
+    decoration: BoxDecoration(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(16),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+            const SizedBox(width: 12),
+            titlePlaceholder,
+          ],
+        ),
+        const SizedBox(height: 20),
+        content,
+      ],
+    ),
+  );
 }

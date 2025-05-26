@@ -2,12 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:latest_van_sale_application/secondary_pages/sale_order_details_page.dart';
 import 'package:shimmer/shimmer.dart';
-import 'package:provider/provider.dart';
 import '../../assets/widgets and consts/page_transition.dart';
-import '../../providers/sale_order_provider.dart';
 import '../providers/order_picking_provider.dart';
 import '1/dashboard.dart';
-import 'todays_sales_page.dart';
 
 class SaleOrder {
   final int id;
@@ -31,7 +28,6 @@ class SaleOrder {
   });
 
   factory SaleOrder.fromJson(Map<String, dynamic> json) {
-    // Handle delivery_status safely
     String? deliveryStatus;
     try {
       final rawDeliveryStatus = json['delivery_status'];
@@ -100,10 +96,13 @@ class _PendingDeliveriesPageState extends State<PendingDeliveriesPage> {
   bool _isLoading = true;
   bool _isInitialized = false;
   String _searchQuery = '';
-  String _sortBy = 'date_desc';
-  String _filterStatus = 'all';
-
-  // Constants for padding and styling
+  String _sortBy = 'date_desc'; // Keep existing sort
+  String _filterInvoiceStatus = 'all'; // Renamed for clarity
+  String _filterDeliveryStatus = 'all'; // New for delivery status
+  DateTime? _startDate; // New for date range
+  DateTime? _endDate; // New for date range
+  double? _minAmount; // New for amount range
+  double? _maxAmount; // New for amount range
   static const double _smallPadding = 8.0;
   static const double _tinyPadding = 4.0;
   static const double _standardPadding = 16.0;
@@ -138,12 +137,11 @@ class _PendingDeliveriesPageState extends State<PendingDeliveriesPage> {
 
   Future<void> _fetchPendingDeliveries() async {
     try {
-      // Define the domain based on showPendingOnly
       List<dynamic> domain = [
-        ['state', '=', 'sale']
+        ['state', '=', 'sale'],
+        ['name', 'not like', 'tck%'], // Exclude sale orders starting with 'tck'
       ];
       if (widget.showPendingOnly) {
-        // Updated filter: fetch deliveries that are not fully delivered
         domain.add([
           'delivery_status',
           'in',
@@ -194,7 +192,7 @@ class _PendingDeliveriesPageState extends State<PendingDeliveriesPage> {
   void _applyFiltersAndSort() {
     List<SaleOrder> filtered = _pendingDeliveries ?? [];
 
-    // Apply search filter
+    // Search query filter
     if (_searchQuery.isNotEmpty) {
       filtered = filtered
           .where((order) =>
@@ -205,23 +203,57 @@ class _PendingDeliveriesPageState extends State<PendingDeliveriesPage> {
           .toList();
     }
 
-    // Apply status filter
-    if (_filterStatus != 'all') {
+    // Invoice status filter
+    if (_filterInvoiceStatus != 'all') {
       filtered = filtered
-          .where((order) => order.invoiceStatus == _filterStatus)
+          .where((order) => order.invoiceStatus == _filterInvoiceStatus)
           .toList();
     }
 
-    // Apply sorting
+    // Delivery status filter
+    if (_filterDeliveryStatus != 'all') {
+      filtered = filtered
+          .where((order) => order.deliveryStatus == _filterDeliveryStatus)
+          .toList();
+    }
+
+    // Date range filter
+    if (_startDate != null) {
+      filtered = filtered
+          .where((order) =>
+              order.date.isAfter(_startDate!) ||
+              order.date.isAtSameMomentAs(_startDate!))
+          .toList();
+    }
+    if (_endDate != null) {
+      filtered = filtered
+          .where((order) =>
+              order.date.isBefore(_endDate!) ||
+              order.date.isAtSameMomentAs(_endDate!))
+          .toList();
+    }
+
+    // Amount range filter
+    if (_minAmount != null) {
+      filtered = filtered.where((order) => order.total >= _minAmount!).toList();
+    }
+    if (_maxAmount != null) {
+      filtered = filtered.where((order) => order.total <= _maxAmount!).toList();
+    }
+
+    // Sorting
     filtered.sort((a, b) {
-      if (_sortBy == 'date_desc') {
-        return b.date.compareTo(a.date);
-      } else if (_sortBy == 'date_asc') {
-        return a.date.compareTo(b.date);
-      } else if (_sortBy == 'amount_desc') {
-        return b.total.compareTo(a.total);
-      } else {
-        return a.total.compareTo(b.total);
+      switch (_sortBy) {
+        case 'date_desc':
+          return b.date.compareTo(a.date);
+        case 'date_asc':
+          return a.date.compareTo(b.date);
+        case 'amount_desc':
+          return b.total.compareTo(a.total);
+        case 'amount_asc':
+          return a.total.compareTo(b.total);
+        default:
+          return 0;
       }
     });
 
@@ -254,7 +286,6 @@ class _PendingDeliveriesPageState extends State<PendingDeliveriesPage> {
     );
   }
 
-  // Helper methods for card design
   String _formatState(String state) {
     switch (state) {
       case 'sale':
@@ -340,21 +371,11 @@ class _PendingDeliveriesPageState extends State<PendingDeliveriesPage> {
       appBar: AppBar(
         title: Text(
           widget.showPendingOnly ? 'Pending Deliveries' : 'All Deliveries',
-          style: TextStyle(fontWeight: FontWeight.bold),
+          style: const TextStyle(color: Colors.white),
         ),
         backgroundColor: _primaryColor,
         foregroundColor: Colors.white,
         elevation: 0,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.sort),
-            onPressed: _showSortDialog,
-          ),
-          IconButton(
-            icon: const Icon(Icons.filter_list),
-            onPressed: _showFilterDialog,
-          ),
-        ],
       ),
       body: Column(
         children: [
@@ -375,48 +396,359 @@ class _PendingDeliveriesPageState extends State<PendingDeliveriesPage> {
   Widget _buildSearchBar() {
     return Padding(
       padding: const EdgeInsets.all(_standardPadding),
-      child: TextField(
-        decoration: InputDecoration(
-          hintText: 'Search by Order ID or Customer',
-          hintStyle: TextStyle(color: Colors.grey[600]),
-          prefixIcon: const Icon(Icons.search, color: Colors.grey),
-          filled: true,
-          fillColor: Colors.white,
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(10),
-            borderSide: BorderSide.none,
+      child: Row(
+        children: [
+          Expanded(
+            child: TextField(
+              decoration: InputDecoration(
+                hintText: 'Search by Order ID or Customer',
+                hintStyle: TextStyle(color: Colors.grey[600]),
+                prefixIcon: const Icon(Icons.search, color: Colors.grey),
+                filled: true,
+                fillColor: Colors.white,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: BorderSide.none,
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: BorderSide(color: Colors.grey[300]!),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: const BorderSide(color: _primaryColor),
+                ),
+                contentPadding: const EdgeInsets.symmetric(
+                  vertical: _standardPadding,
+                  horizontal: _standardPadding,
+                ),
+              ),
+              onChanged: (value) {
+                setState(() {
+                  _searchQuery = value;
+                  _applyFiltersAndSort();
+                });
+              },
+            ),
           ),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(10),
-            borderSide: BorderSide(color: Colors.grey[300]!),
+          const SizedBox(width: _smallPadding),
+          IconButton(
+            icon: Icon(
+              Icons.filter_list,
+              color: _filterInvoiceStatus != 'all' ||
+                      _filterDeliveryStatus != 'all' ||
+                      _startDate != null ||
+                      _endDate != null ||
+                      _minAmount != null ||
+                      _maxAmount != null ||
+                      _sortBy != 'date_desc'
+                  ? _primaryColor
+                  : Colors.grey[500],
+            ),
+            onPressed: _showFilterSortDialog,
           ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(10),
-            borderSide: BorderSide(color: primaryColor),
-          ),
-          contentPadding: EdgeInsets.symmetric(
-            vertical: _standardPadding,
-            horizontal: _standardPadding,
-          ),
-        ),
-        onChanged: (value) {
-          setState(() {
-            _searchQuery = value;
-            _applyFiltersAndSort();
-          });
-        },
+        ],
       ),
+    );
+  }
+
+  void _showFilterSortDialog() {
+    final List<String> invoiceStatuses = [
+      'all',
+      'to invoice',
+      'invoiced',
+      'no'
+    ];
+    final List<String> deliveryStatuses = [
+      'all',
+      'pending',
+      'partial',
+      'delivered',
+      'nothing'
+    ];
+    String tempInvoiceStatus = _filterInvoiceStatus;
+    String tempDeliveryStatus = _filterDeliveryStatus;
+    DateTime? tempStartDate = _startDate;
+    DateTime? tempEndDate = _endDate;
+    final TextEditingController minAmountController = TextEditingController(
+        text: _minAmount != null ? _minAmount.toString() : '');
+    final TextEditingController maxAmountController = TextEditingController(
+        text: _maxAmount != null ? _maxAmount.toString() : '');
+    String tempSortBy = _sortBy;
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: const Text('Filter & Sort Deliveries'),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(_cardBorderRadius)),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Invoice Status Filter
+                    const Text('Invoice Status',
+                        style: TextStyle(fontWeight: FontWeight.bold)),
+                    Wrap(
+                      spacing: _smallPadding,
+                      children: invoiceStatuses.map((status) {
+                        return FilterChip(
+                          clipBehavior: Clip.antiAliasWithSaveLayer,
+                          label: Text(
+                              status == 'all' ? 'All' : status.capitalize()),
+                          selected: tempInvoiceStatus == status,
+                          onSelected: (selected) {
+                            setDialogState(() {
+                              tempInvoiceStatus =
+                                  selected ? status : tempInvoiceStatus;
+                            });
+                          },
+                        );
+                      }).toList(),
+                    ),
+                    const SizedBox(height: _standardPadding),
+                    // Delivery Status Filter
+                    const Text('Delivery Status',
+                        style: TextStyle(fontWeight: FontWeight.bold)),
+                    Wrap(
+                      spacing: _smallPadding,
+                      children: deliveryStatuses.map((status) {
+                        return FilterChip(
+                          label: Text(
+                              status == 'all' ? 'All' : status.capitalize()),
+                          selected: tempDeliveryStatus == status,
+                          onSelected: (selected) {
+                            setDialogState(() {
+                              tempDeliveryStatus =
+                                  selected ? status : tempDeliveryStatus;
+                            });
+                          },
+                        );
+                      }).toList(),
+                    ),
+                    const SizedBox(height: _standardPadding),
+                    // Date Range Filter
+                    const Text('Date Range',
+                        style: TextStyle(fontWeight: FontWeight.bold)),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextButton(
+                            onPressed: () async {
+                              final picked = await showDatePicker(
+                                context: context,
+                                initialDate: tempStartDate ?? DateTime.now(),
+                                firstDate: DateTime(2000),
+                                lastDate: DateTime.now(),
+                              );
+                              if (picked != null) {
+                                setDialogState(() {
+                                  tempStartDate = picked;
+                                });
+                              }
+                            },
+                            child: Text(
+                              tempStartDate != null
+                                  ? DateFormat('yyyy-MM-dd')
+                                      .format(tempStartDate!)
+                                  : 'Start Date',
+                              style: TextStyle(
+                                  color: tempStartDate != null
+                                      ? Colors.black
+                                      : Colors.grey),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: _smallPadding),
+                        Expanded(
+                          child: TextButton(
+                            onPressed: () async {
+                              final picked = await showDatePicker(
+                                context: context,
+                                initialDate: tempEndDate ?? DateTime.now(),
+                                firstDate: DateTime(2000),
+                                lastDate: DateTime.now(),
+                              );
+                              if (picked != null) {
+                                setDialogState(() {
+                                  tempEndDate = picked;
+                                });
+                              }
+                            },
+                            child: Text(
+                              tempEndDate != null
+                                  ? DateFormat('yyyy-MM-dd')
+                                      .format(tempEndDate!)
+                                  : 'End Date',
+                              style: TextStyle(
+                                  color: tempEndDate != null
+                                      ? Colors.black
+                                      : Colors.grey),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: _standardPadding),
+                    // Amount Range Filter
+                    const Text('Amount Range',
+                        style: TextStyle(fontWeight: FontWeight.bold)),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: minAmountController,
+                            decoration: const InputDecoration(
+                              labelText: 'Min Amount',
+                              border: OutlineInputBorder(),
+                            ),
+                            keyboardType: TextInputType.number,
+                          ),
+                        ),
+                        const SizedBox(width: _smallPadding),
+                        Expanded(
+                          child: TextField(
+                            controller: maxAmountController,
+                            decoration: const InputDecoration(
+                              labelText: 'Max Amount',
+                              border: OutlineInputBorder(),
+                            ),
+                            keyboardType: TextInputType.number,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: _standardPadding),
+                    // Sort Options
+                    const Text('Sort By',
+                        style: TextStyle(fontWeight: FontWeight.bold)),
+                    Column(
+                      children: [
+                        RadioListTile(
+                          title: const Text('Date (Newest First)'),
+                          value: 'date_desc',
+                          groupValue: tempSortBy,
+                          onChanged: (value) {
+                            setDialogState(() {
+                              tempSortBy = value as String;
+                            });
+                          },
+                        ),
+                        RadioListTile(
+                          title: const Text('Date (Oldest First)'),
+                          value: 'date_asc',
+                          groupValue: tempSortBy,
+                          onChanged: (value) {
+                            setDialogState(() {
+                              tempSortBy = value as String;
+                            });
+                          },
+                        ),
+                        RadioListTile(
+                          title: const Text('Amount (Highest First)'),
+                          value: 'amount_desc',
+                          groupValue: tempSortBy,
+                          onChanged: (value) {
+                            setDialogState(() {
+                              tempSortBy = value as String;
+                            });
+                          },
+                        ),
+                        RadioListTile(
+                          title: const Text('Amount (Lowest First)'),
+                          value: 'amount_asc',
+                          groupValue: tempSortBy,
+                          onChanged: (value) {
+                            setDialogState(() {
+                              tempSortBy = value as String;
+                            });
+                          },
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () {
+                    setState(() {
+                      _filterInvoiceStatus = 'all';
+                      _filterDeliveryStatus = 'all';
+                      _startDate = null;
+                      _endDate = null;
+                      _minAmount = null;
+                      _maxAmount = null;
+                      _sortBy = 'date_desc';
+                      _applyFiltersAndSort();
+                    });
+                    Navigator.pop(context);
+                  },
+                  child: const Text('Clear'),
+                ),
+                TextButton(
+                  onPressed: () {
+                    // Validate date range
+                    if (tempStartDate != null &&
+                        tempEndDate != null &&
+                        tempStartDate!.isAfter(tempEndDate!)) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                            content:
+                                Text('Start date cannot be after end date')),
+                      );
+                      return;
+                    }
+                    // Validate amount range
+                    final minAmount = minAmountController.text.isNotEmpty
+                        ? double.tryParse(minAmountController.text)
+                        : null;
+                    final maxAmount = maxAmountController.text.isNotEmpty
+                        ? double.tryParse(maxAmountController.text)
+                        : null;
+                    if (minAmount != null &&
+                        maxAmount != null &&
+                        minAmount > maxAmount) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                            content: Text(
+                                'Minimum amount cannot be greater than maximum amount')),
+                      );
+                      return;
+                    }
+                    // Apply filters and sort
+                    setState(() {
+                      _filterInvoiceStatus = tempInvoiceStatus;
+                      _filterDeliveryStatus = tempDeliveryStatus;
+                      _startDate = tempStartDate;
+                      _endDate = tempEndDate;
+                      _minAmount = minAmount;
+                      _maxAmount = maxAmount;
+                      _sortBy = tempSortBy;
+                      _applyFiltersAndSort();
+                    });
+                    Navigator.pop(context);
+                  },
+                  child: const Text('Apply'),
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
   }
 
   Widget _buildContent() {
     if (_isLoading) {
-      // Show shimmer or a loading spinner while data is loading
-      return _buildShimmer(); // or use CircularProgressIndicator
+      return _buildShimmer();
     }
 
     if (!_isInitialized) {
-      // Only show error if loading has completed and initialization failed
       return Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -474,8 +806,6 @@ class _PendingDeliveriesPageState extends State<PendingDeliveriesPage> {
         ),
       );
     }
-
-    // Main list UI
     return ListView.builder(
       padding: const EdgeInsets.all(_standardPadding),
       itemCount: _filteredDeliveries!.length,
@@ -605,7 +935,7 @@ class _PendingDeliveriesPageState extends State<PendingDeliveriesPage> {
               ],
             ),
           ),
-        ); // Extracted to keep things clean
+        );
       },
     );
   }
@@ -803,10 +1133,10 @@ class _PendingDeliveriesPageState extends State<PendingDeliveriesPage> {
             RadioListTile(
               title: const Text('All'),
               value: 'all',
-              groupValue: _filterStatus,
+              groupValue: _filterInvoiceStatus,
               onChanged: (value) {
                 setState(() {
-                  _filterStatus = value as String;
+                  _filterInvoiceStatus = value as String;
                   _applyFiltersAndSort();
                 });
                 Navigator.pop(context);
@@ -815,10 +1145,10 @@ class _PendingDeliveriesPageState extends State<PendingDeliveriesPage> {
             RadioListTile(
               title: const Text('To Invoice'),
               value: 'to invoice',
-              groupValue: _filterStatus,
+              groupValue: _filterInvoiceStatus,
               onChanged: (value) {
                 setState(() {
-                  _filterStatus = value as String;
+                  _filterInvoiceStatus = value as String;
                   _applyFiltersAndSort();
                 });
                 Navigator.pop(context);
@@ -827,10 +1157,10 @@ class _PendingDeliveriesPageState extends State<PendingDeliveriesPage> {
             RadioListTile(
               title: const Text('Invoiced'),
               value: 'invoiced',
-              groupValue: _filterStatus,
+              groupValue: _filterInvoiceStatus,
               onChanged: (value) {
                 setState(() {
-                  _filterStatus = value as String;
+                  _filterInvoiceStatus = value as String;
                   _applyFiltersAndSort();
                 });
                 Navigator.pop(context);
@@ -839,10 +1169,10 @@ class _PendingDeliveriesPageState extends State<PendingDeliveriesPage> {
             RadioListTile(
               title: const Text('Nothing to Invoice'),
               value: 'no',
-              groupValue: _filterStatus,
+              groupValue: _filterInvoiceStatus,
               onChanged: (value) {
                 setState(() {
-                  _filterStatus = value as String;
+                  _filterInvoiceStatus = value as String;
                   _applyFiltersAndSort();
                 });
                 Navigator.pop(context);
@@ -861,7 +1191,6 @@ class _PendingDeliveriesPageState extends State<PendingDeliveriesPage> {
   }
 }
 
-// Extension to capitalize strings
 extension StringExtension on String {
   String capitalize() {
     return "${this[0].toUpperCase()}${substring(1).toLowerCase()}";

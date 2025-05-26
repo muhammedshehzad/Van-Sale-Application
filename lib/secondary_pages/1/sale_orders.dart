@@ -2,12 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:latest_van_sale_application/assets/widgets%20and%20consts/page_transition.dart';
 import 'package:latest_van_sale_application/secondary_pages/sale_order_details_page.dart';
-import 'package:provider/provider.dart';
 import 'package:shimmer/shimmer.dart';
 import '../../authentication/cyllo_session_model.dart';
-import '../../main_page/main_page.dart';
 import '../../providers/order_picking_provider.dart';
-import '../../providers/sale_order_provider.dart';
 
 class SaleOrdersList extends StatefulWidget {
   const SaleOrdersList({Key? key}) : super(key: key);
@@ -23,12 +20,8 @@ class _SaleOrdersListState extends State<SaleOrdersList>
   List<Map<String, dynamic>> _filteredOrders = [];
   final TextEditingController _searchController = TextEditingController();
   late TabController _tabController;
-
-  // Static cache to store orders
   static List<Map<String, dynamic>> _cachedOrders = [];
   static DateTime? _lastFetchTime;
-
-  // Standard spacing constants for consistent UI
   final double _standardPadding = 16.0;
   final double _smallPadding = 8.0;
   final double _tinyPadding = 4.0;
@@ -50,15 +43,13 @@ class _SaleOrdersListState extends State<SaleOrdersList>
   }
 
   Future<List<Map<String, dynamic>>> _loadOrders() async {
-    // Check if cached orders exist and are recent (e.g., within last 5 minutes)
-    const cacheDuration = Duration(minutes: 5);
+    const cacheDuration = Duration(seconds: 30);
     if (_cachedOrders.isNotEmpty &&
         _lastFetchTime != null &&
         DateTime.now().difference(_lastFetchTime!) < cacheDuration) {
       return _cachedOrders;
     }
 
-    // Fetch new data if cache is empty or expired
     final orders = await _fetchSaleOrderHistory(context);
     _cachedOrders = orders;
     _lastFetchTime = DateTime.now();
@@ -67,22 +58,26 @@ class _SaleOrdersListState extends State<SaleOrdersList>
 
   Future<List<Map<String, dynamic>>> _fetchSaleOrderHistory(
       BuildContext context) async {
-    // Access provider (optional, remove if not needed)
-    final salesOrderProvider =
-        Provider.of<SalesOrderProvider>(context, listen: false);
-
+    debugPrint('Fetching sale order history');
     try {
       final client = await SessionManager.getActiveClient();
       if (client == null) {
+        debugPrint('Error: No active Odoo session found');
         throw Exception('No active Odoo session found. Please log in again.');
       }
+      debugPrint('Active Odoo client obtained');
 
       final result = await client.callKw({
         'model': 'sale.order',
         'method': 'search_read',
         'args': [
           [
-            ['name', 'not like', 'TCK%']
+            [
+              'state',
+              'in',
+              ['draft', 'sale', 'done', 'cancel', 'sent', 'sale_return']
+            ],
+            ['name', 'not like', 'TCK%'],
           ],
           [
             'id',
@@ -99,23 +94,26 @@ class _SaleOrdersListState extends State<SaleOrdersList>
       });
 
       if (result is! List) {
+        debugPrint('Error: Unexpected response format from server: $result');
         throw Exception('Unexpected response format from server');
       }
 
       final orders = List<Map<String, dynamic>>.from(result);
       _cachedOrders = orders; // Update cache
+      debugPrint('Successfully fetched ${orders.length} orders');
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Successfully fetched ${orders.length} orders'),
-          backgroundColor: Colors.green,
-          behavior: SnackBarBehavior.floating,
-          duration: const Duration(seconds: 2),
-        ),
-      );
+      // ScaffoldMessenger.of(context).showSnackBar(
+      //   SnackBar(
+      //     content: Text('Successfully fetched ${orders.length} orders'),
+      //     backgroundColor: Colors.green,
+      //     behavior: SnackBarBehavior.floating,
+      //     duration: const Duration(seconds: 2),
+      //   ),
+      // );
 
       return orders;
     } catch (e) {
+      debugPrint('Error fetching order history: $e');
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Failed to fetch order history: $e'),
@@ -123,7 +121,7 @@ class _SaleOrdersListState extends State<SaleOrdersList>
           duration: const Duration(seconds: 3),
         ),
       );
-      return _cachedOrders; // Return cached orders on failure
+      return _cachedOrders;
     }
   }
 
@@ -171,11 +169,31 @@ class _SaleOrdersListState extends State<SaleOrdersList>
   }
 
   void _navigateToOrderDetail(
-      BuildContext context, Map<String, dynamic> order) {
-    Navigator.push(
+      BuildContext context, Map<String, dynamic> order) async {
+    debugPrint('Navigating to order details for order: ${order['name']}');
+    final result = await Navigator.push(
       context,
       SlidingPageTransitionRL(page: SaleOrderDetailPage(orderData: order)),
-    );
+    ).then((_) {
+      _cachedOrders.clear();
+      _lastFetchTime = null;
+      setState(() {
+        _orderHistoryFuture = _loadOrders();
+      });
+    });
+    ;
+    if (result == true) {
+      debugPrint('Order duplicated, refreshing order list');
+
+      _cachedOrders.clear();
+      _lastFetchTime = null;
+      setState(() {
+        _orderHistoryFuture = _loadOrders();
+      });
+      debugPrint('Order list refresh triggered');
+    } else {
+      debugPrint('No refresh needed, result: $result');
+    }
   }
 
   Widget _buildOrdersList(String tab) {
@@ -218,7 +236,6 @@ class _SaleOrdersListState extends State<SaleOrdersList>
           )
         : RefreshIndicator(
             onRefresh: () async {
-              // Clear cache and refetch
               _cachedOrders.clear();
               _lastFetchTime = null;
               setState(() {
@@ -619,11 +636,14 @@ class _SaleOrdersListState extends State<SaleOrdersList>
                   return Center(
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         Icon(Icons.search_off,
                             size: 48, color: Colors.grey[400]),
                         SizedBox(height: _smallPadding),
-                        Text('No results found',
+                        Text(
+                            'No sale order found for "${_searchController.text}"',
                             style: TextStyle(
                                 color: Colors.grey[600],
                                 fontStyle: FontStyle.italic)),

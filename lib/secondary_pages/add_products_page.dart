@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'dart:typed_data';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -45,7 +44,6 @@ class _AddProductPageState extends State<AddProductPage> {
   String _selectedPurchaseTax = 'No Tax';
   String _selectedInvoicePolicy = 'Ordered quantities';
   String _selectedInventoryTracking = 'No tracking';
-  String _selectedRoute = 'Buy';
   bool _canBeSold = true;
   bool _canBePurchased = true;
   bool _expirationTracking = false;
@@ -53,55 +51,26 @@ class _AddProductPageState extends State<AddProductPage> {
   File? _productImage;
   List<Map<String, dynamic>> _vendors = [];
   List<Map<String, dynamic>> _categories = [];
-  Map<String, dynamic>? _selectedVendor;
   bool _isLoadingVendors = false;
   bool _isLoadingCategories = false;
-  bool _isLoading = false; // Tracks button click state
-  List<String> _routes = [
-    'Buy',
-    'Manufacture',
-    'Replenish on Order',
-    'Buy and Manufacture'
-  ];
-  List<String> _trackingOptions = [
-    'No tracking',
-    'By Lot',
-    'By Serial Number',
-    'By Lot and Serial Number'
-  ];
-  List<String> _invoicePolicies = [
-    'Ordered quantities',
-    'Delivered quantities'
-  ];
+  bool _isLoading = false;
   List<String> _users = [
     'Admin',
     'Purchasing Manager',
     'Sales Person',
     'Inventory Manager'
   ];
-  List<String> _taxes = [
-    'No Tax',
-    '15% Sales Tax',
-    '5% GST',
-    '10% VAT',
-    '20% Sales Tax'
-  ];
 
-  // Supplier section
   List<Map<String, dynamic>> _suppliers = [];
   final _supplierNameController = TextEditingController();
   final _supplierPriceController = TextEditingController();
   final _supplierLeadTimeController = TextEditingController();
-
-  // Product variants
   List<Map<String, dynamic>> _attributes = [];
   final _attributeNameController = TextEditingController();
   final _attributeValuesController = TextEditingController();
-
   List<ProductItem> _products = [];
   List<ProductItem> _availableProducts = [];
   bool _needsProductRefresh = false;
-
   bool _isLoadingUnits = false;
   List<Map<String, dynamic>> _units = [];
   String _selectedUnit = '';
@@ -155,7 +124,7 @@ class _AddProductPageState extends State<AddProductPage> {
         'model': 'product.category',
         'method': 'search_read',
         'args': [
-          [], // All categories
+          [],
           ['id', 'name', 'complete_name'],
         ],
         'kwargs': {},
@@ -163,11 +132,11 @@ class _AddProductPageState extends State<AddProductPage> {
 
       setState(() {
         _categories = List<Map<String, dynamic>>.from(result);
-        // Set default category if available
+
         if (_categories.isNotEmpty) {
           _selectedCategory = _categories[0]['name'];
         } else {
-          _selectedCategory = ''; // Fallback to empty if no categories
+          _selectedCategory = '';
         }
         _isLoadingCategories = false;
       });
@@ -192,8 +161,8 @@ class _AddProductPageState extends State<AddProductPage> {
         'model': 'uom.uom',
         'method': 'search_read',
         'args': [
-          [], // Fetch all units
-          ['id', 'name', 'category_id'], // Fetch ID, name, and category
+          [],
+          ['id', 'name', 'category_id'],
         ],
         'kwargs': {},
       });
@@ -210,7 +179,7 @@ class _AddProductPageState extends State<AddProductPage> {
                 : 'Unknown',
           };
         }).toList();
-        // Set default unit if available
+
         if (_units.isNotEmpty) {
           _selectedUnit = _units[0]['name'];
           _selectedPurchaseUnit = _units[0]['name'];
@@ -262,13 +231,10 @@ class _AddProductPageState extends State<AddProductPage> {
     String? helperText,
     String? Function(dynamic val)? validator,
   }) {
-    // First, ensure the value exists in the items list
     if (!items.contains(value)) {
-      // If value doesn't exist in items, use the first item or an empty string
       value = items.isNotEmpty ? items[0] : '';
     }
 
-    // Then ensure there are no duplicates in the items list
     final uniqueItems = items.toSet().toList();
 
     return Padding(
@@ -307,27 +273,17 @@ class _AddProductPageState extends State<AddProductPage> {
               .map((e) => e.trim())
               .toList(),
         });
-
-        // Clear the controllers
         _attributeNameController.clear();
         _attributeValuesController.clear();
       });
     }
   }
 
-  void _addTag() {
-    if (_tagController.text.isNotEmpty) {
-      setState(() {
-        _selectedTags.add(_tagController.text);
-        _tagController.clear();
-      });
-    }
-  }
 
   int _mapUnitToOdooId(String unitName) {
     final unit = _units.firstWhere(
       (u) => u['name'] == unitName,
-      orElse: () => {'id': 1}, // Fallback to default unit ID
+      orElse: () => {'id': 1},
     );
     return unit['id'] as int;
   }
@@ -335,13 +291,13 @@ class _AddProductPageState extends State<AddProductPage> {
   int _mapCategoryToOdooId(String categoryName) {
     final category = _categories.firstWhere(
       (c) => c['name'] == categoryName,
-      orElse: () => {'id': 1}, // Fallback to default category ID
+      orElse: () => {'id': 1},
     );
     return category['id'] as int;
   }
 
   bool _validateUnitCategories() {
-    if (_units.isEmpty) return false; // No units available
+    if (_units.isEmpty) return false;
 
     final selectedUnit = _units.firstWhere(
       (unit) => unit['name'] == _selectedUnit,
@@ -354,7 +310,7 @@ class _AddProductPageState extends State<AddProductPage> {
 
     if (selectedUnit['category_id'] == null ||
         selectedPurchaseUnit['category_id'] == null) {
-      return false; // Invalid unit selection
+      return false;
     }
 
     return selectedUnit['category_id'] == selectedPurchaseUnit['category_id'];
@@ -379,7 +335,6 @@ class _AddProductPageState extends State<AddProductPage> {
       });
 
       if (result.isNotEmpty) {
-        // Fetch product names for better error messaging
         final products = await client.callKw({
           'model': 'product.product',
           'method': 'read',
@@ -389,15 +344,15 @@ class _AddProductPageState extends State<AddProductPage> {
         debugPrint('Barcode $barcode already assigned to: $products');
       }
 
-      return result.isEmpty; // True if barcode is unique, false if already used
+      return result.isEmpty;
     } catch (e) {
       debugPrint('Error checking barcode uniqueness: $e');
-      return false; // Assume non-unique on error to prevent submission
+      return false;
     }
   }
   Future<void> _addProduct() async {
     setState(() {
-      _isLoading = true; // Show loading state
+      _isLoading = true;
     });
 
     if (!_formKey.currentState!.validate()) {
@@ -414,7 +369,6 @@ class _AddProductPageState extends State<AddProductPage> {
       return;
     }
 
-    // Validate unit of measure categories
     if (!_validateUnitCategories()) {
       setState(() {
         _isLoading = false;
@@ -430,7 +384,6 @@ class _AddProductPageState extends State<AddProductPage> {
             label: 'Fix',
             textColor: Colors.white,
             onPressed: () {
-              // Optionally scroll to the unit dropdowns
             },
           ),
         ),
@@ -438,7 +391,6 @@ class _AddProductPageState extends State<AddProductPage> {
       return;
     }
 
-    // Validate barcode uniqueness
     if (_barcodeController.text.isNotEmpty) {
       final isUnique = await _isBarcodeUnique(
         _barcodeController.text,
@@ -470,8 +422,6 @@ class _AddProductPageState extends State<AddProductPage> {
     try {
       final client = await SessionManager.getActiveClient();
       if (client == null) throw Exception('No active session found.');
-
-      // Prepare product data
       final productData = {
         'name': _nameController.text,
         'default_code': _internalReferenceController.text.isNotEmpty
@@ -502,8 +452,6 @@ class _AddProductPageState extends State<AddProductPage> {
       };
 
       debugPrint('Product data prepared: ${jsonEncode(productData)}');
-
-      // Process product image (non-critical, do not fail if image processing fails)
       if (_productImage != null) {
         try {
           final bytes = await _productImage!.readAsBytes();
@@ -523,10 +471,7 @@ class _AddProductPageState extends State<AddProductPage> {
       }
 
       dynamic productId;
-
-      // Perform all Odoo operations in a single transaction-like block
       if (widget.productToEdit != null) {
-        // Validate product ID
         if (widget.productToEdit!['id'] == null) {
           throw Exception('Product ID is null, cannot update');
         }
@@ -540,7 +485,6 @@ class _AddProductPageState extends State<AddProductPage> {
 
         debugPrint('Checking product with ID: $parsedId (Type: ${parsedId.runtimeType})');
 
-        // Verify product exists in Odoo
         final productExists = await client.callKw({
           'model': 'product.product',
           'method': 'search',
@@ -558,7 +502,6 @@ class _AddProductPageState extends State<AddProductPage> {
 
         debugPrint('Updating product with ID: $parsedId');
 
-        // Update existing product
         await client.callKw({
           'model': 'product.product',
           'method': 'write',
@@ -573,7 +516,7 @@ class _AddProductPageState extends State<AddProductPage> {
 
         debugPrint('Product updated successfully with ID: $productId');
       } else {
-        // Create new product
+
         debugPrint('Creating new product...');
         productId = await client.callKw({
           'model': 'product.product',
@@ -585,7 +528,6 @@ class _AddProductPageState extends State<AddProductPage> {
         debugPrint('New product created with ID: $productId (Type: ${productId.runtimeType})');
       }
 
-      // Create initial inventory if specified
       if (_quantityController.text.isNotEmpty && int.parse(_quantityController.text) > 0) {
         debugPrint('Creating initial inventory...');
         await client.callKw({
@@ -603,7 +545,6 @@ class _AddProductPageState extends State<AddProductPage> {
         debugPrint('Initial inventory created');
       }
 
-      // Add supplier info if specified
       if (_suppliers.isNotEmpty) {
         debugPrint('Adding ${_suppliers.length} suppliers to product');
         for (var supplier in _suppliers) {
@@ -624,31 +565,23 @@ class _AddProductPageState extends State<AddProductPage> {
         }
       }
 
-      // Add product tags
       if (_selectedTags.isNotEmpty) {
         debugPrint('Tags would be added here');
-        // Implement tag handling as needed
       }
 
-      // Handle product variants if needed
       if (_hasVariants && _attributes.isNotEmpty) {
         debugPrint('Product variants would be created here');
-        // Implement variant handling as needed
       }
 
-      // Refresh product list in provider
       debugPrint('Refreshing product list...');
       final salesProvider = Provider.of<SalesOrderProvider>(context, listen: false);
       await salesProvider.loadProducts();
       _availableProducts = salesProvider.products.cast<ProductItem>();
       _needsProductRefresh = true;
       debugPrint('Product list refreshed');
-
-      // Add haptic feedback
       HapticFeedback.mediumImpact();
       _productImage = null;
 
-      // Show success message
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -661,7 +594,6 @@ class _AddProductPageState extends State<AddProductPage> {
         ),
       );
 
-      // Return success result to parent screen
       Navigator.of(context).pop({
         'success': true,
         'message': widget.productToEdit != null
@@ -673,7 +605,6 @@ class _AddProductPageState extends State<AddProductPage> {
       String errorMessage = 'An unexpected error occurred. Please try again.';
       bool showRetry = false;
 
-      // Handle specific Odoo exceptions
       if (e.toString().contains('odoo.exceptions.ValidationError')) {
         if (e.toString().contains('Barcode(s) already assigned')) {
           errorMessage =
@@ -695,7 +626,6 @@ class _AddProductPageState extends State<AddProductPage> {
         showRetry = false;
       }
 
-      // Show error dialog for critical errors
       showDialog(
         context: context,
         builder: (context) => AlertDialog(
@@ -710,7 +640,7 @@ class _AddProductPageState extends State<AddProductPage> {
               TextButton(
                 onPressed: () {
                   Navigator.of(context).pop();
-                  _addProduct(); // Retry the operation
+                  _addProduct();
                 },
                 child: Text('Retry'),
               ),
@@ -719,7 +649,7 @@ class _AddProductPageState extends State<AddProductPage> {
       );
     } finally {
       setState(() {
-        _isLoading = false; // Reset loading state
+        _isLoading = false;
       });
     }
   }
@@ -750,8 +680,8 @@ class _AddProductPageState extends State<AddProductPage> {
         'args': [
           [
             ['supplier_rank', '>', 0]
-          ], // Filter for vendors
-          ['id', 'name', 'phone', 'email'], // Standard fields
+          ],
+          ['id', 'name', 'phone', 'email'],
         ],
         'kwargs': {},
       });
@@ -786,7 +716,7 @@ class _AddProductPageState extends State<AddProductPage> {
         'kwargs': {},
       });
 
-      await _fetchCategories(); // Refresh categories
+      await _fetchCategories();
       setState(() => _selectedCategory = categoryId.toString());
 
       ScaffoldMessenger.of(context).showSnackBar(
@@ -805,9 +735,7 @@ class _AddProductPageState extends State<AddProductPage> {
 
   void _onVendorSelected(Map<String, dynamic> vendor) {
     setState(() {
-      _selectedVendor = vendor;
       _supplierNameController.text = vendor['name'];
-      // You can fetch additional vendor details here if needed
     });
   }
 
@@ -816,7 +744,7 @@ class _AddProductPageState extends State<AddProductPage> {
     super.initState();
     _fetchVendors();
     _fetchCategories();
-    _fetchUnits(); // Fetch units of measure
+    _fetchUnits();
 
     if (widget.productToEdit != null) {
       _initializeFormWithProductData();
@@ -838,8 +766,6 @@ class _AddProductPageState extends State<AddProductPage> {
       _descriptionController.text = product['description_sale'] ?? '';
       _weightController.text = product['weight']?.toString() ?? '';
       _volumeController.text = product['volume']?.toString() ?? '';
-
-      // Set dropdown values
       _selectedProductType = product['type'] ?? 'product';
       _selectedUnit = product['uom_id']?[1]?.toString() ??
           (_units.isNotEmpty ? _units[0]['name'] : '');
@@ -852,7 +778,6 @@ class _AddProductPageState extends State<AddProductPage> {
       _canBePurchased = product['purchase_ok'] ?? true;
       _expirationTracking = product['use_expiration_date'] ?? false;
 
-      // Load product image if available
       if (product['image_1920'] != null && product['image_1920'] != false) {
         try {
           if (product['image_1920'] is String) {
@@ -882,7 +807,6 @@ class _AddProductPageState extends State<AddProductPage> {
     required List<Map<String, dynamic>> items,
     required Function(Map<String, dynamic>) onSelected,
     bool isLoading = false,
-    String? selectedItemId,
   }) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8.0),
@@ -925,7 +849,6 @@ class _AddProductPageState extends State<AddProductPage> {
                         itemCount: options.length,
                         itemBuilder: (context, index) {
                           final option = options.elementAt(index);
-                          // Convert email to string, handle false/null
                           final email = option['email'] != null &&
                                   option['email'] != false
                               ? option['email'].toString()
@@ -946,40 +869,6 @@ class _AddProductPageState extends State<AddProductPage> {
     );
   }
 
-  Widget _buildCategoryAdder() {
-    final newCategoryController = TextEditingController();
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8.0),
-      child: Row(
-        children: [
-          Expanded(
-            child: TextField(
-              controller: newCategoryController,
-              decoration: InputDecoration(
-                labelText: 'New Category',
-                border:
-                    OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-              ),
-            ),
-          ),
-          const SizedBox(width: 10),
-          ElevatedButton(
-            onPressed: () {
-              if (newCategoryController.text.isNotEmpty) {
-                _createCategory(newCategoryController.text);
-                newCategoryController.clear();
-              }
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFFA12424),
-              foregroundColor: Colors.white,
-            ),
-            child: const Text('Add Category'),
-          ),
-        ],
-      ),
-    );
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -1009,7 +898,6 @@ class _AddProductPageState extends State<AddProductPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Image section
                 Center(
                   child: GestureDetector(
                     onTap: _pickImage,
@@ -1032,11 +920,7 @@ class _AddProductPageState extends State<AddProductPage> {
                   ),
                 ),
                 const SizedBox(height: 20),
-
-                // General Information Section
                 _sectionHeader('General Information'),
-
-                // General Information Section
                 _buildTextField(
                   controller: _nameController,
                   label: 'Product Name',
@@ -1066,7 +950,7 @@ class _AddProductPageState extends State<AddProductPage> {
                   controller: _barcodeController,
                   label: 'Barcode',
                   validator: (val) {
-                    if (val == null || val.isEmpty) return null; // Optional
+                    if (val == null || val.isEmpty) return null;
                     if (val.length < 8 || val.length > 13) {
                       return 'Barcode must be between 8 and 13 characters';
                     }
@@ -1106,8 +990,6 @@ class _AddProductPageState extends State<AddProductPage> {
                     return null;
                   },
                 ),
-
-// Sales & Purchase Section
                 if (_canBeSold) ...[
                   _buildTextField(
                     controller: _salePriceController,
@@ -1130,7 +1012,7 @@ class _AddProductPageState extends State<AddProductPage> {
                     keyboardType:
                         const TextInputType.numberWithOptions(decimal: true),
                     validator: (val) {
-                      if (val == null || val.isEmpty) return null; // Optional
+                      if (val == null || val.isEmpty) return null;
                       final parsed = double.tryParse(val);
                       if (parsed == null) return 'Enter a valid extra price';
                       if (parsed < 0) return 'Extra price cannot be negative';
@@ -1142,7 +1024,7 @@ class _AddProductPageState extends State<AddProductPage> {
                     label: 'Customer Lead Time (days)',
                     keyboardType: TextInputType.number,
                     validator: (val) {
-                      if (val == null || val.isEmpty) return null; // Optional
+                      if (val == null || val.isEmpty) return null;
                       final parsed = int.tryParse(val);
                       if (parsed == null) return 'Enter a valid lead time';
                       if (parsed < 0) return 'Lead time cannot be negative';
@@ -1167,8 +1049,6 @@ class _AddProductPageState extends State<AddProductPage> {
                     },
                   ),
                 ],
-
-// Inventory Section
                 _buildTextField(
                   controller: _quantityController,
                   label: 'Initial Quantity',
@@ -1249,7 +1129,7 @@ class _AddProductPageState extends State<AddProductPage> {
                   label: 'Minimum Order Quantity',
                   keyboardType: TextInputType.number,
                   validator: (val) {
-                    if (val == null || val.isEmpty) return null; // Optional
+                    if (val == null || val.isEmpty) return null;
                     final parsed = double.tryParse(val);
                     if (parsed == null) return 'Enter a valid quantity';
                     if (parsed < 0)
@@ -1262,7 +1142,7 @@ class _AddProductPageState extends State<AddProductPage> {
                   label: 'Reordering Min Quantity',
                   keyboardType: TextInputType.number,
                   validator: (val) {
-                    if (val == null || val.isEmpty) return null; // Optional
+                    if (val == null || val.isEmpty) return null;
                     final parsed = double.tryParse(val);
                     if (parsed == null) return 'Enter a valid quantity';
                     if (parsed < 0)
@@ -1280,7 +1160,7 @@ class _AddProductPageState extends State<AddProductPage> {
                   label: 'Reordering Max Quantity',
                   keyboardType: TextInputType.number,
                   validator: (val) {
-                    if (val == null || val.isEmpty) return null; // Optional
+                    if (val == null || val.isEmpty) return null;
                     final parsed = double.tryParse(val);
                     if (parsed == null) return 'Enter a valid quantity';
                     if (parsed < 0)
@@ -1292,15 +1172,13 @@ class _AddProductPageState extends State<AddProductPage> {
                     return null;
                   },
                 ),
-
-// Extra Information Section
                 _buildTextField(
                   controller: _weightController,
                   label: 'Weight (kg)',
                   keyboardType:
                       const TextInputType.numberWithOptions(decimal: true),
                   validator: (val) {
-                    if (val == null || val.isEmpty) return null; // Optional
+                    if (val == null || val.isEmpty) return null;
                     final parsed = double.tryParse(val);
                     if (parsed == null) return 'Enter a valid weight';
                     if (parsed < 0) return 'Weight cannot be negative';
@@ -1313,7 +1191,7 @@ class _AddProductPageState extends State<AddProductPage> {
                   keyboardType:
                       const TextInputType.numberWithOptions(decimal: true),
                   validator: (val) {
-                    if (val == null || val.isEmpty) return null; // Optional
+                    if (val == null || val.isEmpty) return null;
                     final parsed = double.tryParse(val);
                     if (parsed == null) return 'Enter a valid volume';
                     if (parsed < 0) return 'Volume cannot be negative';
@@ -1332,10 +1210,6 @@ class _AddProductPageState extends State<AddProductPage> {
                     return null;
                   },
                 ),
-
-// Vendors Section
-
-// Product Variants Section
                 if (_hasVariants) ...[
                   Row(
                     children: [
@@ -1401,10 +1275,7 @@ class _AddProductPageState extends State<AddProductPage> {
                           );
                         }),
                 ],
-
                 const SizedBox(height: 10),
-
-                // Suppliers Section
                 _sectionHeader('Vendors'),
                 if (_canBePurchased) ...[
                   _buildSearchableDropdown(
@@ -1425,7 +1296,7 @@ class _AddProductPageState extends State<AddProductPage> {
                     label: 'Lead Time (days)',
                     keyboardType: TextInputType.number,
                     validator: (val) {
-                      if (val == null || val.isEmpty) return null; // Optional
+                      if (val == null || val.isEmpty) return null;
                       final parsed = int.tryParse(val);
                       if (parsed == null) return 'Enter a valid lead time';
                       if (parsed < 0) return 'Lead time cannot be negative';
@@ -1456,7 +1327,6 @@ class _AddProductPageState extends State<AddProductPage> {
                       },
                     ),
                 ],
-
                 const SizedBox(height: 30),
                 SizedBox(
                   width: double.infinity,
@@ -1486,7 +1356,7 @@ class _AddProductPageState extends State<AddProductPage> {
                     style: ElevatedButton.styleFrom(
                       backgroundColor: _isLoading
                           ? primaryColor.withOpacity(
-                              0.7) // Subtle color change when clicked
+                              0.7)
                           : primaryColor,
                       padding: const EdgeInsets.symmetric(
                           horizontal: 32, vertical: 12),
@@ -1496,7 +1366,7 @@ class _AddProductPageState extends State<AddProductPage> {
                     ),
                     onPressed: _isLoading
                         ? null
-                        : _addProduct, // Disable button while loading
+                        : _addProduct,
                   ),
                 ),
               ],
@@ -1528,7 +1398,7 @@ class _AddProductPageState extends State<AddProductPage> {
   }
 }
 
-// Extension for ProductItem class to add missing properties
+
 extension ProductItemExtension on ProductItem {
   List<String> get units => [
         'Units',

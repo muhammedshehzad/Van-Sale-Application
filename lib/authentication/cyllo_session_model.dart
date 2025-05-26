@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 class CylloSessionModel {
   final String userName;
   final String userLogin;
+  final String email; // New field for email
   final int userId;
   final String sessionId;
   final String password;
@@ -14,10 +15,12 @@ class CylloSessionModel {
   final String userTimezone;
   final String serverUrl;
   final String database;
+  final bool hasCheckedModules;
 
   CylloSessionModel({
     required this.userName,
     required this.userLogin,
+    required this.email, // Add to constructor
     required this.userId,
     required this.sessionId,
     required this.password,
@@ -28,13 +31,15 @@ class CylloSessionModel {
     required this.userTimezone,
     required this.serverUrl,
     required this.database,
+    required this.hasCheckedModules,
   });
 
   factory CylloSessionModel.fromOdooSession(
       OdooSession session, String password, String serverUrl, String database) {
     return CylloSessionModel(
       userName: session.userName ?? '',
-      userLogin: session.userLogin?.toString() ?? '',
+      userLogin: session.userLogin.toString() ?? '',
+      email: session.userLogin.toString() ?? '', // Assume userLogin is email; adjust if needed
       userId: session.userId ?? 0,
       sessionId: session.id,
       password: password,
@@ -45,6 +50,7 @@ class CylloSessionModel {
       userTimezone: session.userTz,
       serverUrl: serverUrl,
       database: database,
+      hasCheckedModules: false,
     );
   }
 
@@ -52,6 +58,7 @@ class CylloSessionModel {
     return CylloSessionModel(
       userName: prefs.getString('userName') ?? '',
       userLogin: prefs.getString('userLogin') ?? '',
+      email: prefs.getString('email') ?? '', // Load email from prefs
       userId: prefs.getInt('userId') ?? 0,
       sessionId: prefs.getString('sessionId') ?? '',
       password: prefs.getString('password') ?? '',
@@ -62,6 +69,7 @@ class CylloSessionModel {
       userTimezone: prefs.getString('userTimezone') ?? '',
       serverUrl: prefs.getString('url') ?? '',
       database: prefs.getString('selectedDatabase') ?? '',
+      hasCheckedModules: prefs.getBool('hasCheckedModules') ?? false,
     );
   }
 
@@ -69,6 +77,7 @@ class CylloSessionModel {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('userName', userName);
     await prefs.setString('userLogin', userLogin);
+    await prefs.setString('email', email); // Save email to prefs
     await prefs.setInt('userId', userId);
     await prefs.setString('sessionId', sessionId);
     await prefs.setString('password', password);
@@ -80,6 +89,7 @@ class CylloSessionModel {
     await prefs.setString('url', serverUrl);
     await prefs.setString('selectedDatabase', database);
     await prefs.setBool('isLoggedIn', true);
+    await prefs.setBool('hasCheckedModules', hasCheckedModules);
   }
 
   Future<OdooClient> createClient() async {
@@ -119,12 +129,5 @@ class SessionManager {
       print('Error creating Odoo client: $e');
       return null;
     }
-  }
-
-  static Future<void> logout() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('isLoggedIn', false);
-
-    await prefs.clear();
   }
 }

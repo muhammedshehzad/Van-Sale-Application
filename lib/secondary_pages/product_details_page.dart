@@ -30,7 +30,8 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
   int _currentQuantity = 1;
-  Map<String, String> _selectedVariants = {};
+
+  // Map<String, String> _selectedVariants = {};
   bool _isLoading = true;
   bool _isAddingToOrder = false;
   final ScrollController _scrollController = ScrollController();
@@ -44,9 +45,9 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
     _initializeOdooClient();
-    if (widget.selectedAttributes != null) {
-      _selectedVariants = Map.from(widget.selectedAttributes!);
-    }
+    // if (widget.selectedAttributes != null) {
+    //   _selectedVariants = Map.from(widget.selectedAttributes!);
+    // }
   }
 
   Future<void> _initializeOdooClient() async {
@@ -93,6 +94,8 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
             'list_price',
             'standard_price',
             'qty_available',
+            'virtual_available',
+            'outgoing_qty',
             'image_1920',
             'categ_id',
             'create_date',
@@ -268,14 +271,14 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
                   'https://placeholder.com/product_alt_2',
                 ];
 
-          if (widget.selectedAttributes == null && attributes.isNotEmpty) {
-            _selectedVariants.clear();
-            for (var attr in attributes) {
-              if (attr['values'].isNotEmpty) {
-                _selectedVariants[attr['name']] = attr['values'][0];
-              }
-            }
-          }
+          // if (widget.selectedAttributes == null && attributes.isNotEmpty) {
+          //   _selectedVariants.clear();
+          //   for (var attr in attributes) {
+          //     if (attr['values'].isNotEmpty) {
+          //       _selectedVariants[attr['name']] = attr['values'][0];
+          //     }
+          //   }
+          // }
         });
 
         developer.log("Fetched product: ${productData['name']}");
@@ -318,17 +321,173 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
     double finalPrice = _productData['list_price']?.toDouble() ?? 0.0;
     final attributes =
         _productData['attributes'] as List<Map<String, dynamic>>?;
-    if (attributes != null) {
-      for (var attribute in attributes) {
-        final selectedValue = _selectedVariants[attribute['name']];
-        if (selectedValue != null) {
-          final extraCosts = attribute['extraCost'] as Map<String, double>;
-          final extraCost = extraCosts[selectedValue] ?? 0.0;
-          finalPrice += extraCost;
-        }
+    // if (attributes != null) {
+    //   for (var attribute in attributes) {
+    //     final selectedValue = _selectedVariants[attribute['name']];
+    //     if (selectedValue != null) {
+    //       final extraCosts = attribute['extraCost'] as Map<String, double>;
+    //       final extraCost = extraCosts[selectedValue] ?? 0.0;
+    //       finalPrice += extraCost;
+    //     }
+    //   }
+    // }
+    return finalPrice;
+  }
+
+  void _showDeleteConfirmationDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+        ),
+        title: Row(
+          children: [
+            Icon(
+              Icons.warning_amber_rounded,
+              color: Colors.red.shade400,
+              size: 28,
+            ),
+            const SizedBox(width: 8),
+            const Text(
+              'Delete Product',
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Are you sure you want to delete "${_productData['name']}"?',
+              style: const TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'This action cannot be undone.',
+              style: TextStyle(
+                fontSize: 14,
+                color: Colors.grey.shade600,
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: Text(
+              'Cancel',
+              style: TextStyle(
+                color: Colors.grey.shade600,
+                fontSize: 16,
+              ),
+            ),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.pop(dialogContext); // Close the dialog
+              await _deleteProduct();
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: primaryColor,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            ),
+            child: const Text(
+              'Delete',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _deleteProduct() async {
+    try {
+      setState(() => _isLoading = true);
+
+      // Archive the product instead of deleting (Odoo's standard practice)
+      final result = await _odooClient.callKw({
+        'model': 'product.product',
+        'method': 'write',
+        'args': [
+          [int.parse(widget.productId)],
+          {'active': false}, // Archive the product
+        ],
+        'kwargs': {},
+      });
+
+      if (result == true && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: const [
+                Icon(Icons.check_circle, color: Colors.white),
+                SizedBox(width: 8),
+                Text('Product deleted successfully'),
+              ],
+            ),
+            backgroundColor: Colors.green,
+            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+        // Navigate back to the previous screen
+        Navigator.pop(context);
+      } else {
+        throw Exception('Failed to delete product');
+      }
+    } catch (e, stackTrace) {
+      developer.log('Error deleting product ID: ${widget.productId}',
+          error: e, stackTrace: stackTrace);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(Icons.error_outline, color: Colors.white),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Failed to delete product: $e',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 4),
+            // action: SnackBarAction(
+            //   label: 'DETAILS',
+            //   textColor: Colors.white,
+            //   onPressed: () {
+            //   },
+            // ),
+          ),
+        );
+      }
+    } finally {
+      if (context.mounted) {
+        setState(() => _isLoading = false);
       }
     }
-    return finalPrice;
   }
 
   String _getSelectedVariantDefaultCode() {
@@ -348,7 +507,7 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
           elevation: 0,
         ),
         body: Center(
-          child: CircularProgressIndicator(color: primaryColor),
+          child: ProductDetailsShimmer(),
         ),
       );
     }
@@ -366,8 +525,7 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
           children: [
             Expanded(
               child: Text(
-                "Product details",
-                style: const TextStyle(fontWeight: FontWeight.bold),
+                "Product Details",
                 overflow: TextOverflow.ellipsis,
               ),
             ),
@@ -381,12 +539,21 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
             icon: const Icon(Icons.edit),
             onPressed: () {
               Navigator.push(
-                  context,
-                  SlidingPageTransitionRL(
-                      page: EditProductPage(
+                context,
+                SlidingPageTransitionRL(
+                  page: EditProductPage(
                     productId: widget.productId,
-                  )));
+                  ),
+                ),
+              ).then((_) {
+                _loadProductData();
+              });
             },
+          ),
+          IconButton(
+            icon: const Icon(Icons.delete),
+            onPressed: _showDeleteConfirmationDialog,
+            tooltip: 'Delete Product',
           ),
         ],
       ),
@@ -623,17 +790,17 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
                               ),
                             ],
                           ),
-                          if (widget.selectedAttributes != null) ...[
-                            const SizedBox(height: 8),
-                            Text(
-                              'Selected Variant: ${_selectedVariants.entries.map((e) => '${e.key}: ${e.value}').join(', ')}',
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: Colors.grey[700],
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                          ],
+                          // if (widget.selectedAttributes != null) ...[
+                          //   const SizedBox(height: 8),
+                          //   Text(
+                          //     'Selected Variant: ${_selectedVariants.entries.map((e) => '${e.key}: ${e.value}').join(', ')}',
+                          //     style: TextStyle(
+                          //       fontSize: 12,
+                          //       color: Colors.grey[700],
+                          //       fontWeight: FontWeight.w500,
+                          //     ),
+                          //   ),
+                          // ],
                         ],
                       ),
                     ),
@@ -806,14 +973,20 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
                               ],
                             ),
                             Column(
+                              crossAxisAlignment: CrossAxisAlignment.end,
                               children: [
                                 _buildInfoRow('Quantity On Hand',
                                     '${_productData['qty_available'] ?? 0} units'),
-                                _buildInfoRow('Reserved', '0 units'),
-                                _buildInfoRow('Available',
-                                    '${_productData['qty_available'] ?? 0} products'),
+                                _buildInfoRow('Reserved',
+                                    '${_productData['outgoing_qty'] ?? 0} units'),
                                 _buildInfoRow('Forecasted',
-                                    '${(_productData['qty_available'] ?? 0) + 5} units'),
+                                    '${_productData['virtual_available'] ?? 0} units'),
+                                StockUpdateButton(
+                                  onUpdateSuccess: _loadProductData,
+                                  productId: int.parse(widget.productId),
+                                  currentQuantity:
+                                      _productData['qty_available'] ?? 0,
+                                ),
                               ],
                             ),
                           ],
@@ -1324,6 +1497,556 @@ class PhotoViewer extends StatelessWidget {
             ? MemoryImage(base64Decode(imageUrl.split(',')[1]))
             : NetworkImage(imageUrl) as ImageProvider,
         backgroundDecoration: const BoxDecoration(color: Colors.black),
+      ),
+    );
+  }
+}
+
+class ProductDetailsShimmer extends StatefulWidget {
+  const ProductDetailsShimmer({Key? key}) : super(key: key);
+
+  @override
+  State<ProductDetailsShimmer> createState() => _ProductDetailsShimmerState();
+}
+
+class _ProductDetailsShimmerState extends State<ProductDetailsShimmer>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<double> _animation;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      duration: const Duration(milliseconds: 1500),
+      vsync: this,
+    )..repeat();
+    _animation = Tween<double>(begin: -2.0, end: 2.0).animate(
+      CurvedAnimation(parent: _controller, curve: Curves.linear),
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // TabBar shimmer
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              color: Colors.grey[200],
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  _buildShimmerBox(width: 100, height: 24, radius: 4),
+                  const SizedBox(width: 16),
+                  _buildShimmerBox(width: 100, height: 24, radius: 4),
+                ],
+              ),
+            ),
+            // Product card shimmer
+            Container(
+              margin: const EdgeInsets.all(8),
+              padding: const EdgeInsets.all(16),
+              color: Colors.grey[100],
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _buildShimmerBox(width: 120, height: 120, radius: 8),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _buildShimmerBox(width: 200, height: 18),
+                        const SizedBox(height: 8),
+                        _buildShimmerBox(width: 150, height: 14),
+                        const SizedBox(height: 8),
+                        _buildShimmerBox(width: 120, height: 14),
+                        const SizedBox(height: 8),
+                        _buildShimmerBox(width: 100, height: 14),
+                        const SizedBox(height: 8),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            _buildShimmerBox(width: 80, height: 20, radius: 12),
+                            _buildShimmerBox(width: 60, height: 20),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            // Tab content shimmer
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Section title
+                  _buildShimmerBox(width: 150, height: 16),
+                  const SizedBox(height: 12),
+                  // Info rows
+                  _buildInfoRowShimmer(),
+                  _buildInfoRowShimmer(),
+                  _buildInfoRowShimmer(),
+                  const SizedBox(height: 16),
+                  // Description section
+                  _buildShimmerBox(width: 150, height: 16),
+                  const SizedBox(height: 12),
+                  _buildShimmerBox(
+                      width: double.infinity, height: 60, radius: 8),
+                  const SizedBox(height: 16),
+                  // Pricing section
+                  _buildShimmerBox(width: 150, height: 16),
+                  const SizedBox(height: 12),
+                  _buildInfoRowShimmer(),
+                  _buildInfoRowShimmer(),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildInfoRowShimmer() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8.0),
+      child: Column(
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              _buildShimmerBox(width: 100, height: 14),
+              _buildShimmerBox(width: 100, height: 14),
+            ],
+          ),
+          const SizedBox(height: 8),
+          _buildShimmerBox(width: double.infinity, height: 1),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildShimmerBox({
+    required double width,
+    required double height,
+    double radius = 4.0,
+  }) {
+    return Container(
+      width: width,
+      height: height,
+      decoration: BoxDecoration(
+        color: Colors.grey[300],
+        borderRadius: BorderRadius.circular(radius),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(radius),
+        child: Stack(
+          children: [
+            Container(color: Colors.grey[300]),
+            AnimatedBuilder(
+              animation: _animation,
+              builder: (context, child) {
+                return Container(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [
+                        Colors.grey[300]!,
+                        Colors.grey[200]!,
+                        Colors.grey[300]!,
+                      ],
+                      stops: const [0.0, 0.5, 1.0],
+                      begin: Alignment(_animation.value - 1, 0),
+                      end: Alignment(_animation.value + 1, 0),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class StockUpdateButton extends StatelessWidget {
+  final Function() onUpdateSuccess;
+  final int productId;
+  final int currentQuantity;
+
+  const StockUpdateButton({
+    Key? key,
+    required this.onUpdateSuccess,
+    required this.productId,
+    required this.currentQuantity,
+  }) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8.0),
+      child: ElevatedButton.icon(
+        onPressed: () => _showUpdateStockDialog(context),
+        icon: const Icon(Icons.inventory, color: Colors.white),
+        label: const Text('Update Stock'),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: Theme.of(context).primaryColor,
+          foregroundColor: Colors.white,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showUpdateStockDialog(BuildContext context) {
+    final TextEditingController quantityController = TextEditingController(
+      text: currentQuantity.toString(),
+    );
+    final formKey = GlobalKey<FormState>();
+    bool isLoading = false;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: Row(
+            children: [
+              Icon(Icons.inventory_2, color: Theme.of(context).primaryColor),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Update Stock Quantity',
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+          content: Form(
+            key: formKey,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Enter the new stock quantity for this product:',
+                  style: TextStyle(fontSize: 14),
+                ),
+                const SizedBox(height: 16),
+                TextFormField(
+                  controller: quantityController,
+                  keyboardType: TextInputType.number,
+                  decoration: InputDecoration(
+                    labelText: 'New Quantity',
+                    hintText: 'Enter new stock quantity',
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    prefixIcon: const Icon(Icons.production_quantity_limits),
+                    suffixText: 'units',
+                  ),
+                  validator: (value) {
+                    if (value == null || value.isEmpty) {
+                      return 'Please enter a quantity';
+                    }
+                    final number = int.tryParse(value);
+                    if (number == null) {
+                      return 'Please enter a valid number';
+                    }
+                    if (number < 0) {
+                      return 'Quantity cannot be negative';
+                    }
+                    if (number > 1000000) {
+                      return 'Quantity too large';
+                    }
+                    return null;
+                  },
+                  autovalidateMode: AutovalidateMode.onUserInteraction,
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Current quantity: $currentQuantity units',
+                  style: const TextStyle(
+                    fontStyle: FontStyle.italic,
+                    fontSize: 12,
+                    color: Colors.grey,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton.icon(
+              onPressed: isLoading ? null : () => Navigator.pop(context),
+              icon: const Icon(Icons.cancel_outlined),
+              label: const Text('Cancel'),
+              style: TextButton.styleFrom(
+                foregroundColor: Colors.grey,
+              ),
+            ),
+            ElevatedButton.icon(
+              onPressed: isLoading
+                  ? null
+                  : () async {
+                      if (formKey.currentState!.validate()) {
+                        setState(() {
+                          isLoading = true;
+                        });
+
+                        final newQuantity = int.parse(quantityController.text);
+                        final success = await _updateStockQuantity(
+                          context,
+                          productId,
+                          newQuantity,
+                        );
+
+                        if (success && context.mounted) {
+                          Navigator.pop(context);
+                          onUpdateSuccess();
+                        }
+
+                        if (context.mounted) {
+                          setState(() {
+                            isLoading = false;
+                          });
+                        }
+                      }
+                    },
+              icon: isLoading
+                  ? Container(
+                      width: 24,
+                      height: 24,
+                      padding: const EdgeInsets.all(2.0),
+                      child: const CircularProgressIndicator(
+                        color: Colors.white,
+                        strokeWidth: 3,
+                      ),
+                    )
+                  : const Icon(
+                      Icons.save,
+                      color: Colors.white,
+                    ),
+              label: Text(isLoading ? 'Updating...' : 'Update'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Theme.of(context).primaryColor,
+                foregroundColor: Colors.white,
+                disabledBackgroundColor:
+                    Theme.of(context).primaryColor.withOpacity(0.5),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<bool> _updateStockQuantity(
+      BuildContext context, int productId, int newQuantity) async {
+    developer.log(
+        'Initiating stock update for product ID: $productId to quantity: $newQuantity');
+
+    try {
+      // Get Odoo client
+      final client = await SessionManager.getActiveClient();
+      if (client == null) {
+        throw Exception('No active Odoo session. Please log in again.');
+      }
+
+      // Get default location ID
+      final int locationId = await _getDefaultLocationId() ?? 8;
+      developer.log('Using location ID: $locationId');
+
+      // Check if stock quant exists
+      final quantResult = await client.callKw({
+        'model': 'stock.quant',
+        'method': 'search_read',
+        'args': [
+          [
+            ['product_id', '=', productId],
+            ['location_id', '=', locationId],
+          ]
+        ],
+        'kwargs': {
+          'fields': ['id', 'quantity'],
+          'limit': 1,
+        },
+      });
+
+      developer.log('Quant search result: $quantResult');
+
+      if (quantResult.isNotEmpty) {
+        // Update existing quant
+        final quantId = quantResult[0]['id'];
+        final result = await client.callKw({
+          'model': 'stock.quant',
+          'method': 'write',
+          'args': [
+            [quantId],
+            {'quantity': newQuantity},
+          ],
+          'kwargs': {},
+        });
+
+        developer.log('Stock quant update result: $result');
+
+        if (result != true) {
+          throw Exception('Failed to update stock quant');
+        }
+      } else {
+        // Create new quant if none exists
+        final result = await client.callKw({
+          'model': 'stock.quant',
+          'method': 'create',
+          'args': [
+            {
+              'product_id': productId,
+              'location_id': locationId,
+              'quantity': newQuantity,
+            }
+          ],
+          'kwargs': {},
+        });
+
+        developer.log('Stock quant creation result: $result');
+
+        if (result is! int) {
+          throw Exception('Failed to create stock quant');
+        }
+      }
+
+      // Show success message
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Row(
+              children: [
+                Icon(Icons.check_circle, color: Colors.white),
+                SizedBox(width: 8),
+                Text('Stock updated successfully'),
+              ],
+            ),
+            backgroundColor: Colors.green,
+            behavior: SnackBarBehavior.floating,
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+
+      return true;
+    } catch (e, stackTrace) {
+      developer.log('Error updating stock for product ID: $productId',
+          error: e, stackTrace: stackTrace);
+
+      // Determine specific error message
+      String errorMessage;
+      if (e is OdooException) {
+        errorMessage =
+            'Odoo server error: ${e.message ?? 'Unknown server error'}';
+      } else if (e.toString().contains('No active Odoo session')) {
+        errorMessage = 'Session expired. Please log in again.';
+      } else {
+        errorMessage = 'Failed to update stock: ${e.toString()}';
+      }
+
+      // Show error message
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(Icons.error_outline, color: Colors.white),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    errorMessage,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 4),
+            action: SnackBarAction(
+              label: 'DETAILS',
+              textColor: Colors.white,
+              onPressed: () {
+                _showErrorDetailsDialog(context, '$e\n\n$stackTrace');
+              },
+            ),
+          ),
+        );
+      }
+
+      return false;
+    }
+  }
+
+  Future<int?> _getDefaultLocationId() async {
+    try {
+      // Retrieve from configuration or shared preferences
+      // Example: final prefs = await SharedPreferences.getInstance();
+      // return prefs.getInt('default_location_id') ?? 8;
+
+      // For now, return default value
+      developer.log('Using default location ID: 8');
+      return 8;
+    } catch (e) {
+      developer.log('Error retrieving default location ID: $e');
+      return null;
+    }
+  }
+
+  void _showErrorDetailsDialog(BuildContext context, String errorDetails) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.error_outline, color: Colors.red),
+            SizedBox(width: 8),
+            Text('Error Details'),
+          ],
+        ),
+        content: SingleChildScrollView(
+          child: SelectableText(errorDetails),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('CLOSE'),
+          ),
+          TextButton(
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: errorDetails));
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Error details copied to clipboard'),
+                  duration: Duration(seconds: 1),
+                ),
+              );
+            },
+            child: const Text('COPY'),
+          ),
+        ],
       ),
     );
   }

@@ -1,13 +1,10 @@
 import 'dart:convert';
-import 'dart:developer';
-import 'package:animated_custom_dropdown/custom_dropdown.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../authentication/cyllo_session_model.dart';
+import '../assets/widgets and consts/confirmation_dialogs.dart';
 import '../secondary_pages/order_confirmation_page.dart';
 import 'dart:developer' as developer;
-
-Map<String, int> _temporaryInventory = {};
 
 class ProductItem {
   final TextEditingController nameController = TextEditingController();
@@ -68,7 +65,7 @@ class Product {
   final String defaultCode;
   final String? barcode;
   final dynamic categId;
-  final String? category; // Added as optional field
+  final String? category;
   final DateTime? creationDate;
   final String? description;
   final double? weight;
@@ -101,7 +98,7 @@ class Product {
     this.imageUrl,
     this.barcode,
     this.categId,
-    this.category, // Added to constructor
+    this.category,
     this.creationDate,
     this.description,
     this.weight,
@@ -135,22 +132,24 @@ class Product {
       imageUrl: json['image_1920'] is String ? json['image_1920'] : null,
       barcode: json['barcode'] is String ? json['barcode'] : null,
       categId: json['categ_id'],
-      category: json['categ_id'] is List && json['categ_id'].length == 2 && json['categ_id'][1] is String
+      category: json['categ_id'] is List &&
+              json['categ_id'].length == 2 &&
+              json['categ_id'][1] is String
           ? json['categ_id'][1]
-          : null, // Derive category from categId
+          : null,
       creationDate: json['create_date'] is String
           ? DateTime.tryParse(json['create_date'])
           : null,
       description:
-      json['description_sale'] is String ? json['description_sale'] : null,
+          json['description_sale'] is String ? json['description_sale'] : null,
       weight: (json['weight'] as num?)?.toDouble(),
       volume: (json['volume'] as num?)?.toDouble(),
       dimensions: json['dimensions'] as String?,
       cost: (json['standard_price'] as num?)?.toDouble(),
       attributes: json['attributes'] != null
           ? (json['attributes'] as List)
-          .map((attr) => ProductAttribute.fromJson(attr))
-          .toList()
+              .map((attr) => ProductAttribute.fromJson(attr))
+              .toList()
           : null,
       taxesIds: json['taxes_id'] as List<dynamic>?,
       sellerIds: json['seller_ids'] as List<dynamic>?,
@@ -167,7 +166,7 @@ class Product {
           : null,
       quantity: (json['quantity'] as num?)?.toInt(),
       productTemplateAttributeValueIds:
-      List<int>.from(json['product_template_attribute_value_ids'] ?? []),
+          List<int>.from(json['product_template_attribute_value_ids'] ?? []),
     );
   }
 
@@ -182,7 +181,7 @@ class Product {
       'image_1920': imageUrl,
       'barcode': barcode,
       'categ_id': categId,
-      'category': category, // Added to toJson
+      'category': category,
       'create_date': creationDate?.toIso8601String(),
       'description_sale': description,
       'weight': weight,
@@ -264,7 +263,7 @@ class Customer {
   final String? title;
   final String? industryId;
   final String? source;
-  final String? dateLocalization; // Add this
+  final String? dateLocalization;
 
   Customer({
     required this.id,
@@ -525,7 +524,6 @@ class OrderItem {
   double get subtotal {
     double total = 0;
 
-    // Handle complex product attributes
     final attributes = productAttributes?[product.id];
     if (attributes != null && attributes.isNotEmpty) {
       for (var combo in attributes) {
@@ -552,7 +550,6 @@ class OrderItem {
       return price * quantity;
     }
 
-    // Default calculation
     return product.price * quantity;
   }
 
@@ -593,7 +590,6 @@ class SalesOrder {
       );
 }
 
-// Placeholder classes for DeliveryAddress and ShippingMethod
 class DeliveryAddress {
   final int id;
   final String name;
@@ -733,6 +729,7 @@ class SalesOrderProvider with ChangeNotifier {
               'in',
               ['sale', 'done']
             ],
+            ['name', 'not like', 'TCK%'],
           ],
           orderFields
         ],
@@ -861,7 +858,7 @@ class SalesOrderProvider with ChangeNotifier {
           city: record['city']?.toString() ?? '',
         );
       }).toList();
-      // Add customer's main address as a fallback
+
       final customerResult = await client.callKw({
         'model': 'res.partner',
         'method': 'read',
@@ -894,6 +891,25 @@ class SalesOrderProvider with ChangeNotifier {
     try {
       final client = await SessionManager.getActiveClient();
       if (client == null) throw Exception('No active Odoo session');
+
+      // Optional: Check if the delivery.carrier model exists
+      final models = await client.callKw({
+        'model': 'ir.model',
+        'method': 'search_read',
+        'args': [
+          [
+            ['model', '=', 'delivery.carrier']
+          ]
+        ],
+        'kwargs': {
+          'fields': ['id', 'model']
+        },
+      });
+      if (models.isEmpty) {
+        throw Exception(
+            'Delivery module not installed or delivery.carrier model not found');
+      }
+
       final result = await client.callKw({
         'model': 'delivery.carrier',
         'method': 'search_read',
@@ -965,31 +981,36 @@ class SalesOrderProvider with ChangeNotifier {
     notifyListeners();
   }
 
-  Future<int?> _findExistingDraftOrder(String orderId) async {
+  Future<int?> _findExistingDraftOrder(
+      BuildContext context, String orderId) async {
     try {
       final client = await SessionManager.getActiveClient();
       if (client == null) {
-        throw Exception('No active Odoo session found. Please log in again.');
+        throw Exception('No active Odoo session found.');
       }
 
       final result = await client.callKw({
         'model': 'sale.order',
-        'method': 'search',
+        'method': 'search_read',
         'args': [
           [
             ['name', '=', orderId],
             ['state', '=', 'draft'],
-          ]
+          ],
+          ['id'],
         ],
         'kwargs': {},
       });
 
-      if (result is List && result.isNotEmpty) {
-        return result[0] as int;
+      if (result is List && result.isNotEmpty && result[0]['id'] != null) {
+        return result[0]['id'] as int;
       }
       return null;
     } catch (e) {
-      developer.log('Error searching for draft order: $e');
+      developer.log('Error finding existing draft order: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error checking draft order: $e')),
+      );
       return null;
     }
   }
@@ -1036,18 +1057,6 @@ class SalesOrderProvider with ChangeNotifier {
         throw Exception('Payment method not selected');
       }
 
-      if (deliveryAddressId == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Please select a delivery address'),
-            backgroundColor: Colors.red,
-            duration: Duration(seconds: 3),
-          ),
-        );
-        throw Exception('Delivery address not selected');
-      }
-
-      // Validate and normalize productAttributes
       final normalizedAttributes = <String, List<Map<String, dynamic>>>{};
       for (var product in selectedProducts) {
         final attrs = productAttributes[product.id] ?? [];
@@ -1055,7 +1064,6 @@ class SalesOrderProvider with ChangeNotifier {
         final defaultQuantity = quantities[product.id] ?? 0;
 
         if (attrs.isNotEmpty) {
-          // Group all attributes for this product into a single variant
           final combinedAttrs = <String, String>{};
           int qty = defaultQuantity;
 
@@ -1089,7 +1097,6 @@ class SalesOrderProvider with ChangeNotifier {
 
       developer.log('Normalized productAttributes: $normalizedAttributes');
 
-      // Validate normalized attributes
       if (normalizedAttributes.values.any((list) => list.any((combo) =>
           !combo.containsKey('quantity') ||
           combo['quantity'] == null ||
@@ -1109,13 +1116,12 @@ class SalesOrderProvider with ChangeNotifier {
       notifyListeners();
 
       final orderId = await _getNextOrderSequence(client);
-      final existingDraftId = await _findExistingDraftOrder(orderId);
+      final existingDraftId = await _findExistingDraftOrder(context, orderId);
 
       final orderLines = <dynamic>[];
       final orderDate = DateTime.now();
       double subtotal = 0.0;
 
-      // Construct order lines and calculate subtotal
       for (var product in selectedProducts) {
         if (product.id == null || product.id.isEmpty) {
           throw Exception(
@@ -1159,19 +1165,16 @@ class SalesOrderProvider with ChangeNotifier {
         }
       }
 
-      // Apply discount to subtotal
       final discountAmount = subtotal * (discountPercentage / 100);
       subtotal -= discountAmount;
 
-      // Validate customer ID
       if (customer.id == null || customer.id.isEmpty) {
         throw Exception('Customer ID is null or empty');
       }
       final partnerId = int.tryParse(customer.id) ??
           (throw Exception('Invalid customer ID: ${customer.id}'));
 
-      // Validate payment term ID
-      final paymentTermId = await _getPaymentTermId(client, paymentMethod);
+      final paymentTermId = await getPaymentTermId(client, paymentMethod);
       if (paymentTermId == null) {
         throw Exception(
             'Payment term ID not found for payment method: $paymentMethod');
@@ -1180,7 +1183,6 @@ class SalesOrderProvider with ChangeNotifier {
       final taxAmount = includeTax ? subtotal * taxRate : 0.0;
       double shippingCost = 0.0;
 
-      // Fetch shipping cost if shippingMethodId is provided
       if (shippingMethodId != null) {
         final shippingMethod = _shippingMethods.firstWhere(
           (method) => method.id == shippingMethodId,
@@ -1191,7 +1193,6 @@ class SalesOrderProvider with ChangeNotifier {
 
       final totalAmount = subtotal + taxAmount + shippingCost;
 
-      // Prepare order data
       final orderData = {
         'name': orderId,
         'partner_id': partnerId,
@@ -1209,7 +1210,6 @@ class SalesOrderProvider with ChangeNotifier {
         if (deliveryAddress != null)
           'partner_shipping_id': int.tryParse(deliveryAddress),
         if (shippingMethodId != null) 'carrier_id': shippingMethodId,
-        // Fixed: Changed to carrier_id
         if (deliveryAddressId != null) 'partner_shipping_id': deliveryAddressId,
         if (customerReference != null && customerReference.isNotEmpty)
           'client_order_ref': customerReference,
@@ -1217,7 +1217,6 @@ class SalesOrderProvider with ChangeNotifier {
 
       int saleOrderId;
       if (existingDraftId != null) {
-        // Update existing draft
         await client.callKw({
           'model': 'sale.order',
           'method': 'write',
@@ -1244,7 +1243,6 @@ class SalesOrderProvider with ChangeNotifier {
         developer.log(
             'Draft sale order updated to confirmed: $orderId (Odoo ID: $saleOrderId)');
       } else {
-        // Create new order
         saleOrderId = await client.callKw({
           'model': 'sale.order',
           'method': 'create',
@@ -1254,7 +1252,6 @@ class SalesOrderProvider with ChangeNotifier {
         developer.log('Sale order created: $orderId (Odoo ID: $saleOrderId)');
       }
 
-      // Construct items for OrderConfirmationPage
       final items = selectedProducts.map((product) {
         final attrsList = normalizedAttributes[product.id] ?? [];
         double subtotal = 0.0;
@@ -1277,7 +1274,6 @@ class SalesOrderProvider with ChangeNotifier {
           subtotal = product.price * quantity;
         }
 
-        // Apply discount to item subtotal
         final itemDiscount = subtotal * (discountPercentage / 100);
         subtotal -= itemDiscount;
 
@@ -1291,7 +1287,6 @@ class SalesOrderProvider with ChangeNotifier {
         };
       }).toList();
 
-      // Construct orderItems for confirmOrderInCyllo
       final orderItems = selectedProducts.map((product) {
         final attrsList = normalizedAttributes[product.id] ?? [];
         final attrs = attrsList.isNotEmpty
@@ -1325,40 +1320,43 @@ class SalesOrderProvider with ChangeNotifier {
         );
       }).toList();
 
-      // Confirm order in Cyllo
       await confirmOrderInCyllo(
         orderId: orderId,
         items: orderItems,
       );
 
-      // Clear draft data
       _draftOrderId = null;
       _draftSelectedProducts = [];
       _draftQuantities = {};
       _draftProductAttributes = {};
 
-      // Navigate to OrderConfirmationPage
-      Navigator.pushReplacement(
+      showProfessionalSaleOrderConfirmedDialog(
         context,
-        MaterialPageRoute(
-          builder: (context) => OrderConfirmationPage(
-            orderId: orderId,
-            items: orderItems,
-            totalAmount: totalAmount,
-            customer: customer,
-            paymentMethod: paymentMethod,
-            orderNotes: orderNotes,
-            orderDate: orderDate,
-            shippingCost: shippingCost,
-            customerReference: customerReference,
-            deliveryDate: deliveryDate,
-            discountPercentage: discountPercentage,
-            discountAmount: discountAmount,
-          ),
-        ),
+        orderId,
+        orderDate,
+        onConfirm: () {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (context) => OrderConfirmationPage(
+                orderId: orderId,
+                items: orderItems,
+                totalAmount: totalAmount,
+                customer: customer,
+                paymentMethod: paymentMethod,
+                orderNotes: orderNotes,
+                orderDate: orderDate,
+                shippingCost: shippingCost,
+                customerReference: customerReference,
+                deliveryDate: deliveryDate,
+                discountPercentage: discountPercentage,
+                discountAmount: discountAmount,
+              ),
+            ),
+          );
+        },
       );
 
-      // Return order details
       return {
         'orderId': saleOrderId.toString(),
         'items': items,
@@ -1382,7 +1380,7 @@ class SalesOrderProvider with ChangeNotifier {
     }
   }
 
-  Future<int?> _getPaymentTermId(dynamic client, String? paymentMethod) async {
+  Future<int?> getPaymentTermId(dynamic client, String? paymentMethod) async {
     try {
       if (paymentMethod == null) {
         return null;
@@ -1450,6 +1448,7 @@ class SalesOrderProvider with ChangeNotifier {
   }
 
   Future<void> createDraftSaleOrder({
+    required BuildContext context,
     required String orderId,
     required List<Product> selectedProducts,
     required Map<String, int> quantities,
@@ -1464,7 +1463,6 @@ class SalesOrderProvider with ChangeNotifier {
         throw Exception('No active Odoo session found. Please log in again.');
       }
 
-      // Normalize productAttributes
       final normalizedAttributes = <String, List<Map<String, dynamic>>>{};
       for (var product in selectedProducts) {
         final attrs = productAttributes[product.id] ?? [];
@@ -1511,7 +1509,6 @@ class SalesOrderProvider with ChangeNotifier {
       developer.log(
           'Normalized productAttributes in createDraftSaleOrder: $normalizedAttributes');
 
-      // Validate normalized attributes
       if (normalizedAttributes.values.any((list) => list.any((combo) =>
           !combo.containsKey('quantity') ||
           combo['quantity'] == null ||
@@ -1553,7 +1550,7 @@ class SalesOrderProvider with ChangeNotifier {
         }
       }
 
-      final existingOrderId = await _findExistingDraftOrder(orderId);
+      final existingOrderId = await _findExistingDraftOrder(context, orderId);
       int saleOrderId;
 
       if (existingOrderId != null) {
@@ -1868,7 +1865,6 @@ class SalesOrderProvider with ChangeNotifier {
           }
         }
 
-        // Fallback: Infer selectedVariants from product name if valueIds is empty
         if (selectedVariants.isEmpty && valueIds.isEmpty) {
           final templateId = productResult.firstWhere(
               (p) => p['id'] == productId)['product_tmpl_id'][0] as int;
@@ -1889,8 +1885,8 @@ class SalesOrderProvider with ChangeNotifier {
         if (selectedVariants.isNotEmpty) {
           productAttributeValueMap[productId] = selectedVariants;
         } else {
-          developer.log(
-              'Warning: No valid selectedVariants for product $productId, name=$productName, valueIds=$valueIds');
+          // developer.log(
+          //     'Warning: No valid selectedVariants for product $productId, name=$productName, valueIds=$valueIds');
         }
       }
 
@@ -1923,7 +1919,8 @@ class SalesOrderProvider with ChangeNotifier {
             );
       }
 
-      final List<Product> fetchedProducts = (productResult as List).map((productData) {
+      final List<Product> fetchedProducts =
+          (productResult as List).map((productData) {
         String? imageUrl;
         final imageData = productData['image_1920'];
 
@@ -1932,7 +1929,8 @@ class SalesOrderProvider with ChangeNotifier {
             base64Decode(imageData);
             imageUrl = 'data:image/jpeg;base64,$imageData';
           } catch (e) {
-            developer.log("Invalid base64 image data for product ${productData['id']}: $e");
+            developer.log(
+                "Invalid base64 image data for product ${productData['id']}: $e");
             imageUrl = null;
           }
         }
@@ -1942,13 +1940,12 @@ class SalesOrderProvider with ChangeNotifier {
         final productId = productData['id'] as int;
         final selectedVariants = productAttributeValueMap[productId];
 
-        // Extract category name from categ_id
         String? category;
         final categId = productData['categ_id'];
         if (categId != false && categId is List && categId.length == 2) {
-          category = categId[1] as String; // e.g., "Shirts"
+          category = categId[1] as String;
         } else {
-          category = 'Uncategorized'; // Fallback for missing category
+          category = 'Uncategorized';
         }
 
         developer.log(
@@ -1956,21 +1953,30 @@ class SalesOrderProvider with ChangeNotifier {
 
         return Product(
           id: productData['id'].toString(),
-          name: productData['name'] is String ? productData['name'] : 'Unnamed Product',
+          name: productData['name'] is String
+              ? productData['name']
+              : 'Unnamed Product',
           price: (productData['list_price'] as num?)?.toDouble() ?? 0.0,
           vanInventory: (productData['qty_available'] as num?)?.toInt() ?? 0,
           imageUrl: imageUrl,
-          defaultCode: productData['default_code'] is String ? productData['default_code'] : '',
-          sellerIds: productData['seller_ids'] is List ? productData['seller_ids'] : [],
-          taxesIds: productData['taxes_id'] is List ? productData['taxes_id'] : [],
-          category: category, // Use the extracted category name
-          propertyStockProduction: productData['property_stock_production'] ?? false,
-          propertyStockInventory: productData['property_stock_inventory'] ?? false,
+          defaultCode: productData['default_code'] is String
+              ? productData['default_code']
+              : '',
+          sellerIds: productData['seller_ids'] is List
+              ? productData['seller_ids']
+              : [],
+          taxesIds:
+              productData['taxes_id'] is List ? productData['taxes_id'] : [],
+          category: category,
+          propertyStockProduction:
+              productData['property_stock_production'] ?? false,
+          propertyStockInventory:
+              productData['property_stock_inventory'] ?? false,
           attributes: attributes.isNotEmpty ? attributes : null,
           variantCount: productData['product_variant_count'] as int? ?? 0,
           selectedVariants: selectedVariants,
-          productTemplateAttributeValueIds:
-          List<int>.from(productData['product_template_attribute_value_ids'] ?? []),
+          productTemplateAttributeValueIds: List<int>.from(
+              productData['product_template_attribute_value_ids'] ?? []),
         );
       }).toList();
 
@@ -2012,10 +2018,7 @@ class SalesOrderProvider with ChangeNotifier {
   }
 }
 
-// Placeholder classes (adjust as per your actual implementation)
-
 extension SalesOrderProviderCache on SalesOrderProvider {
-  // Load products from cached data
   Future<void> setProductsFromCache(dynamic cachedProducts) async {
     try {
       if (cachedProducts is List) {
@@ -2030,7 +2033,6 @@ extension SalesOrderProviderCache on SalesOrderProvider {
     }
   }
 
-  // Prepare products data for caching
   dynamic getProductsForCache() {
     try {
       return _products.map((product) => product.toJson()).toList();

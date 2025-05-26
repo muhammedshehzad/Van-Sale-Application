@@ -6,12 +6,10 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import 'package:shimmer/shimmer.dart';
-import '../assets/widgets and consts/page_transition.dart';
 import '../authentication/cyllo_session_model.dart';
 import '../providers/invoice_creation_provider.dart';
 import '../providers/order_picking_provider.dart';
 import '../providers/sale_order_provider.dart';
-import 'invoice_details_page.dart';
 
 class InvoiceCreationPage extends StatefulWidget {
   final Map<String, dynamic> saleOrderData;
@@ -24,7 +22,7 @@ class InvoiceCreationPage extends StatefulWidget {
 }
 
 class _InvoiceCreationPageState extends State<InvoiceCreationPage> {
-  List<Map<String, dynamic>> filteredSaleOrders = []; // Declare at class level
+  List<Map<String, dynamic>> filteredSaleOrders = [];
   @override
   void initState() {
     super.initState();
@@ -318,7 +316,6 @@ class _InvoiceCreationPageState extends State<InvoiceCreationPage> {
         return null;
       }
 
-      // Fetch sale order details
       final result = await client.callKw({
         'model': 'sale.order',
         'method': 'read',
@@ -346,8 +343,6 @@ class _InvoiceCreationPageState extends State<InvoiceCreationPage> {
 
       final saleOrder = result[0];
       final orderLineIds = saleOrder['order_line'] as List<dynamic>? ?? [];
-
-      // Fetch order lines details
       final orderLines = orderLineIds.isNotEmpty
           ? await client.callKw({
               'model': 'sale.order.line',
@@ -368,7 +363,6 @@ class _InvoiceCreationPageState extends State<InvoiceCreationPage> {
             })
           : [];
 
-      // Fetch product details for each order line
       final productIds = orderLines
           .map((line) => (line['product_id'] as List<dynamic>?)?.first)
           .where((id) => id != null)
@@ -387,7 +381,6 @@ class _InvoiceCreationPageState extends State<InvoiceCreationPage> {
             })
           : [];
 
-      // Map product details to order lines
       final productMap = {
         for (var product in productDetails) product['id']: product
       };
@@ -431,7 +424,6 @@ class _InvoiceCreationPageState extends State<InvoiceCreationPage> {
         return [];
       }
 
-      // Broaden the state filter to include more possible states
       final domain = [
         [
           'state',
@@ -451,7 +443,7 @@ class _InvoiceCreationPageState extends State<InvoiceCreationPage> {
         'args': [domain],
         'kwargs': {
           'fields': ['id', 'name', 'partner_id', 'state', 'amount_total'],
-          'limit': 100, // Increased limit to fetch more results
+          'limit': 100,
         },
       });
 
@@ -1031,8 +1023,7 @@ class _InvoiceCreationPageState extends State<InvoiceCreationPage> {
           appBar: AppBar(
             title: const Text(
               'Create Invoice',
-              style:
-                  TextStyle(fontWeight: FontWeight.bold, color: Colors.white),
+              style: TextStyle(color: Colors.white),
             ),
             elevation: 0,
             leading: IconButton(
@@ -1047,131 +1038,33 @@ class _InvoiceCreationPageState extends State<InvoiceCreationPage> {
                     child: Shimmer.fromColors(
                     baseColor: Colors.grey[300]!,
                     highlightColor: Colors.grey[100]!,
-                    child: ListView.builder(
-                      padding: const EdgeInsets.symmetric(vertical: 8),
-                      itemCount: 3, // Reduce to show fewer placeholders
-                      itemBuilder: (context, index) {
-                        return Padding(
-                          padding: const EdgeInsets.all(16),
-                          child: Card(
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.all(16.0),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Card(
                             elevation: 1,
                             shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(8),
+                              borderRadius: BorderRadius.circular(12),
                             ),
                             child: Padding(
-                              padding: const EdgeInsets.all(16),
+                              padding: const EdgeInsets.all(16.0),
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Row(
-                                    mainAxisAlignment:
-                                        MainAxisAlignment.spaceBetween,
-                                    children: [
-                                      Container(
-                                        width: 200,
-                                        height: 20,
-                                        decoration: BoxDecoration(
-                                          color: Colors.white,
-                                          borderRadius:
-                                              BorderRadius.circular(4),
-                                        ),
-                                      ),
-                                      Container(
-                                        width: 24,
-                                        height: 24,
-                                        decoration: BoxDecoration(
-                                          color: Colors.white,
-                                          borderRadius:
-                                              BorderRadius.circular(12),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                  const SizedBox(height: 12),
-                                  Row(
-                                    children: [
-                                      Container(
-                                        width: 80,
-                                        height: 24,
-                                        decoration: BoxDecoration(
-                                          color: Colors.white,
-                                          borderRadius:
-                                              BorderRadius.circular(6),
-                                        ),
-                                      ),
-                                      const SizedBox(width: 8),
-                                      Container(
-                                        width: 100,
-                                        height: 24,
-                                        decoration: BoxDecoration(
-                                          color: Colors.white,
-                                          borderRadius:
-                                              BorderRadius.circular(6),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                  const SizedBox(height: 16),
                                   Container(
-                                    padding: const EdgeInsets.all(8),
+                                    width: double.infinity,
+                                    height: 20,
                                     decoration: BoxDecoration(
                                       color: Colors.white,
-                                      borderRadius: BorderRadius.circular(8),
-                                    ),
-                                    child: Row(
-                                      mainAxisAlignment:
-                                          MainAxisAlignment.spaceBetween,
-                                      children: [
-                                        Container(
-                                          width: 80,
-                                          height: 16,
-                                          color: Colors.white,
-                                        ),
-                                        Container(
-                                          width: 100,
-                                          height: 16,
-                                          color: Colors.white,
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                  const SizedBox(height: 16),
-                                  Container(
-                                    height: 100,
-                                    decoration: BoxDecoration(
-                                      color: Colors.white,
-                                      borderRadius: BorderRadius.circular(8),
+                                      borderRadius: BorderRadius.circular(4),
                                     ),
                                   ),
                                   const SizedBox(height: 12),
-                                  Row(
-                                    children: [
-                                      Expanded(
-                                        child: Container(
-                                          height: 48,
-                                          decoration: BoxDecoration(
-                                            color: Colors.white,
-                                            borderRadius:
-                                                BorderRadius.circular(8),
-                                          ),
-                                        ),
-                                      ),
-                                      const SizedBox(width: 12),
-                                      Expanded(
-                                        child: Container(
-                                          height: 48,
-                                          decoration: BoxDecoration(
-                                            color: Colors.white,
-                                            borderRadius:
-                                                BorderRadius.circular(8),
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                  const SizedBox(height: 12),
                                   Container(
-                                    height: 48,
+                                    width: double.infinity,
+                                    height: 50,
                                     decoration: BoxDecoration(
                                       color: Colors.white,
                                       borderRadius: BorderRadius.circular(8),
@@ -1179,7 +1072,53 @@ class _InvoiceCreationPageState extends State<InvoiceCreationPage> {
                                   ),
                                   const SizedBox(height: 12),
                                   Container(
-                                    height: 48,
+                                    width: double.infinity,
+                                    height: 50,
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 12),
+                                  Container(
+                                    width: double.infinity,
+                                    height: 50,
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 12),
+                                  Container(
+                                    width: double.infinity,
+                                    height: 50,
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 12),
+                                  Container(
+                                    width: double.infinity,
+                                    height: 50,
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 12),
+                                  Container(
+                                    width: double.infinity,
+                                    height: 50,
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 12),
+                                  Container(
+                                    width: double.infinity,
+                                    height: 50,
                                     decoration: BoxDecoration(
                                       color: Colors.white,
                                       borderRadius: BorderRadius.circular(8),
@@ -1189,8 +1128,344 @@ class _InvoiceCreationPageState extends State<InvoiceCreationPage> {
                               ),
                             ),
                           ),
-                        );
-                      },
+                          const SizedBox(height: 16),
+                          Card(
+                            elevation: 1,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Padding(
+                              padding: const EdgeInsets.all(16.0),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Container(
+                                    width: 150,
+                                    height: 20,
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      borderRadius: BorderRadius.circular(4),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 12),
+                                  ...List.generate(
+                                      2,
+                                      (index) => Padding(
+                                            padding: const EdgeInsets.symmetric(
+                                                vertical: 8.0),
+                                            child: Card(
+                                              elevation: 1,
+                                              shape: RoundedRectangleBorder(
+                                                borderRadius:
+                                                    BorderRadius.circular(8),
+                                              ),
+                                              child: Padding(
+                                                padding:
+                                                    const EdgeInsets.all(12.0),
+                                                child: Column(
+                                                  crossAxisAlignment:
+                                                      CrossAxisAlignment.start,
+                                                  children: [
+                                                    Row(
+                                                      mainAxisAlignment:
+                                                          MainAxisAlignment
+                                                              .spaceBetween,
+                                                      children: [
+                                                        Container(
+                                                          width: 200,
+                                                          height: 20,
+                                                          decoration:
+                                                              BoxDecoration(
+                                                            color: Colors.white,
+                                                            borderRadius:
+                                                                BorderRadius
+                                                                    .circular(
+                                                                        4),
+                                                          ),
+                                                        ),
+                                                        Container(
+                                                          width: 24,
+                                                          height: 24,
+                                                          decoration:
+                                                              BoxDecoration(
+                                                            color: Colors.white,
+                                                            borderRadius:
+                                                                BorderRadius
+                                                                    .circular(
+                                                                        12),
+                                                          ),
+                                                        ),
+                                                      ],
+                                                    ),
+                                                    const SizedBox(height: 8),
+                                                    Wrap(
+                                                      spacing: 8,
+                                                      children: [
+                                                        Container(
+                                                          width: 80,
+                                                          height: 20,
+                                                          decoration:
+                                                              BoxDecoration(
+                                                            color: Colors.white,
+                                                            borderRadius:
+                                                                BorderRadius
+                                                                    .circular(
+                                                                        6),
+                                                          ),
+                                                        ),
+                                                        Container(
+                                                          width: 100,
+                                                          height: 20,
+                                                          decoration:
+                                                              BoxDecoration(
+                                                            color: Colors.white,
+                                                            borderRadius:
+                                                                BorderRadius
+                                                                    .circular(
+                                                                        6),
+                                                          ),
+                                                        ),
+                                                      ],
+                                                    ),
+                                                    const SizedBox(height: 12),
+                                                    Container(
+                                                      padding:
+                                                          const EdgeInsets.all(
+                                                              8),
+                                                      decoration: BoxDecoration(
+                                                        color: Colors.white,
+                                                        borderRadius:
+                                                            BorderRadius
+                                                                .circular(8),
+                                                      ),
+                                                      child: Row(
+                                                        mainAxisAlignment:
+                                                            MainAxisAlignment
+                                                                .spaceBetween,
+                                                        children: [
+                                                          Container(
+                                                            width: 80,
+                                                            height: 16,
+                                                            color: Colors.white,
+                                                          ),
+                                                          Container(
+                                                            width: 100,
+                                                            height: 16,
+                                                            color: Colors.white,
+                                                          ),
+                                                        ],
+                                                      ),
+                                                    ),
+                                                    const SizedBox(height: 12),
+                                                    Container(
+                                                      width: double.infinity,
+                                                      height: 60,
+                                                      decoration: BoxDecoration(
+                                                        color: Colors.white,
+                                                        borderRadius:
+                                                            BorderRadius
+                                                                .circular(8),
+                                                      ),
+                                                    ),
+                                                    const SizedBox(height: 12),
+                                                    Row(
+                                                      children: [
+                                                        Expanded(
+                                                          child: Container(
+                                                            height: 50,
+                                                            decoration:
+                                                                BoxDecoration(
+                                                              color:
+                                                                  Colors.white,
+                                                              borderRadius:
+                                                                  BorderRadius
+                                                                      .circular(
+                                                                          8),
+                                                            ),
+                                                          ),
+                                                        ),
+                                                        const SizedBox(
+                                                            width: 12),
+                                                        Expanded(
+                                                          child: Container(
+                                                            height: 50,
+                                                            decoration:
+                                                                BoxDecoration(
+                                                              color:
+                                                                  Colors.white,
+                                                              borderRadius:
+                                                                  BorderRadius
+                                                                      .circular(
+                                                                          8),
+                                                            ),
+                                                          ),
+                                                        ),
+                                                      ],
+                                                    ),
+                                                    const SizedBox(height: 12),
+                                                    Container(
+                                                      width: double.infinity,
+                                                      height: 50,
+                                                      decoration: BoxDecoration(
+                                                        color: Colors.white,
+                                                        borderRadius:
+                                                            BorderRadius
+                                                                .circular(8),
+                                                      ),
+                                                    ),
+                                                    const SizedBox(height: 12),
+                                                    Container(
+                                                      width: double.infinity,
+                                                      height: 50,
+                                                      decoration: BoxDecoration(
+                                                        color: Colors.white,
+                                                        borderRadius:
+                                                            BorderRadius
+                                                                .circular(8),
+                                                      ),
+                                                    ),
+                                                  ],
+                                                ),
+                                              ),
+                                            ),
+                                          )),
+                                  const SizedBox(height: 12),
+                                  Container(
+                                    width: double.infinity,
+                                    height: 50,
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                          Card(
+                            elevation: 1,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Padding(
+                              padding: const EdgeInsets.all(16.0),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Container(
+                                    width: 150,
+                                    height: 20,
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      borderRadius: BorderRadius.circular(4),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 16),
+                                  Row(
+                                    mainAxisAlignment:
+                                        MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      Container(
+                                        width: 100,
+                                        height: 16,
+                                        color: Colors.white,
+                                      ),
+                                      Container(
+                                        width: 80,
+                                        height: 16,
+                                        color: Colors.white,
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 10),
+                                  ...List.generate(
+                                      2,
+                                      (index) => Padding(
+                                            padding: const EdgeInsets.symmetric(
+                                                vertical: 4.0),
+                                            child: Row(
+                                              mainAxisAlignment:
+                                                  MainAxisAlignment
+                                                      .spaceBetween,
+                                              children: [
+                                                Container(
+                                                  width: 80,
+                                                  height: 16,
+                                                  color: Colors.white,
+                                                ),
+                                                Container(
+                                                  width: 60,
+                                                  height: 16,
+                                                  color: Colors.white,
+                                                ),
+                                              ],
+                                            ),
+                                          )),
+                                  const SizedBox(height: 16),
+                                  Row(
+                                    mainAxisAlignment:
+                                        MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      Container(
+                                        width: 80,
+                                        height: 20,
+                                        color: Colors.white,
+                                      ),
+                                      Container(
+                                        width: 100,
+                                        height: 20,
+                                        color: Colors.white,
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 12),
+                                  Container(
+                                    width: double.infinity,
+                                    height: 16,
+                                    color: Colors.white,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 24),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                            children: [
+                              Expanded(
+                                child: Container(
+                                  height: 50,
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Container(
+                                  height: 50,
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Container(
+                                  height: 50,
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
                     ),
                   ))
                 : provider.errorMessage.isNotEmpty
@@ -1242,7 +1517,6 @@ class _InvoiceCreationPageState extends State<InvoiceCreationPage> {
         await provider.fetchJournals();
         await provider.fetchPaymentMethods();
         await provider.fetchPaymentTerms();
-        await provider.fetchFiscalPositions();
       },
       child: SingleChildScrollView(
         padding: const EdgeInsets.all(16.0),
@@ -1263,6 +1537,20 @@ class _InvoiceCreationPageState extends State<InvoiceCreationPage> {
   }
 
   Widget _buildHeader(InvoiceCreationProvider provider) {
+    final uniqueCustomers = <int, Map<String, dynamic>>{};
+    for (var customer in provider.availableCustomers) {
+      if (customer['id'] != null) {
+        uniqueCustomers[customer['id']] = customer;
+      }
+    }
+    final customersList = uniqueCustomers.values.toList();
+    int? selectedCustomerId = provider.customerId;
+    if (selectedCustomerId != null &&
+        !customersList.any((customer) => customer['id'] == selectedCustomerId)) {
+      selectedCustomerId = null;
+      provider.updateCustomer(0);
+    }
+
     return Card(
       elevation: 2,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -1272,67 +1560,73 @@ class _InvoiceCreationPageState extends State<InvoiceCreationPage> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             provider.saleOrderData?['id'] == null ||
-                    provider.saleOrderData?['name'] == null
+                provider.saleOrderData?['name'] == null
                 ? Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Sale Order',
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 16,
-                          color: Colors.black87,
-                        ),
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Sale Order',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16,
+                    color: Colors.black87,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                InkWell(
+                  onTap: () => _showSaleOrderPicker(context, provider),
+                  child: InputDecorator(
+                    decoration: InputDecoration(
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
                       ),
-                      const SizedBox(height: 8),
-                      InkWell(
-                        onTap: () => _showSaleOrderPicker(context, provider),
-                        child: InputDecorator(
-                          decoration: InputDecoration(
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 10,
-                            ),
-                          ),
-                          child: Text(
-                            provider.saleOrderData?['name'] ??
-                                'Select a Sale Order',
-                            style: TextStyle(
-                              fontSize: 14,
-                              color: provider.saleOrderData?['name'] != null
-                                  ? Colors.black87
-                                  : Colors.grey[600],
-                            ),
-                          ),
-                        ),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 10,
                       ),
-                    ],
-                  )
-                : Text(
-                    'Sale Order: ${provider.saleOrderData?['name'] ?? 'N/A'}',
-                    style: const TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 18,
+                    ),
+                    child: Text(
+                      provider.saleOrderData?['name'] ??
+                          'Select a Sale Order',
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: provider.saleOrderData?['name'] != null
+                            ? Colors.black87
+                            : Colors.grey[600],
+                      ),
                     ),
                   ),
+                ),
+              ],
+            )
+                : Text(
+              'Sale Order: ${provider.saleOrderData?['name'] ?? 'N/A'}',
+              style: const TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 18,
+              ),
+            ),
             const SizedBox(height: 12),
-            DropdownButtonFormField(
+            DropdownButtonFormField<int>(
               decoration: InputDecoration(
                 labelText: 'Customer',
-                border:
-                    OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
               ),
-              value: provider.customerId,
-              items: provider.availableCustomers
-                  .map((customer) => DropdownMenuItem(
-                        value: customer['id'],
-                        child: Text(customer['name']),
-                      ))
+              value: selectedCustomerId,
+              items: customersList
+                  .map((customer) => DropdownMenuItem<int>(
+                value: customer['id'],
+                child: Text(
+                  customer['name'] ?? 'Unknown',
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ))
                   .toList(),
-              onChanged: (value) => provider.updateCustomer(value as int),
+              onChanged: (value) => provider.updateCustomer(value!),
+              validator: (value) =>
+              value == null ? 'Please select a customer' : null,
+              isExpanded: true,
+              hint: const Text('Select a Customer'),
             ),
             const SizedBox(height: 12),
             _buildDatePicker(
@@ -1352,15 +1646,14 @@ class _InvoiceCreationPageState extends State<InvoiceCreationPage> {
             DropdownButtonFormField(
               decoration: InputDecoration(
                 labelText: 'Journal',
-                border:
-                    OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
               ),
               value: provider.journalId,
               items: provider.availableJournals
                   .map((journal) => DropdownMenuItem(
-                        value: journal['id'],
-                        child: Text(journal['name']),
-                      ))
+                value: journal['id'],
+                child: Text(journal['name']),
+              ))
                   .toList(),
               onChanged: (value) => provider.updateJournal(value as int),
             ),
@@ -1368,52 +1661,34 @@ class _InvoiceCreationPageState extends State<InvoiceCreationPage> {
             DropdownButtonFormField(
               decoration: InputDecoration(
                 labelText: 'Payment Terms',
-                border:
-                    OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
               ),
               value: provider.paymentTermId,
               isExpanded: true,
               items: provider.availablePaymentTerms
                   .map((term) => DropdownMenuItem(
-                        value: term['id'],
-                        child: Text(
-                          term['name'],
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(fontSize: 14),
-                        ),
-                      ))
+                value: term['id'],
+                child: Text(
+                  term['name'],
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 14),
+                ),
+              ))
                   .toList(),
               onChanged: (value) => provider.updatePaymentTerms(value as int),
             ),
             const SizedBox(height: 12),
             DropdownButtonFormField(
               decoration: InputDecoration(
-                labelText: 'Fiscal Position',
-                border:
-                    OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-              ),
-              value: provider.fiscalPositionId,
-              items: provider.availableFiscalPositions
-                  .map((position) => DropdownMenuItem(
-                        value: position['id'],
-                        child: Text(position['name']),
-                      ))
-                  .toList(),
-              onChanged: (value) => provider.updateFiscalPosition(value as int),
-            ),
-            const SizedBox(height: 12),
-            DropdownButtonFormField(
-              decoration: InputDecoration(
                 labelText: 'Salesperson',
-                border:
-                    OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
               ),
               value: provider.salespersonId,
               items: provider.availableSalespersons
                   .map((salesperson) => DropdownMenuItem(
-                        value: salesperson['id'],
-                        child: Text(salesperson['name']),
-                      ))
+                value: salesperson['id'],
+                child: Text(salesperson['name']),
+              ))
                   .toList(),
               onChanged: (value) => provider.updateSalesperson(value as int),
             ),
@@ -1422,9 +1697,7 @@ class _InvoiceCreationPageState extends State<InvoiceCreationPage> {
       ),
     );
   }
-
   Widget _buildInvoiceLines(InvoiceCreationProvider provider) {
-    final deviceSize = MediaQuery.of(context).size;
     return Card(
       elevation: 3,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -1901,44 +2174,8 @@ class _InvoiceCreationPageState extends State<InvoiceCreationPage> {
                       return;
                     }
                     final result =
-                        await provider.createDraftInvoice(saleOrderId);
+                        await provider.createDraftInvoice(saleOrderId, context);
                     if (result == null) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text(provider.errorMessage)),
-                      );
-                      return;
-                    }
-                    if (result['already_exists'] == true && mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text(
-                            'Invoice ${result['name']} already exists (State: ${result['state']})',
-                          ),
-                        ),
-                      );
-                      Navigator.pushReplacement(
-                        context,
-                        SlidingPageTransitionRL(
-                          page: InvoiceDetailsPage(
-                              invoiceId: result['id'].toString()),
-                        ),
-                      );
-                      return;
-                    }
-                    if (result['id'] != null && mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                            content:
-                                Text('Draft invoice created successfully')),
-                      );
-                      Navigator.pushReplacement(
-                        context,
-                        SlidingPageTransitionRL(
-                          page: InvoiceDetailsPage(
-                              invoiceId: result['id'].toString()),
-                        ),
-                      );
-                    } else {
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(content: Text(provider.errorMessage)),
                       );
@@ -1971,7 +2208,8 @@ class _InvoiceCreationPageState extends State<InvoiceCreationPage> {
                       );
                       return;
                     }
-                    final result = await provider.validateInvoice(saleOrderId);
+                    final result =
+                        await provider.validateInvoice(saleOrderId, context);
                     if (result['success'] && mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
@@ -1980,14 +2218,14 @@ class _InvoiceCreationPageState extends State<InvoiceCreationPage> {
                           ),
                         ),
                       );
-                      Navigator.pushReplacement(
-                        context,
-                        SlidingPageTransitionRL(
-                          page: InvoiceDetailsPage(
-                            invoiceId: result['invoiceId'].toString(),
-                          ),
-                        ),
-                      );
+                      // Navigator.pushReplacement(
+                      //   context,
+                      //   SlidingPageTransitionRL(
+                      //     page: InvoiceDetailsPage(
+                      //       invoiceId: result['invoiceId'].toString(),
+                      //     ),
+                      //   ),
+                      // );
                     } else if (result['already_exists'] == true && mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
@@ -1996,14 +2234,14 @@ class _InvoiceCreationPageState extends State<InvoiceCreationPage> {
                           ),
                         ),
                       );
-                      Navigator.pushReplacement(
-                        context,
-                        SlidingPageTransitionRL(
-                          page: InvoiceDetailsPage(
-                            invoiceId: result['invoiceId'].toString(),
-                          ),
-                        ),
-                      );
+                      // Navigator.pushReplacement(
+                      //   context,
+                      //   SlidingPageTransitionRL(
+                      //     page: InvoiceDetailsPage(
+                      //       invoiceId: result['invoiceId'].toString(),
+                      //     ),
+                      //   ),
+                      // );
                     } else {
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(

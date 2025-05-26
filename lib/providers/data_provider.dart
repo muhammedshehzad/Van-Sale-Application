@@ -93,7 +93,7 @@ class DataProvider with ChangeNotifier {
     }
   }
 
-  // Fetch product by barcode
+
   Future<Map<String, dynamic>?> fetchProductByBarcode(String barcode) async {
     final client = await SessionManager.getActiveClient();
     if (client == null) return null;
@@ -111,7 +111,7 @@ class DataProvider with ChangeNotifier {
     return result.isNotEmpty ? result[0] as Map<String, dynamic> : null;
   }
 
-  // Fetch alternative products
+
   Future<List<Map<String, dynamic>>> fetchAlternativeProducts(
       int productId, int warehouseId) async {
     final client = await SessionManager.getActiveClient();
@@ -119,7 +119,7 @@ class DataProvider with ChangeNotifier {
       throw Exception('No active Odoo session');
     }
 
-    // Get product category
+
     final productResult = await client.callKw({
       'model': 'product.product',
       'method': 'search_read',
@@ -140,7 +140,7 @@ class DataProvider with ChangeNotifier {
         ? productResult[0]['categ_id'][0] as int
         : 0;
 
-    // Find products in the same category with available stock
+
     final alternativeProducts = await client.callKw({
       'model': 'product.product',
       'method': 'search_read',
@@ -190,7 +190,7 @@ class DataProvider with ChangeNotifier {
         .toList();
   }
 
-  // Fetch alternative locations for a product
+
   Future<List<Map<String, dynamic>>> fetchAlternativeLocations(
       int productId, int warehouseId) async {
     try {
@@ -221,8 +221,8 @@ class DataProvider with ChangeNotifier {
     }
   }
 
-  // Fetch available lot numbers for a product
-// In your DataProvider class (assumed to be in data_provider.dart)
+
+
   Future<List<Map<String, dynamic>>> fetchAvailableLots(
       int productId, int warehouseId) async {
     try {
@@ -273,7 +273,7 @@ class DataProvider with ChangeNotifier {
       debugPrint('Error fetching available lots: $e');
       return [];
     }
-  } // Fetch picking details by ID
+  }
 
   Future<Map<String, dynamic>> fetchPickingDetails(int pickingId) async {
     try {
@@ -315,7 +315,7 @@ class DataProvider with ChangeNotifier {
     }
   }
 
-  // Fetch all pickings that need processing
+
   Future<List<Map<String, dynamic>>> fetchPendingPickings() async {
     try {
       final client = await SessionManager.getActiveClient();
@@ -354,7 +354,7 @@ class DataProvider with ChangeNotifier {
     }
   }
 
-  // Create a new move line
+
   Future<int?> createMoveLine(
     int pickingId,
     int productId,
@@ -369,7 +369,7 @@ class DataProvider with ChangeNotifier {
         throw Exception('No active Odoo session');
       }
 
-      // Search for existing stock.move
+
       final moveResult = await client.callKw({
         'model': 'stock.move',
         'method': 'search_read',
@@ -385,7 +385,7 @@ class DataProvider with ChangeNotifier {
 
       int moveId;
       if (moveResult.isEmpty) {
-        // Fetch product details
+
         final productResult = await client.callKw({
           'model': 'product.product',
           'method': 'search_read',
@@ -405,7 +405,7 @@ class DataProvider with ChangeNotifier {
         final product = productResult[0];
         final uomId = (product['uom_id'] as List<dynamic>)[0] as int;
 
-        // Create a new stock.move
+
         final createdMove = await client.callKw({
           'model': 'stock.move',
           'method': 'create',
@@ -428,7 +428,7 @@ class DataProvider with ChangeNotifier {
         moveId = moveResult[0]['id'] as int;
       }
 
-      // Prepare values for stock.move.line
+
       final values = <String, dynamic>{
         'move_id': moveId,
         'product_id': productId,
@@ -442,7 +442,7 @@ class DataProvider with ChangeNotifier {
         values['lot_name'] = lotName;
       }
 
-      // Create stock.move.line
+
       final result = await client.callKw({
         'model': 'stock.move.line',
         'method': 'create',
@@ -458,7 +458,7 @@ class DataProvider with ChangeNotifier {
     }
   }
 
-  // Update the quantity of a move line
+
   Future<bool> updateMoveLineQuantity(
       int moveLineId,
       double quantity,
@@ -470,7 +470,7 @@ class DataProvider with ChangeNotifier {
         throw Exception('No active Odoo session');
       }
 
-      // Fetch existing move line to get current quantity and lot/serial numbers
+
       final moveLineResult = await client.callKw({
         'model': 'stock.move.line',
         'method': 'search_read',
@@ -491,7 +491,7 @@ class DataProvider with ChangeNotifier {
       final currentQuantity =
           (currentMoveLine['quantity'] as num?)?.toDouble() ?? 0.0;
 
-      // Handle lot_name which can be String, bool(false) or null
+
       final currentLotNames = (currentMoveLine['lot_name'] is String)
           ? (currentMoveLine['lot_name'] as String)
           .split(',')
@@ -500,16 +500,16 @@ class DataProvider with ChangeNotifier {
           .toList()
           : <String>[];
 
-      // Calculate new total quantity
+
       final newQuantity = currentQuantity + quantity;
 
-      // Combine existing and new lot/serial numbers
+
       final combinedLotSerialNumbers = lotSerialNumbers != null
           ? <String>{...currentLotNames, ...lotSerialNumbers}.toList()
           : currentLotNames;
 
       final values = <String, dynamic>{
-        'quantity': newQuantity,  // Changed from 'quantity' to 'qty_done'
+        'quantity': newQuantity,
       };
 
       if (combinedLotSerialNumbers.isNotEmpty) {
