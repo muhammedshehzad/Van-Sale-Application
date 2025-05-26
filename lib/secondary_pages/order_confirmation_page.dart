@@ -47,16 +47,25 @@ class OrderConfirmationPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const taxRate = 0.0;
-    final subtotalAfterDiscount =
-        items.fold(0.0, (sum, item) => sum + item.subtotal);
-    final subtotalBeforeDiscount =
-        subtotalAfterDiscount / (1 - discountPercentage / 100);
+    double subtotalBeforeDiscount = 0.0;
+    for (var item in items) {
+      final priceBeforeDiscount =
+          item.fixedSubtotal / (1 - discountPercentage / 100);
+      subtotalBeforeDiscount += priceBeforeDiscount;
+    }
     final calculatedDiscountAmount =
-        subtotalBeforeDiscount - subtotalAfterDiscount;
+        subtotalBeforeDiscount * (discountPercentage / 100);
+
+    final subtotalAfterDiscount =
+        subtotalBeforeDiscount - calculatedDiscountAmount;
+    const taxRate = 0;
+
     final tax = subtotalAfterDiscount * taxRate;
+
+    final totalWithShipping = subtotalAfterDiscount + shippingCost;
     final totalWithTaxAndShipping = subtotalAfterDiscount + tax + shippingCost;
-    final discountAmount = subtotalBeforeDiscount * (discountPercentage / 100);
+    final discountAmount = subtotalBeforeDiscount *
+        (discountPercentage / 100); // This line is redundant
     final subtotal = totalAmount - shippingCost;
     final currencyFormat = NumberFormat.currency(symbol: '\$');
     final estimatedDeliveryFormat = DateFormat('MMM dd, yyyy');
@@ -69,7 +78,7 @@ class OrderConfirmationPage extends StatelessWidget {
         '  Discount ($discountPercentage%): ${currencyFormat.format(calculatedDiscountAmount)}');
     developer.log(
         '  Subtotal after discount: ${currencyFormat.format(subtotalAfterDiscount)}');
-    developer.log('  Tax (7%): ${currencyFormat.format(tax)}');
+    developer.log('  Tax : ${currencyFormat.format(tax)}');
     developer.log('  Shipping Cost: ${currencyFormat.format(shippingCost)}');
     developer.log('  Total: ${currencyFormat.format(totalWithTaxAndShipping)}');
 
@@ -80,11 +89,24 @@ class OrderConfirmationPage extends StatelessWidget {
 
     final addressParts = <String>[];
     if (deliveryAddress != null) {
-      if (deliveryAddress!.street.isNotEmpty)
+      if (deliveryAddress!.street.isNotEmpty) {
         addressParts.add(deliveryAddress!.street);
-      if (deliveryAddress!.city.isNotEmpty)
+      }
+      if (deliveryAddress!.street2!.isNotEmpty) {
+        addressParts.add(deliveryAddress!.street2 ?? '');
+      }
+      if (deliveryAddress!.city.isNotEmpty) {
         addressParts.add(deliveryAddress!.city);
-      // Add other fields like zip, state, country if available in DeliveryAddress
+      }
+      if (deliveryAddress!.zip!.isNotEmpty) {
+        addressParts.add(deliveryAddress!.zip ?? '');
+      }
+      if (deliveryAddress!.state!.isNotEmpty) {
+        addressParts.add(deliveryAddress!.state ?? '');
+      }
+      if (deliveryAddress!.country!.isNotEmpty) {
+        addressParts.add(deliveryAddress!.country ?? '');
+      }
     } else if (customer != null) {
       if (customer!.street != null && customer!.street!.isNotEmpty) {
         addressParts.add(customer!.street!);
@@ -332,7 +354,7 @@ class OrderConfirmationPage extends StatelessWidget {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'Delivery Date: ${deliveryDate != null ? estimatedDeliveryFormat.format(deliveryDate!) : 'TBD'}',
+                            'Delivery Date: ${deliveryDate != null ? estimatedDeliveryFormat.format(deliveryDate!) : 'Not Specified'}',
                             style: TextStyle(
                               fontSize: 14,
                               color: Colors.grey[800],
@@ -531,27 +553,6 @@ class OrderConfirmationPage extends StatelessWidget {
                       ),
                       child: Column(
                         children: [
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text(
-                                'Subtotal',
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  color: Colors.grey[700],
-                                ),
-                              ),
-                              Text(
-                                currencyFormat
-                                    .format(subtotal - tax - discountAmount),
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  color: Colors.grey[800],
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                            ],
-                          ),
                           if (discountAmount > 0)
                             Padding(
                               padding: const EdgeInsets.only(top: 8),
@@ -560,7 +561,7 @@ class OrderConfirmationPage extends StatelessWidget {
                                     MainAxisAlignment.spaceBetween,
                                 children: [
                                   Text(
-                                    'Discount (${discountPercentage.toStringAsFixed(1)}%)',
+                                    'Discount${discountPercentage > 0 ? ' (${discountPercentage.toStringAsFixed(1)}%)' : ''}',
                                     style: TextStyle(
                                       fontSize: 14,
                                       color: Colors.grey[700],
@@ -577,6 +578,29 @@ class OrderConfirmationPage extends StatelessWidget {
                                 ],
                               ),
                             ),
+                          Padding(
+                            padding: const EdgeInsets.only(top: 8),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Text(
+                                  'Subtotal (After Discount)',
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    color: Colors.grey[700],
+                                  ),
+                                ),
+                                Text(
+                                  currencyFormat.format(subtotalAfterDiscount),
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    color: Colors.grey[800],
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
                           if (shippingCost > 0)
                             Padding(
                               padding: const EdgeInsets.only(top: 8),
@@ -602,29 +626,6 @@ class OrderConfirmationPage extends StatelessWidget {
                                 ],
                               ),
                             ),
-                          const SizedBox(height: 8),
-                          if (tax > 0)
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Text(
-                                  'Tax',
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    color: Colors.grey[700],
-                                  ),
-                                ),
-                                Text(
-                                  currencyFormat.format(tax),
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    color: Colors.grey[800],
-                                    fontWeight: FontWeight.w500,
-                                  ),
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ],
-                            ),
                           const Padding(
                             padding: EdgeInsets.symmetric(vertical: 8),
                             child: Divider(),
@@ -648,8 +649,7 @@ class OrderConfirmationPage extends StatelessWidget {
                                 ],
                               ),
                               Text(
-                                currencyFormat.format(double.parse(
-                                    totalAmount.toStringAsFixed(2))),
+                                currencyFormat.format(totalWithTaxAndShipping),
                                 style: TextStyle(
                                   fontSize: 16,
                                   fontWeight: FontWeight.bold,

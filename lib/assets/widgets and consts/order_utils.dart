@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:animated_custom_dropdown/custom_dropdown.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:latest_van_sale_application/assets/widgets%20and%20consts/page_transition.dart';
 import 'package:latest_van_sale_application/secondary_pages/customer_details_page.dart';
@@ -112,14 +113,14 @@ class _CreateOrderPageState extends State<CreateOrderPage> {
       _selectedProducts.clear();
       _quantities.clear();
       _productSelectedAttributes.clear();
-      _totalAmount = 0.0;
+      // _totalAmount = 0.0;
       _notesController.clear();
       _discountController.clear();
       _customerReferenceController.clear();
       _deliveryDate = null;
       _selectedShippingMethod = null;
-      _selectedDeliveryAddress = null;
-      _discountPercentage = 0.0;
+      // _selectedDeliveryAddress = null;
+      // _discountPercentage = 0.0;
       _customerReference = '';
     });
   }
@@ -781,6 +782,7 @@ class _CreateOrderPageState extends State<CreateOrderPage> {
                 style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
             const SizedBox(height: 12),
             _buildDeliveryDatePicker(),
+            const SizedBox(height: 12),
             _buildShippingMethodSelector(provider.shippingMethods
                 .map((sm) => ShippingMethod(
                       id: sm.id,
@@ -850,33 +852,53 @@ class _CreateOrderPageState extends State<CreateOrderPage> {
   }
 
   Widget _buildDeliveryDatePicker() {
-    return InkWell(
-      onTap: () async {
-        final selectedDate = await showDatePicker(
-          context: context,
-          initialDate: _deliveryDate ?? DateTime.now(),
-          firstDate: DateTime.now(),
-          lastDate: DateTime.now().add(const Duration(days: 365)),
-        );
-        if (selectedDate != null) {
-          setState(() {
-            _deliveryDate = selectedDate;
-          });
-        }
-      },
-      child: InputDecorator(
-        decoration: InputDecoration(
-          labelText: 'Delivery Date',
-          border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: 16),
+        Container(
+          decoration: BoxDecoration(
+            border: Border.all(color: Colors.grey[300]!),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: InkWell(
+            onTap: () async {
+              final selectedDate = await showDatePicker(
+                context: context,
+                initialDate: _deliveryDate ?? DateTime.now(),
+                firstDate: DateTime.now(),
+                lastDate: DateTime.now().add(const Duration(days: 365)),
+              );
+              if (selectedDate != null) {
+                setState(() {
+                  _deliveryDate = selectedDate;
+                });
+              }
+            },
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      _deliveryDate == null
+                          ? 'Select delivery date (optional)'
+                          : DateFormat('yyyy-MM-dd').format(_deliveryDate!),
+                      style: TextStyle(
+                        color: _deliveryDate == null
+                            ? Colors.grey[600]
+                            : Colors.black87,
+                        fontSize: 14,
+                      ),
+                    ),
+                  ),
+                  Icon(Icons.calendar_today, size: 20, color: Colors.grey[600]),
+                ],
+              ),
+            ),
+          ),
         ),
-        child: Text(
-          _deliveryDate == null
-              ? 'Select delivery date (optional)'
-              : DateFormat('yyyy-MM-dd').format(_deliveryDate!),
-          style: TextStyle(
-              color: _deliveryDate == null ? Colors.grey[600] : Colors.black87),
-        ),
-      ),
+      ],
     );
   }
 
@@ -1703,6 +1725,11 @@ class _CreateOrderPageState extends State<CreateOrderPage> {
     }
     final productTotal = (product.price + extraCost) * totalQuantity;
 
+    // Controller for the TextField to manage quantity input
+    final TextEditingController quantityController = TextEditingController(
+      text: totalQuantity.toString(),
+    );
+
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.all(8),
@@ -1721,13 +1748,16 @@ class _CreateOrderPageState extends State<CreateOrderPage> {
                 width: 40,
                 height: 40,
                 decoration: BoxDecoration(
-                    color: Colors.grey[200],
-                    borderRadius: BorderRadius.circular(10)),
+                  color: Colors.grey[200],
+                  borderRadius: BorderRadius.circular(10),
+                ),
                 child: Center(
                   child: Text(
                     product.name.substring(0, 1),
                     style: TextStyle(
-                        fontWeight: FontWeight.bold, color: Colors.grey[600]),
+                      fontWeight: FontWeight.bold,
+                      color: Colors.grey[600],
+                    ),
                   ),
                 ),
               ),
@@ -1736,11 +1766,14 @@ class _CreateOrderPageState extends State<CreateOrderPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(product.name,
-                        style: const TextStyle(fontWeight: FontWeight.bold)),
-                    Text('\$${product.price.toStringAsFixed(2)}',
-                        style:
-                            TextStyle(color: Colors.grey[600], fontSize: 12)),
+                    Text(
+                      product.name,
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    Text(
+                      '\$${product.price.toStringAsFixed(2)}',
+                      style: TextStyle(color: Colors.grey[600], fontSize: 12),
+                    ),
                     if (attrs.isNotEmpty) ...[
                       const SizedBox(height: 4),
                       Text(
@@ -1761,8 +1794,9 @@ class _CreateOrderPageState extends State<CreateOrderPage> {
               ),
               Container(
                 decoration: BoxDecoration(
-                    border: Border.all(color: Colors.grey[300]!),
-                    borderRadius: BorderRadius.circular(10)),
+                  border: Border.all(color: Colors.grey[300]!),
+                  borderRadius: BorderRadius.circular(10),
+                ),
                 child: Row(
                   children: [
                     InkWell(
@@ -1771,24 +1805,55 @@ class _CreateOrderPageState extends State<CreateOrderPage> {
                           if ((quantities[product.id] ?? 0) > 1) {
                             quantities[product.id] =
                                 (quantities[product.id] ?? 0) - 1;
+                            quantityController.text =
+                                quantities[product.id].toString();
                             _recalculateTotal();
                           }
                         });
                       },
                       child: Container(
-                          padding: const EdgeInsets.all(4),
-                          child: const Icon(Icons.remove, size: 16)),
+                        padding: const EdgeInsets.all(4),
+                        child: const Icon(Icons.remove, size: 16),
+                      ),
                     ),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
-                      child: Text('${quantities[product.id] ?? 0}',
-                          style: const TextStyle(fontWeight: FontWeight.bold)),
+                    SizedBox(
+                      width: 40,
+                      child: TextField(
+                        controller: quantityController,
+                        keyboardType: TextInputType.number,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 14,
+                        ),
+                        decoration: InputDecoration(
+                          border: InputBorder.none,
+                          contentPadding:
+                              const EdgeInsets.symmetric(vertical: 4),
+                        ),
+                        inputFormatters: [
+                          FilteringTextInputFormatter.digitsOnly,
+                          // Only numbers
+                        ],
+                        onSubmitted: (value) {
+                          setSheetState(() {
+                            final newQuantity = int.tryParse(value) ?? 1;
+                            quantities[product.id] =
+                                newQuantity > 0 ? newQuantity : 1;
+                            quantityController.text =
+                                quantities[product.id].toString();
+                            _recalculateTotal();
+                          });
+                        },
+                      ),
                     ),
                     InkWell(
                       onTap: () {
                         setSheetState(() {
                           quantities[product.id] =
                               (quantities[product.id] ?? 0) + 1;
+                          quantityController.text =
+                              quantities[product.id].toString();
                           _recalculateTotal();
                         });
                       },
@@ -1819,9 +1884,10 @@ class _CreateOrderPageState extends State<CreateOrderPage> {
             child: Text(
               'Total: \$${productTotal.toStringAsFixed(2)}',
               style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
-                  color: primaryColor),
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+                color: primaryColor,
+              ),
             ),
           ),
         ],

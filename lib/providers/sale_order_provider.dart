@@ -595,12 +595,25 @@ class DeliveryAddress {
   final String name;
   final String street;
   final String city;
+  final String? street2;
+  final String? state;
+  final String? zip;
+  final String? country;
+  final String? phone;
+  final String? email;
 
-  DeliveryAddress(
-      {required this.id,
-      required this.name,
-      required this.street,
-      required this.city});
+  DeliveryAddress({
+    required this.id,
+    required this.name,
+    required this.street,
+    required this.city,
+    this.street2,
+    this.state,
+    this.zip,
+    this.country,
+    this.phone,
+    this.email,
+  });
 
   @override
   String toString() => '$name ($street, $city)';

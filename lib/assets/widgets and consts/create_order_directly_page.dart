@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:animated_custom_dropdown/custom_dropdown.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:odoo_rpc/odoo_rpc.dart';
 import 'package:provider/provider.dart';
@@ -15,22 +16,6 @@ import 'confirmation_dialogs.dart';
 import 'create_sale_order_dialog.dart';
 
 // Placeholder classes for DeliveryAddress and ShippingMethod
-class DeliveryAddress {
-  final int id;
-  final String name;
-  final String street;
-  final String city;
-
-  DeliveryAddress({
-    required this.id,
-    required this.name,
-    required this.street,
-    required this.city,
-  });
-
-  @override
-  String toString() => '$name ($street, $city)';
-}
 
 class ShippingMethod {
   final int id;
@@ -124,10 +109,10 @@ class _CreateOrderDirectlyPageState extends State<CreateOrderDirectlyPage> {
       _notesController.clear();
       _discountController.clear();
       _customerReferenceController.clear();
-      _deliveryDate = null;
+      // _deliveryDate = null;
       _selectedShippingMethod = null;
       _selectedDeliveryAddress = null;
-      _discountPercentage = 0.0;
+      // _discountPercentage = 0.0;
       _customerReference = '';
       _draftOrderId = null;
     });
@@ -526,6 +511,7 @@ class _CreateOrderDirectlyPageState extends State<CreateOrderDirectlyPage> {
           if (_deliveryDate == null) {
             debugPrint('Warning: Delivery date is null for order $orderId');
           }
+          debugPrint('Navigating to OrderConfirmationPage with deliveryDate: $_deliveryDate');
           Navigator.pushReplacement(
             context,
             MaterialPageRoute(
@@ -2000,16 +1986,19 @@ class _CreateOrderDirectlyPageState extends State<CreateOrderDirectlyPage> {
         }
       }
     }
-    final productTotal = (product.price + extraCost) *
-        totalQuantity *
-        (1 - _discountPercentage / 100);
+    final productTotal = (product.price + extraCost) * totalQuantity;
+
+    // Controller for the TextField to manage quantity input
+    final TextEditingController quantityController = TextEditingController(
+      text: totalQuantity.toString(),
+    );
 
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(10),
         border: Border.all(color: Colors.grey[300]!),
       ),
       child: Column(
@@ -2022,13 +2011,16 @@ class _CreateOrderDirectlyPageState extends State<CreateOrderDirectlyPage> {
                 width: 40,
                 height: 40,
                 decoration: BoxDecoration(
-                    color: Colors.grey[200],
-                    borderRadius: BorderRadius.circular(8)),
+                  color: Colors.grey[200],
+                  borderRadius: BorderRadius.circular(10),
+                ),
                 child: Center(
                   child: Text(
                     product.name.substring(0, 1),
                     style: TextStyle(
-                        fontWeight: FontWeight.bold, color: Colors.grey[600]),
+                      fontWeight: FontWeight.bold,
+                      color: Colors.grey[600],
+                    ),
                   ),
                 ),
               ),
@@ -2037,11 +2029,14 @@ class _CreateOrderDirectlyPageState extends State<CreateOrderDirectlyPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(product.name,
-                        style: const TextStyle(fontWeight: FontWeight.bold)),
-                    Text('\$${product.price.toStringAsFixed(2)}',
-                        style:
-                            TextStyle(color: Colors.grey[600], fontSize: 12)),
+                    Text(
+                      product.name,
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    Text(
+                      '\$${product.price.toStringAsFixed(2)}',
+                      style: TextStyle(color: Colors.grey[600], fontSize: 12),
+                    ),
                     if (attrs.isNotEmpty) ...[
                       const SizedBox(height: 4),
                       Text(
@@ -2062,8 +2057,9 @@ class _CreateOrderDirectlyPageState extends State<CreateOrderDirectlyPage> {
               ),
               Container(
                 decoration: BoxDecoration(
-                    border: Border.all(color: Colors.grey[300]!),
-                    borderRadius: BorderRadius.circular(8)),
+                  border: Border.all(color: Colors.grey[300]!),
+                  borderRadius: BorderRadius.circular(10),
+                ),
                 child: Row(
                   children: [
                     InkWell(
@@ -2072,24 +2068,55 @@ class _CreateOrderDirectlyPageState extends State<CreateOrderDirectlyPage> {
                           if ((quantities[product.id] ?? 0) > 1) {
                             quantities[product.id] =
                                 (quantities[product.id] ?? 0) - 1;
+                            quantityController.text =
+                                quantities[product.id].toString();
                             _recalculateTotal();
                           }
                         });
                       },
                       child: Container(
-                          padding: const EdgeInsets.all(4),
-                          child: const Icon(Icons.remove, size: 16)),
+                        padding: const EdgeInsets.all(4),
+                        child: const Icon(Icons.remove, size: 16),
+                      ),
                     ),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
-                      child: Text('${quantities[product.id] ?? 0}',
-                          style: const TextStyle(fontWeight: FontWeight.bold)),
+                    SizedBox(
+                      width: 40, // Compact width for the TextField
+                      child: TextField(
+                        controller: quantityController,
+                        keyboardType: TextInputType.number,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 14,
+                        ),
+                        decoration: InputDecoration(
+                          border: InputBorder.none,
+                          contentPadding:
+                              const EdgeInsets.symmetric(vertical: 4),
+                        ),
+                        inputFormatters: [
+                          FilteringTextInputFormatter.digitsOnly,
+                          // Only numbers
+                        ],
+                        onSubmitted: (value) {
+                          setSheetState(() {
+                            final newQuantity = int.tryParse(value) ?? 1;
+                            quantities[product.id] =
+                                newQuantity > 0 ? newQuantity : 1;
+                            quantityController.text =
+                                quantities[product.id].toString();
+                            _recalculateTotal();
+                          });
+                        },
+                      ),
                     ),
                     InkWell(
                       onTap: () {
                         setSheetState(() {
                           quantities[product.id] =
                               (quantities[product.id] ?? 0) + 1;
+                          quantityController.text =
+                              quantities[product.id].toString();
                           _recalculateTotal();
                         });
                       },
@@ -2120,9 +2147,10 @@ class _CreateOrderDirectlyPageState extends State<CreateOrderDirectlyPage> {
             child: Text(
               'Total: \$${productTotal.toStringAsFixed(2)}',
               style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
-                  color: primaryColor),
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+                color: primaryColor,
+              ),
             ),
           ),
         ],
