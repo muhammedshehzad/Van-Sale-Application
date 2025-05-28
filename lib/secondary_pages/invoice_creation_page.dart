@@ -23,12 +23,15 @@ class InvoiceCreationPage extends StatefulWidget {
 
 class _InvoiceCreationPageState extends State<InvoiceCreationPage> {
   List<Map<String, dynamic>> filteredSaleOrders = [];
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final provider =
           Provider.of<InvoiceCreationProvider>(context, listen: false);
+
+      debugPrint('Received saleOrderData: ${jsonEncode(widget.saleOrderData)}');
       provider.initialize(widget.saleOrderData);
       if (widget.saleOrderData.isEmpty) {
         _loadInitialSaleOrders();
@@ -353,6 +356,7 @@ class _InvoiceCreationPageState extends State<InvoiceCreationPage> {
                   'product_id',
                   'name',
                   'product_uom_qty',
+                  'qty_invoiced', // Added
                   'price_unit',
                   'discount',
                   'tax_id',
@@ -392,6 +396,7 @@ class _InvoiceCreationPageState extends State<InvoiceCreationPage> {
           ...line,
           'default_code': product?['default_code'] ?? '',
           'barcode': product?['barcode'] ?? '',
+          'qty_invoiced': line['qty_invoiced'] ?? 0.0, // Added
         };
       }).toList();
 
@@ -1546,7 +1551,8 @@ class _InvoiceCreationPageState extends State<InvoiceCreationPage> {
     final customersList = uniqueCustomers.values.toList();
     int? selectedCustomerId = provider.customerId;
     if (selectedCustomerId != null &&
-        !customersList.any((customer) => customer['id'] == selectedCustomerId)) {
+        !customersList
+            .any((customer) => customer['id'] == selectedCustomerId)) {
       selectedCustomerId = null;
       provider.updateCustomer(0);
     }
@@ -1560,71 +1566,72 @@ class _InvoiceCreationPageState extends State<InvoiceCreationPage> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             provider.saleOrderData?['id'] == null ||
-                provider.saleOrderData?['name'] == null
+                    provider.saleOrderData?['name'] == null
                 ? Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Sale Order',
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 16,
-                    color: Colors.black87,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                InkWell(
-                  onTap: () => _showSaleOrderPicker(context, provider),
-                  child: InputDecorator(
-                    decoration: InputDecoration(
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Sale Order',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                          color: Colors.black87,
+                        ),
                       ),
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 10,
+                      const SizedBox(height: 8),
+                      InkWell(
+                        onTap: () => _showSaleOrderPicker(context, provider),
+                        child: InputDecorator(
+                          decoration: InputDecoration(
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 10,
+                            ),
+                          ),
+                          child: Text(
+                            provider.saleOrderData?['name'] ??
+                                'Select a Sale Order',
+                            style: TextStyle(
+                              fontSize: 14,
+                              color: provider.saleOrderData?['name'] != null
+                                  ? Colors.black87
+                                  : Colors.grey[600],
+                            ),
+                          ),
+                        ),
                       ),
-                    ),
-                    child: Text(
-                      provider.saleOrderData?['name'] ??
-                          'Select a Sale Order',
-                      style: TextStyle(
-                        fontSize: 14,
-                        color: provider.saleOrderData?['name'] != null
-                            ? Colors.black87
-                            : Colors.grey[600],
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            )
+                    ],
+                  )
                 : Text(
-              'Sale Order: ${provider.saleOrderData?['name'] ?? 'N/A'}',
-              style: const TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 18,
-              ),
-            ),
+                    'Sale Order: ${provider.saleOrderData?['name'] ?? 'N/A'}',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 18,
+                    ),
+                  ),
             const SizedBox(height: 12),
             DropdownButtonFormField<int>(
               decoration: InputDecoration(
                 labelText: 'Customer',
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                border:
+                    OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
               ),
               value: selectedCustomerId,
               items: customersList
                   .map((customer) => DropdownMenuItem<int>(
-                value: customer['id'],
-                child: Text(
-                  customer['name'] ?? 'Unknown',
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ))
+                        value: customer['id'],
+                        child: Text(
+                          customer['name'] ?? 'Unknown',
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ))
                   .toList(),
               onChanged: (value) => provider.updateCustomer(value!),
               validator: (value) =>
-              value == null ? 'Please select a customer' : null,
+                  value == null ? 'Please select a customer' : null,
               isExpanded: true,
               hint: const Text('Select a Customer'),
             ),
@@ -1646,14 +1653,15 @@ class _InvoiceCreationPageState extends State<InvoiceCreationPage> {
             DropdownButtonFormField(
               decoration: InputDecoration(
                 labelText: 'Journal',
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                border:
+                    OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
               ),
               value: provider.journalId,
               items: provider.availableJournals
                   .map((journal) => DropdownMenuItem(
-                value: journal['id'],
-                child: Text(journal['name']),
-              ))
+                        value: journal['id'],
+                        child: Text(journal['name']),
+                      ))
                   .toList(),
               onChanged: (value) => provider.updateJournal(value as int),
             ),
@@ -1661,19 +1669,20 @@ class _InvoiceCreationPageState extends State<InvoiceCreationPage> {
             DropdownButtonFormField(
               decoration: InputDecoration(
                 labelText: 'Payment Terms',
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                border:
+                    OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
               ),
               value: provider.paymentTermId,
               isExpanded: true,
               items: provider.availablePaymentTerms
                   .map((term) => DropdownMenuItem(
-                value: term['id'],
-                child: Text(
-                  term['name'],
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 14),
-                ),
-              ))
+                        value: term['id'],
+                        child: Text(
+                          term['name'],
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontSize: 14),
+                        ),
+                      ))
                   .toList(),
               onChanged: (value) => provider.updatePaymentTerms(value as int),
             ),
@@ -1681,14 +1690,15 @@ class _InvoiceCreationPageState extends State<InvoiceCreationPage> {
             DropdownButtonFormField(
               decoration: InputDecoration(
                 labelText: 'Salesperson',
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                border:
+                    OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
               ),
               value: provider.salespersonId,
               items: provider.availableSalespersons
                   .map((salesperson) => DropdownMenuItem(
-                value: salesperson['id'],
-                child: Text(salesperson['name']),
-              ))
+                        value: salesperson['id'],
+                        child: Text(salesperson['name']),
+                      ))
                   .toList(),
               onChanged: (value) => provider.updateSalesperson(value as int),
             ),
@@ -1697,6 +1707,7 @@ class _InvoiceCreationPageState extends State<InvoiceCreationPage> {
       ),
     );
   }
+
   Widget _buildInvoiceLines(InvoiceCreationProvider provider) {
     return Card(
       elevation: 3,
@@ -1897,31 +1908,22 @@ class _InvoiceCreationPageState extends State<InvoiceCreationPage> {
                                     labelStyle:
                                         TextStyle(color: Colors.grey[600]),
                                     border: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(8),
-                                    ),
-                                    contentPadding: const EdgeInsets.symmetric(
-                                      horizontal: 12,
-                                      vertical: 10,
-                                    ),
+                                        borderRadius: BorderRadius.circular(8)),
                                   ),
                                   keyboardType: TextInputType.numberWithOptions(
-                                    decimal: true,
+                                      decimal: true),
+                                  controller: TextEditingController(
+                                    text: quantity.toStringAsFixed(
+                                        quantity.truncateToDouble() == quantity
+                                            ? 0
+                                            : 2),
                                   ),
                                   onChanged: (value) {
                                     final qty =
                                         double.tryParse(value) ?? quantity;
-                                    provider.updateInvoiceLine(
-                                      index,
-                                      quantity: qty,
-                                    );
+                                    provider.updateInvoiceLine(index,
+                                        quantity: qty);
                                   },
-                                  controller: TextEditingController(
-                                    text: quantity.toStringAsFixed(
-                                      quantity.truncateToDouble() == quantity
-                                          ? 0
-                                          : 2,
-                                    ),
-                                  ),
                                 ),
                               ),
                               const SizedBox(width: 12),
@@ -1958,7 +1960,7 @@ class _InvoiceCreationPageState extends State<InvoiceCreationPage> {
                             ],
                           ),
                           const SizedBox(height: 12),
-                          DropdownButtonFormField(
+                          DropdownButtonFormField<int?>(
                             decoration: InputDecoration(
                               labelText: 'Tax',
                               labelStyle: TextStyle(color: Colors.grey[600]),
@@ -1972,18 +1974,24 @@ class _InvoiceCreationPageState extends State<InvoiceCreationPage> {
                             ),
                             isExpanded: true,
                             value: taxIds.isNotEmpty ? taxIds.first : null,
-                            items: provider.availableTaxes
-                                .map((tax) => DropdownMenuItem(
-                                      value: tax['id'],
-                                      child: Text(
-                                        tax['name'],
-                                        style: const TextStyle(fontSize: 14),
-                                      ),
-                                    ))
-                                .toList(),
+                            items: [
+                              const DropdownMenuItem<int?>(
+                                value: null,
+                                child: Text('No Tax',
+                                    style: TextStyle(fontSize: 14)),
+                              ),
+                              ...provider.availableTaxes
+                                  .map((tax) => DropdownMenuItem<int?>(
+                                        value: tax['id'],
+                                        child: Text(
+                                          tax['name'],
+                                          style: const TextStyle(fontSize: 14),
+                                        ),
+                                      )),
+                            ],
                             onChanged: (value) => provider.updateInvoiceLine(
                               index,
-                              taxIds: [value as int],
+                              taxIds: value != null ? [value] : [],
                             ),
                           ),
                           const SizedBox(height: 12),
@@ -2153,8 +2161,8 @@ class _InvoiceCreationPageState extends State<InvoiceCreationPage> {
         Expanded(
           child: ElevatedButton.icon(
             icon: const Icon(Icons.save, color: Colors.white),
-            label: const Text('Save as Draft',
-                style: TextStyle(color: Colors.white)),
+            label:
+                const Text('Save Draft', style: TextStyle(color: Colors.white)),
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.blue[800],
               padding: const EdgeInsets.symmetric(vertical: 12),

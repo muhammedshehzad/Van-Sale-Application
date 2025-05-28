@@ -1787,13 +1787,13 @@ class _TicketListPageState extends State<TicketListPage>
     if (filteredTickets.isEmpty) {
       return Center(
         child: Container(
-          padding: const EdgeInsets.all(24),
+          padding: const EdgeInsets.all(48),
           decoration: BoxDecoration(
             color: Colors.white,
             borderRadius: BorderRadius.circular(12),
             boxShadow: [
               BoxShadow(
-                color: Colors.grey.withOpacity(0.1),
+                color: Colors.grey.withOpacity(0.4),
                 spreadRadius: 1,
                 blurRadius: 5,
                 offset: const Offset(0, 2),
@@ -1823,37 +1823,12 @@ class _TicketListPageState extends State<TicketListPage>
                 width: 260,
                 alignment: Alignment.center,
                 child: Text(
-                  'Try adjusting your filters or create a new ticket',
+                  'Try adjusting your filters or create a new ticket with the button on bottom.',
                   style: TextStyle(
                     color: Colors.grey.shade600,
                     fontSize: 14,
                   ),
                   textAlign: TextAlign.center,
-                ),
-              ),
-              const SizedBox(height: 24),
-              SizedBox(
-                width: 200,
-                child: ElevatedButton.icon(
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      SlidingPageTransitionRL(
-                        page:
-                            TicketSubmissionPage(agentEmail: widget.agentEmail),
-                      ),
-                    ).then((_) => _fetchTickets());
-                  },
-                  icon: const Icon(Icons.add),
-                  label: const Text('Create New Ticket'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: primaryColor,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
                 ),
               ),
             ],

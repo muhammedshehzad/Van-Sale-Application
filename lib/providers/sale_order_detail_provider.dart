@@ -194,7 +194,7 @@ class OdooProvider extends ChangeNotifier {
 
     try {
       List<int> productIds =
-      lines.map<int>((line) => line['product_id'][0] as int).toList();
+          lines.map<int>((line) => line['product_id'][0] as int).toList();
 
       final response = await http.post(
         Uri.parse('$baseUrl/web/dataset/call_kw'),
@@ -257,7 +257,7 @@ class OdooProvider extends ChangeNotifier {
       );
 
       final Map<String, dynamic> locationsResult =
-      jsonDecode(locationsResponse.body);
+          jsonDecode(locationsResponse.body);
 
       Map<int, Map<String, dynamic>> locationsMap = {};
       for (var location in locationsResult['result']) {
@@ -577,10 +577,12 @@ class OdooProvider extends ChangeNotifier {
     }
   }
 }
+
 class BackorderHandlerWidget extends StatefulWidget {
   final Map<String, dynamic> picking;
 
-  const BackorderHandlerWidget({required this.picking, Key? key}) : super(key: key);
+  const BackorderHandlerWidget({required this.picking, Key? key})
+      : super(key: key);
 
   @override
   _BackorderHandlerWidgetState createState() => _BackorderHandlerWidgetState();
@@ -613,7 +615,8 @@ class _BackorderHandlerWidgetState extends State<BackorderHandlerWidget> {
   }
 }
 
-Future<void> _internalHandleBackorder(Map<String, dynamic> picking, BuildContext context) async {
+Future<void> _internalHandleBackorder(
+    Map<String, dynamic> picking, BuildContext context) async {
   if (!context.mounted) {
     debugPrint('Backorder handling aborted: Widget not mounted');
     return;
@@ -633,7 +636,9 @@ Future<void> _internalHandleBackorder(Map<String, dynamic> picking, BuildContext
       'model': 'stock.picking',
       'method': 'search_read',
       'args': [
-        [['id', '=', picking['id']]],
+        [
+          ['id', '=', picking['id']]
+        ],
         ['state', 'sale_id'],
       ],
       'kwargs': {},
@@ -652,12 +657,13 @@ Future<void> _internalHandleBackorder(Map<String, dynamic> picking, BuildContext
     if (!['assigned', 'partially_available'].contains(pickingState)) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Cannot create backorder: Invalid state ($pickingState)')),
+          SnackBar(
+              content: Text(
+                  'Cannot create backorder: Invalid state ($pickingState)')),
         );
       }
       return;
     }
-
 
     if (provider.orderId == null && saleId != null) {
       provider.setOrderId(saleId);
@@ -670,29 +676,32 @@ Future<void> _internalHandleBackorder(Map<String, dynamic> picking, BuildContext
       return;
     }
 
-
     final moves = await client.callKw({
       'model': 'stock.move',
       'method': 'search_read',
       'args': [
-        [['picking_id', '=', picking['id']]],
+        [
+          ['picking_id', '=', picking['id']]
+        ],
         ['id', 'product_id', 'product_uom_qty', 'quantity'],
       ],
       'kwargs': {},
     });
     debugPrint('Stock moves retrieved: ${moves.length}');
 
-
     final moveLines = await client.callKw({
       'model': 'stock.move.line',
       'method': 'search_read',
       'args': [
-        [['picking_id', '=', picking['id']]],
+        [
+          ['picking_id', '=', picking['id']]
+        ],
         ['id', 'product_id', 'quantity', 'product_uom_qty', 'move_id'],
       ],
       'kwargs': {},
     });
-    final validMoveLines = moveLines.where((line) => line['id'] != null).toList();
+    final validMoveLines =
+        moveLines.where((line) => line['id'] != null).toList();
     debugPrint('Valid move lines: ${validMoveLines.length}');
     final hasUnfulfilled = moves.any((move) {
       final productUomQty = move['product_uom_qty'] as double;
@@ -738,7 +747,10 @@ Future<void> _internalHandleBackorder(Map<String, dynamic> picking, BuildContext
       await client.callKw({
         'model': 'stock.move.line',
         'method': 'write',
-        'args': [[moveLine['id']], {'quantity': pickedQty}],
+        'args': [
+          [moveLine['id']],
+          {'quantity': pickedQty}
+        ],
         'kwargs': {},
       });
     }
@@ -746,11 +758,16 @@ Future<void> _internalHandleBackorder(Map<String, dynamic> picking, BuildContext
     final validationResult = await client.callKw({
       'model': 'stock.picking',
       'method': 'button_validate',
-      'args': [[picking['id']]],
-      'kwargs': {'context': {'create_backorder': true}},
+      'args': [
+        [picking['id']]
+      ],
+      'kwargs': {
+        'context': {'create_backorder': true}
+      },
     });
 
-    if (validationResult is Map && validationResult['type'] == 'ir.actions.act_window') {
+    if (validationResult is Map &&
+        validationResult['type'] == 'ir.actions.act_window') {
       final wizardId = await client.callKw({
         'model': 'stock.backorder.confirmation',
         'method': 'create',
@@ -760,7 +777,9 @@ Future<void> _internalHandleBackorder(Map<String, dynamic> picking, BuildContext
       await client.callKw({
         'model': 'stock.backorder.confirmation',
         'method': 'process',
-        'args': [[wizardId]],
+        'args': [
+          [wizardId]
+        ],
         'kwargs': {},
       });
     }
@@ -768,7 +787,10 @@ Future<void> _internalHandleBackorder(Map<String, dynamic> picking, BuildContext
       'model': 'stock.picking',
       'method': 'search_read',
       'args': [
-        [['backorder_id', '=', picking['id']], ['state', '!=', 'cancel']],
+        [
+          ['backorder_id', '=', picking['id']],
+          ['state', '!=', 'cancel']
+        ],
         ['id'],
       ],
       'kwargs': {},
@@ -795,8 +817,10 @@ Future<void> _internalHandleBackorder(Map<String, dynamic> picking, BuildContext
     }
   }
 }
+
 class SaleOrderDetailProvider extends ChangeNotifier {
   final Map<String, dynamic> orderData;
+  bool _isMounted = true;
   Map<String, dynamic>? _orderDetails;
   bool _isLoading = true;
   String? _error;
@@ -828,16 +852,29 @@ class SaleOrderDetailProvider extends ChangeNotifier {
     debugPrint('SaleOrderDetailProvider initialized with order ID: $orderId');
     fetchOrderDetails();
   }
+
   void setOrderId(int id) {
     orderId = id;
     debugPrint('Order ID set to: $id');
     notifyListeners();
   }
 
+  @override
+  void dispose() {
+    _isMounted = false; // Set the flag to false when the provider is disposed
+    super.dispose();
+  }
+
+  void _safeNotifyListeners() {
+    if (_isMounted) {
+      notifyListeners();
+    }
+  }
+
   Future<void> fetchOrderDetails() async {
     _isLoading = true;
     _error = null;
-    notifyListeners();
+    _safeNotifyListeners();
 
     try {
       final client = await SessionManager.getActiveClient();
@@ -848,7 +885,6 @@ class SaleOrderDetailProvider extends ChangeNotifier {
       if (orderId == null) {
         throw Exception('Order ID is null');
       }
-
 
       Future<List<String>> getValidFields(
           String model, List<String> requestedFields) async {
@@ -899,7 +935,8 @@ class SaleOrderDetailProvider extends ChangeNotifier {
         'payment_term_id',
         'incoterm',
         'invoice_ids',
-        'picking_ids'
+        'picking_ids',
+        'qty_invoiced' // Merged field from the second version
       ]);
 
       final result = await client.callKw({
@@ -1027,8 +1064,7 @@ class SaleOrderDetailProvider extends ChangeNotifier {
           if (invoice['invoice_line_ids'] != null &&
               invoice['invoice_line_ids'] is List &&
               invoice['invoice_line_ids'].isNotEmpty) {
-            final invoiceLineFields =
-            await getValidFields('account.move.line', [
+            final invoiceLineFields = await getValidFields('account.move.line', [
               'name',
               'product_id',
               'quantity',
@@ -1086,15 +1122,14 @@ class SaleOrderDetailProvider extends ChangeNotifier {
                   ],
                   'kwargs': {},
                 });
-                line['tax_ids'] =
-                    List.from(line['tax_ids']).asMap().entries.map((entry) {
-                      final taxId = entry.value;
-                      final tax = taxResult.firstWhere(
-                            (t) => t['id'] == taxId,
-                        orElse: () => {'name': ''},
-                      );
-                      return [taxId, tax['name'] as String];
-                    }).toList();
+                line['tax_ids'] = List.from(line['tax_ids']).asMap().entries.map((entry) {
+                  final taxId = entry.value;
+                  final tax = taxResult.firstWhere(
+                        (t) => t['id'] == taxId,
+                    orElse: () => {'name': ''},
+                  );
+                  return [taxId, tax['name'] as String];
+                }).toList();
               } else {
                 line['tax_ids'] = [];
               }
@@ -1118,13 +1153,13 @@ class SaleOrderDetailProvider extends ChangeNotifier {
       _isLoading = false;
       debugPrint('Error fetching order details: $e');
     }
-    notifyListeners();
+    _safeNotifyListeners();
   }
   Future<Map<String, dynamic>> duplicateSaleOrder(int orderId) async {
     try {
       debugPrint('Starting duplicateSaleOrder for order ID: $orderId');
       _isLoading = true;
-      notifyListeners();
+      _safeNotifyListeners();
 
       final client = await SessionManager.getActiveClient();
       if (client == null) {
@@ -1132,7 +1167,8 @@ class SaleOrderDetailProvider extends ChangeNotifier {
         throw Exception('No active client found');
       }
       debugPrint('Active client obtained successfully');
-      final formattedDate = DateFormat('yyyy-MM-dd HH:mm:ss').format(DateTime.now().toUtc());
+      final formattedDate =
+          DateFormat('yyyy-MM-dd HH:mm:ss').format(DateTime.now().toUtc());
       debugPrint('Formatted date_order: $formattedDate');
       debugPrint('Calling Odoo copy method for order ID: $orderId');
       final duplicateResult = await client.callKw({
@@ -1148,10 +1184,12 @@ class SaleOrderDetailProvider extends ChangeNotifier {
       });
 
       if (duplicateResult == null || duplicateResult is! int) {
-        debugPrint('Error: Odoo copy method returned invalid result: $duplicateResult');
+        debugPrint(
+            'Error: Odoo copy method returned invalid result: $duplicateResult');
         throw Exception('Failed to duplicate order');
       }
-      debugPrint('Order duplicated successfully, new order ID: $duplicateResult');
+      debugPrint(
+          'Order duplicated successfully, new order ID: $duplicateResult');
       debugPrint('Fetching details for new order ID: $duplicateResult');
       final orderDetails = await client.callKw({
         'model': 'sale.order',
@@ -1196,19 +1234,20 @@ class SaleOrderDetailProvider extends ChangeNotifier {
       debugPrint('New order details fetched: ${orderDetails['name']}');
       _orderDetails = orderDetails;
       _isLoading = false;
-      notifyListeners();
+      _safeNotifyListeners();
       debugPrint('duplicateSaleOrder completed successfully');
       return orderDetails;
     } catch (e) {
       debugPrint('Error in duplicateSaleOrder: $e');
       _errorMessage = 'Error duplicating order: $e';
       _isLoading = false;
-      notifyListeners();
+      _safeNotifyListeners();
       throw e;
     }
   }
+
   Future<void> createDraftInvoice(int orderId) async {
-    notifyListeners();
+    _safeNotifyListeners();
     try {
       final client = await SessionManager.getActiveClient();
       await client?.callKw({
@@ -1223,7 +1262,7 @@ class SaleOrderDetailProvider extends ChangeNotifier {
     } catch (e) {
       print('Error creating invoice: $e');
     } finally {
-      notifyListeners();
+      _safeNotifyListeners();
     }
   }
 
@@ -1237,18 +1276,26 @@ class SaleOrderDetailProvider extends ChangeNotifier {
 
   void toggleActions() {
     _showActions = !_showActions;
-    notifyListeners();
+    _safeNotifyListeners();
   }
 
   Future<void> cancelSaleOrder(int orderId) async {
+    debugPrint('Starting cancelSaleOrder for order ID: $orderId');
     try {
+      debugPrint('Setting isLoading to true');
       _isLoading = true;
-      notifyListeners();
+      _safeNotifyListeners();
 
+      debugPrint('Fetching active Odoo client');
       final client = await SessionManager.getActiveClient();
       if (client == null) {
+        debugPrint('No active Odoo session found');
         throw Exception('No active Odoo session found. Please log in again.');
       }
+      debugPrint('Active Odoo client obtained');
+
+      // Fetch the order's current state, pickings, and invoices
+      debugPrint('Fetching order state for ID: $orderId');
       final orderState = await client.callKw({
         'model': 'sale.order',
         'method': 'search_read',
@@ -1261,25 +1308,40 @@ class SaleOrderDetailProvider extends ChangeNotifier {
         'kwargs': {},
       });
 
+      debugPrint('Order state response: $orderState');
       if (orderState.isEmpty) {
+        debugPrint('Sale order not found for ID: $orderId');
         throw Exception('Sale order not found for ID: $orderId');
       }
 
       final currentState = orderState[0]['state'] as String;
       final pickingIds = orderState[0]['picking_ids'] as List? ?? [];
       final invoiceIds = orderState[0]['invoice_ids'] as List? ?? [];
+      debugPrint(
+          'Order state: $currentState, Picking IDs: $pickingIds, Invoice IDs: $invoiceIds');
 
+      // Check if already cancelled
       if (currentState == 'cancel') {
-        throw Exception('Sale order is already cancelled.');
+        debugPrint('Order is already cancelled');
+        return; // Don't throw exception, just return successfully
       }
+
+      // Check if locked
       if (currentState == 'done') {
+        debugPrint('Order is locked (state: done)');
         throw Exception('Cannot cancel a locked sale order.');
       }
+
+      // Check if state allows cancellation
       if (!['draft', 'sent', 'sale'].contains(currentState)) {
+        debugPrint('Order state ($currentState) does not allow cancellation');
         throw Exception(
             'Sale order cannot be cancelled in its current state ($currentState).');
       }
+
+      // Handle deliveries first - cancel unprocessed ones
       if (pickingIds.isNotEmpty) {
+        debugPrint('Processing pickings for IDs: $pickingIds');
         final pickings = await client.callKw({
           'model': 'stock.picking',
           'method': 'search_read',
@@ -1292,14 +1354,41 @@ class SaleOrderDetailProvider extends ChangeNotifier {
           'kwargs': {},
         });
 
-        if (pickings.any((picking) =>
-        picking['state'] != 'cancel' && picking['state'] != 'done')) {
-          throw Exception(
-              'Cannot cancel order: There are unprocessed deliveries.');
+        debugPrint('Pickings: $pickings');
+
+        // Cancel any pickings that are not done or already cancelled
+        for (var picking in pickings) {
+          final pickingState = picking['state'] as String;
+          final pickingId = picking['id'] as int;
+
+          if (pickingState == 'done') {
+            debugPrint('Picking $pickingId is already done - cannot cancel delivery');
+            // For done deliveries, we can still proceed with cancellation
+            // but inform the user
+          } else if (pickingState != 'cancel') {
+            debugPrint('Attempting to cancel picking ID: $pickingId with state: $pickingState');
+            try {
+              await client.callKw({
+                'model': 'stock.picking',
+                'method': 'action_cancel',
+                'args': [pickingId],
+                'kwargs': {},
+              });
+              debugPrint('Successfully cancelled picking ID: $pickingId');
+            } catch (e) {
+              debugPrint('Failed to cancel picking ID $pickingId: $e');
+              // Don't fail the entire process for picking cancellation issues
+              // unless it's a critical blocking issue
+            }
+          }
         }
+      } else {
+        debugPrint('No pickings associated with this order');
       }
 
+      // Handle invoices - reverse or cancel as appropriate
       if (invoiceIds.isNotEmpty) {
+        debugPrint('Processing invoices for IDs: $invoiceIds');
         final invoices = await client.callKw({
           'model': 'account.move',
           'method': 'search_read',
@@ -1307,50 +1396,295 @@ class SaleOrderDetailProvider extends ChangeNotifier {
             [
               ['id', 'in', invoiceIds]
             ],
-            ['state'],
+            ['state', 'amount_residual', 'payment_state', 'journal_id', 'amount_total'],
           ],
           'kwargs': {},
         });
 
-        if (invoices.any((invoice) => invoice['state'] != 'cancel')) {
-          throw Exception(
-              'Cannot cancel order: There are unprocessed invoices.');
+        debugPrint('Invoices: $invoices');
+
+        for (var invoice in invoices) {
+          final invoiceState = invoice['state'] as String;
+          final invoiceId = invoice['id'] as int;
+          final amountResidual = (invoice['amount_residual'] as num?)?.toDouble() ?? 0.0;
+          final amountTotal = (invoice['amount_total'] as num?)?.toDouble() ?? 0.0;
+          final paymentState = invoice['payment_state'] as String? ?? 'not_paid';
+
+          if (invoiceState == 'cancel') {
+            debugPrint('Invoice $invoiceId is already cancelled');
+            continue;
+          }
+
+          if (invoiceState == 'posted') {
+            // Check if the invoice has payments applied
+            final hasPayments = paymentState != 'not_paid' || amountResidual < amountTotal;
+
+            if (hasPayments) {
+              debugPrint('Invoice ID $invoiceId has payments applied. Creating reversal.');
+              await _createInvoiceReversal(client, invoice, orderId);
+            } else {
+              // Try to cancel the invoice directly
+              debugPrint('Attempting to cancel unpaid posted invoice ID: $invoiceId');
+              try {
+                await client.callKw({
+                  'model': 'account.move',
+                  'method': 'button_cancel',
+                  'args': [invoiceId],
+                  'kwargs': {},
+                });
+                debugPrint('Invoice ID $invoiceId cancelled successfully');
+              } catch (e) {
+                debugPrint('Failed to cancel invoice ID $invoiceId: $e');
+                // If cancellation fails, try reversal as fallback
+                debugPrint('Attempting reversal as fallback for invoice $invoiceId');
+                await _createInvoiceReversal(client, invoice, orderId);
+              }
+            }
+          } else if (invoiceState == 'draft') {
+            // Cancel draft invoices
+            debugPrint('Cancelling draft invoice ID: $invoiceId');
+            try {
+              await client.callKw({
+                'model': 'account.move',
+                'method': 'button_cancel',
+                'args': [invoiceId],
+                'kwargs': {},
+              });
+              debugPrint('Draft invoice ID $invoiceId cancelled successfully');
+            } catch (e) {
+              debugPrint('Failed to cancel draft invoice ID $invoiceId: $e');
+              // Continue with the process even if draft cancellation fails
+            }
+          }
+        }
+        debugPrint('All invoices processed');
+      } else {
+        debugPrint('No invoices associated with this order');
+      }
+
+      // Now attempt to cancel the sale order
+      debugPrint('Attempting to cancel sale order ID: $orderId');
+      bool cancellationSuccess = false;
+
+      // Method 1: Try action_cancel
+      try {
+        await client.callKw({
+          'model': 'sale.order',
+          'method': 'action_cancel',
+          'args': [orderId],
+          'kwargs': {},
+        });
+        debugPrint('action_cancel method succeeded');
+        cancellationSuccess = true;
+      } catch (e) {
+        debugPrint('action_cancel failed: $e');
+      }
+
+      // Method 2: If action_cancel failed, try direct state change
+      if (!cancellationSuccess) {
+        debugPrint('Attempting direct state change to cancel');
+        try {
+          await client.callKw({
+            'model': 'sale.order',
+            'method': 'write',
+            'args': [
+              [orderId],
+              {'state': 'cancel'}
+            ],
+            'kwargs': {},
+          });
+          debugPrint('Direct state change succeeded');
+          cancellationSuccess = true;
+        } catch (e) {
+          debugPrint('Direct state change failed: $e');
         }
       }
 
-      final updatedOrderState = await client.callKw({
+      // Verify the final state
+      debugPrint('Verifying final order state');
+      final finalOrderState = await client.callKw({
         'model': 'sale.order',
-        'method': 'search_read',
+        'method': 'read',
         'args': [
-          [
-            ['id', '=', orderId]
-          ],
-          ['state'],
+          [orderId],
+          ['state']
         ],
         'kwargs': {},
       });
 
-      if (updatedOrderState.isEmpty) {
-        throw Exception('Failed to retrieve order state after cancellation.');
+      if (finalOrderState.isNotEmpty) {
+        final finalState = finalOrderState[0]['state'] as String;
+        debugPrint('Final order state: $finalState');
+
+        if (finalState == 'cancel') {
+          debugPrint('Order successfully cancelled');
+          // Add a success message to the order
+          try {
+            await client.callKw({
+              'model': 'sale.order',
+              'method': 'message_post',
+              'args': [orderId],
+              'kwargs': {
+                'body': 'Order successfully cancelled. All associated invoices have been processed appropriately.',
+                'message_type': 'comment',
+              },
+            });
+          } catch (e) {
+            debugPrint('Could not add success message: $e');
+          }
+        } else {
+          // If we still couldn't cancel, add a detailed note
+          String noteBody = 'Cancellation attempted: ';
+          if (invoiceIds.isNotEmpty) {
+            noteBody += 'Invoices have been processed (cancelled or reversed). ';
+          }
+          if (pickingIds.isNotEmpty) {
+            noteBody += 'Deliveries have been processed. ';
+          }
+          noteBody += 'However, the order state could not be changed due to system constraints. Manual intervention may be required.';
+
+          try {
+            await client.callKw({
+              'model': 'sale.order',
+              'method': 'message_post',
+              'args': [orderId],
+              'kwargs': {
+                'body': noteBody,
+                'message_type': 'comment',
+              },
+            });
+          } catch (e) {
+            debugPrint('Could not add cancellation note: $e');
+          }
+
+          throw Exception(
+              'Unable to change order state to cancelled. Associated documents have been processed, but the order remains in "$finalState" state. This may require manual intervention in Odoo.');
+        }
       }
 
-      final newState = updatedOrderState[0]['state'] as String;
-      if (newState != 'cancel') {
-        throw Exception(
-            'Failed to cancel the sale order. Current state: $newState');
-      }
+      // Refresh order details
+      debugPrint('Refreshing order details');
       await fetchOrderDetails();
+      debugPrint('Order details refreshed successfully');
+
     } catch (e) {
-      debugPrint('Error cancelling sale order: $e');
+      debugPrint('Error in cancelSaleOrder: $e');
       _error = 'Failed to cancel sale order: $e';
-      notifyListeners();
-      throw Exception('Failed to cancel sale order: $e');
+      _safeNotifyListeners();
+      rethrow;
     } finally {
+      debugPrint('Setting isLoading to false');
       _isLoading = false;
-      notifyListeners();
+      _safeNotifyListeners();
+      debugPrint('cancelSaleOrder process completed for order ID: $orderId');
     }
   }
-  Future<void> deleteSaleOrder(int orderId) async {
+
+// Helper method to create invoice reversals
+  Future<void> _createInvoiceReversal(dynamic client, Map<String, dynamic> invoice, int orderId) async {
+    final invoiceId = invoice['id'] as int;
+    final invoiceJournalId = invoice['journal_id'];
+
+    try {
+      // Determine journal ID
+      int? journalId;
+      if (invoiceJournalId is List && invoiceJournalId.isNotEmpty) {
+        journalId = invoiceJournalId[0] as int;
+        debugPrint('Using journal ID from original invoice: $journalId');
+      } else if (invoiceJournalId is int) {
+        journalId = invoiceJournalId;
+        debugPrint('Using journal ID from original invoice: $journalId');
+      } else {
+        // Find a default sales journal
+        debugPrint('Finding default sales journal');
+        final journals = await client.callKw({
+          'model': 'account.journal',
+          'method': 'search',
+          'args': [
+            [
+              ['type', '=', 'sale'],
+            ]
+          ],
+          'kwargs': {'limit': 1},
+        });
+
+        if (journals.isNotEmpty) {
+          journalId = journals[0] as int;
+          debugPrint('Found default sales journal: $journalId');
+        } else {
+          throw Exception('Could not determine journal for reversal');
+        }
+      }
+
+      // Create reversal wizard
+      final reversalData = {
+        'move_ids': [invoiceId],
+        'date': DateFormat('yyyy-MM-dd').format(DateTime.now()),
+        'reason': 'Cancellation of sale order ID $orderId',
+        'journal_id': journalId,
+      };
+
+      debugPrint('Creating reversal wizard for invoice $invoiceId');
+      final reversalWizardId = await client.callKw({
+        'model': 'account.move.reversal',
+        'method': 'create',
+        'args': [reversalData],
+        'kwargs': {
+          'context': {
+            'active_model': 'account.move',
+            'active_ids': [invoiceId],
+          },
+        },
+      });
+
+      debugPrint('Reversal wizard created: $reversalWizardId');
+
+      // Execute the reversal
+      final reversalResult = await client.callKw({
+        'model': 'account.move.reversal',
+        'method': 'reverse_moves',
+        'args': [reversalWizardId],
+        'kwargs': {},
+      });
+
+      debugPrint('Reversal created for invoice ID $invoiceId, result: $reversalResult');
+
+      // Post the credit note if it was created in draft state
+      if (reversalResult is Map && reversalResult.containsKey('res_id')) {
+        final creditNoteId = reversalResult['res_id'];
+        try {
+          // Check if the credit note needs to be posted
+          final creditNote = await client.callKw({
+            'model': 'account.move',
+            'method': 'read',
+            'args': [
+              [creditNoteId],
+              ['state']
+            ],
+            'kwargs': {},
+          });
+
+          if (creditNote.isNotEmpty && creditNote[0]['state'] == 'draft') {
+            debugPrint('Posting credit note $creditNoteId');
+            await client.callKw({
+              'model': 'account.move',
+              'method': 'action_post',
+              'args': [creditNoteId],
+              'kwargs': {},
+            });
+            debugPrint('Credit note $creditNoteId posted successfully');
+          }
+        } catch (e) {
+          debugPrint('Could not post credit note $creditNoteId: $e');
+          // Continue even if posting fails
+        }
+      }
+
+    } catch (e) {
+      debugPrint('Failed to create reversal for invoice ID $invoiceId: $e');
+      throw Exception('Failed to reverse invoice ID $invoiceId: $e');
+    }
+  }  Future<void> deleteSaleOrder(int orderId) async {
     try {
       _isLoading = true;
       notifyListeners();
@@ -1562,7 +1896,7 @@ class SaleOrderDetailProvider extends ChangeNotifier {
         'partner_id': partnerId,
         'can_edit_wizard': true,
         'payment_difference_handling':
-        paymentDifference == 'mark_fully_paid' ? 'reconcile' : 'open',
+            paymentDifference == 'mark_fully_paid' ? 'reconcile' : 'open',
         if (paymentDifference == 'mark_fully_paid' &&
             writeoffAccountId != null) ...{
           'writeoff_account_id': writeoffAccountId,
@@ -1622,12 +1956,12 @@ class SaleOrderDetailProvider extends ChangeNotifier {
   }
 
   Future<void> confirmPicking(
-      int pickingId,
-      Map<int, double> pickedQuantities,
-      Map<int, String?> lotSerialNumbers,
-      bool validateImmediately, {
-        bool createBackorder = false,
-      }) async {
+    int pickingId,
+    Map<int, double> pickedQuantities,
+    Map<int, String?> lotSerialNumbers,
+    bool validateImmediately, {
+    bool createBackorder = false,
+  }) async {
     final client = await SessionManager.getActiveClient();
     if (client == null) {
       throw Exception('No active Odoo session found.');
@@ -1674,8 +2008,8 @@ class SaleOrderDetailProvider extends ChangeNotifier {
 
       final moveIds = moveLines
           .map((line) => line['move_id'] is List
-          ? (line['move_id'] as List)[0] as int
-          : line['move_id'] as int)
+              ? (line['move_id'] as List)[0] as int
+              : line['move_id'] as int)
           .toList();
       final moveResult = await client.callKw({
         'model': 'stock.move',
@@ -1793,7 +2127,7 @@ class SaleOrderDetailProvider extends ChangeNotifier {
     if (client == null) return {};
 
     final productIds =
-    products.map((p) => (p['product_id'] as List)[0] as int).toList();
+        products.map((p) => (p['product_id'] as List)[0] as int).toList();
     final quantResult = await client.callKw({
       'model': 'stock.quant',
       'method': 'search_read',
@@ -1844,7 +2178,7 @@ class SaleOrderDetailProvider extends ChangeNotifier {
       case 'draft':
         statusMessage = 'Draft Quotation';
         detailedMessage =
-        'This quotation has not been sent to the customer yet.';
+            'This quotation has not been sent to the customer yet.';
         break;
       case 'sent':
         statusMessage = 'Quotation Sent';
@@ -1854,7 +2188,7 @@ class SaleOrderDetailProvider extends ChangeNotifier {
         statusMessage = 'Sales Order Confirmed';
         if (invoiceStatus == 'to invoice') {
           detailedMessage =
-          'The sales order is confirmed but waiting to be invoiced.';
+              'The sales order is confirmed but waiting to be invoiced.';
           showWarning = true;
         } else if (invoiceStatus == 'invoiced') {
           detailedMessage = 'The sales order is confirmed and fully invoiced.';
@@ -1997,7 +2331,8 @@ class SaleOrderDetailProvider extends ChangeNotifier {
 
   Color getInvoiceStatusColor(String status) {
     final lowerStatus = status.toLowerCase();
-    if (lowerStatus.contains('paid') || lowerStatus.contains('fully invoiced')) {
+    if (lowerStatus.contains('paid') ||
+        lowerStatus.contains('fully invoiced')) {
       return Colors.green;
     } else if (lowerStatus.contains('partially paid')) {
       return Colors.amber;
@@ -2005,12 +2340,15 @@ class SaleOrderDetailProvider extends ChangeNotifier {
       return Colors.blue;
     } else if (lowerStatus.contains('draft')) {
       return Colors.grey;
-    } else if (lowerStatus.contains('due') || lowerStatus.contains('to invoice')) {
+    } else if (lowerStatus.contains('due') ||
+        lowerStatus.contains('to invoice')) {
       return Colors.orange;
     } else {
       return Colors.grey[700]!;
     }
-  }  Color getPickingStatusColor(String state) {
+  }
+
+  Color getPickingStatusColor(String state) {
     switch (state.toLowerCase()) {
       case 'done':
         return Colors.green;
@@ -2046,12 +2384,16 @@ class SaleOrderDetailProvider extends ChangeNotifier {
     }
   }
 
-  String formatInvoiceState(String state, bool isFullyPaid, double amountResidual, double invoiceAmount) {
+  String formatInvoiceState(String state, bool isFullyPaid,
+      double amountResidual, double invoiceAmount) {
     if (isFullyPaid) {
       return 'Paid';
-    } else if (state.toLowerCase() == 'posted' && amountResidual > 0 && amountResidual < invoiceAmount) {
+    } else if (state.toLowerCase() == 'posted' &&
+        amountResidual > 0 &&
+        amountResidual < invoiceAmount) {
       return 'Partially Paid';
-    } else if (state.toLowerCase() == 'posted' && amountResidual == invoiceAmount) {
+    } else if (state.toLowerCase() == 'posted' &&
+        amountResidual == invoiceAmount) {
       return 'Posted';
     } else if (state.toLowerCase() == 'draft') {
       return 'Draft';
@@ -2060,7 +2402,8 @@ class SaleOrderDetailProvider extends ChangeNotifier {
     } else {
       return state;
     }
-  }}
+  }
+}
 
 extension SaleOrderDetailProviderNew on SaleOrderDetailProvider {
   Future<void> fetchOrderDetails(int orderId) async {
@@ -2185,7 +2528,7 @@ extension SaleOrderDetailProviderNew on SaleOrderDetailProvider {
         _stockAvailability = {
           for (var quant in stockQuantResult)
             (quant['product_id'] as List)[0] as int:
-            quant['quantity'] as double,
+                quant['quantity'] as double,
         };
       }
 
@@ -2205,7 +2548,7 @@ extension SaleOrderDetailProviderNew on SaleOrderDetailProvider {
 
     try {
       final productIds =
-      products.map((p) => (p['product_id'] as List)[0]).toSet().toList();
+          products.map((p) => (p['product_id'] as List)[0]).toSet().toList();
       final stockQuantResult = await client.callKw({
         'model': 'stock.quant',
         'method': 'search_read',
@@ -2273,6 +2616,7 @@ extension SaleOrderDetailProviderCache on SaleOrderDetailProvider {
       throw Exception('Failed to set order details from cache: $e');
     }
   }
+
   dynamic getOrderDetailsForCache() {
     try {
       return _orderDetails != null

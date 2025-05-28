@@ -4,6 +4,7 @@ import 'package:odoo_rpc/odoo_rpc.dart';
 import 'dart:convert';
 import 'dart:developer';
 import 'dart:io';
+import 'package:html/parser.dart' show parse;
 
 import '../authentication/cyllo_session_model.dart';
 import '../providers/order_picking_provider.dart';
@@ -98,6 +99,12 @@ class _CreateCustomerPageState extends State<CreateCustomerPage> {
         : null;
   }
 
+  String _stripHtmlTags(String? htmlString) {
+    if (htmlString == null || htmlString.isEmpty) return '';
+    final document = parse(htmlString);
+    return document.body?.text ?? htmlString;
+  }
+
   void _initializeFields(Customer customer) {
     isCompany = customer.isCompany ?? false;
     nameController.text = customer.name ?? '';
@@ -112,7 +119,7 @@ class _CreateCustomerPageState extends State<CreateCustomerPage> {
     refController.text = customer.ref ?? '';
     websiteController.text = customer.website ?? '';
     functionController.text = customer.function ?? '';
-    notesController.text = customer.comment ?? '';
+    notesController.text = _stripHtmlTags(customer.comment); // Strip HTML tags
     languageController.text = customer.lang ?? '';
     selectedCountryId = customer.countryId;
     selectedStateId = customer.stateId;
@@ -129,6 +136,56 @@ class _CreateCustomerPageState extends State<CreateCustomerPage> {
     if (selectedCountryId != null) {
       _loadStates(selectedCountryId!);
     }
+  }
+
+  void _showLoadingDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        backgroundColor: Colors.white,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 28.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.save_rounded,
+                      color: Theme.of(context).primaryColor, size: 32),
+                  const SizedBox(width: 16),
+                  Text(
+                    isEditMode ? 'Updating Customer' : 'Creating Customer',
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              CircularProgressIndicator(
+                strokeWidth: 3,
+                color: Theme.of(context).primaryColor,
+                backgroundColor: Colors.grey.shade200,
+              ),
+              const SizedBox(height: 16),
+              Text(
+                isEditMode
+                    ? 'Please wait while we update the customer details.'
+                    : 'Please wait while we create the new customer.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 14,
+                  color: Colors.grey.shade600,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _loadCompanies() async {
@@ -310,7 +367,7 @@ class _CreateCustomerPageState extends State<CreateCustomerPage> {
 
   Future<void> _submitCustomer() async {
     setState(() {
-      isCreating = true;
+      // isCreating = true;
       showValidationMessages = true;
     });
 
@@ -320,7 +377,7 @@ class _CreateCustomerPageState extends State<CreateCustomerPage> {
 
     if (!_formKey.currentState!.validate()) {
       setState(() {
-        isCreating = false;
+        // isCreating = false;
       });
       return;
     }
@@ -329,11 +386,12 @@ class _CreateCustomerPageState extends State<CreateCustomerPage> {
       _showErrorSnackBar(
           'Please provide at least one contact method (Phone, Mobile, or Email).');
       setState(() {
-        isCreating = false;
+        // isCreating = false;
       });
       return;
     }
 
+    _showLoadingDialog(); // Show loading dialog
     try {
       final client = await SessionManager.getActiveClient();
       if (client == null) throw Exception('No active client found');
@@ -515,9 +573,10 @@ class _CreateCustomerPageState extends State<CreateCustomerPage> {
       _showErrorSnackBar('An error occurred. Please try again.');
     } finally {
       setState(() {
-        isCreating = false;
+        // isCreating = false;
         showValidationMessages = false;
       });
+      Navigator.of(context).pop(); // Dismiss loading dialog
     }
   }
 

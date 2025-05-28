@@ -78,19 +78,22 @@ class _MainPageState extends State<MainPage> with TickerProviderStateMixin {
 
       final imageBase64 = await _odooService.getUserImage();
 
-      setState(() {
-        userName = fetchedUsername;
-        _userImageBase64 = imageBase64;
-        _isLoadingImage = false;
-      });
+      if (mounted) {
+        setState(() {
+          userName = fetchedUsername;
+          _userImageBase64 = imageBase64;
+          _isLoadingImage = false;
+        });
+      }
     } catch (e) {
       debugPrint('Error initializing MainPage: $e');
-      setState(() {
-        _isLoadingImage = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isLoadingImage = false;
+        });
+      }
     }
   }
-
   @override
   void dispose() {
     _animationController.dispose();

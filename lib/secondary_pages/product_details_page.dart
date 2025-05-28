@@ -31,7 +31,7 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
   late TabController _tabController;
   int _currentQuantity = 1;
 
-  // Map<String, String> _selectedVariants = {};
+  Map<String, String> _selectedVariants = {};
   bool _isLoading = true;
   bool _isAddingToOrder = false;
   final ScrollController _scrollController = ScrollController();
@@ -44,31 +44,20 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
-    _initializeOdooClient();
-    // if (widget.selectedAttributes != null) {
-    //   _selectedVariants = Map.from(widget.selectedAttributes!);
-    // }
-  }
-
-  Future<void> _initializeOdooClient() async {
-    try {
-      final client = await SessionManager.getActiveClient();
-      if (client == null) {
-        throw Exception('No active Odoo session found. Please log in again.');
-      }
-      setState(() {
-        _odooClient = client;
-      });
-      await _loadProductData();
-    } catch (e) {
-      developer.log("Error initializing Odoo client: $e");
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error initializing Odoo client: $e')),
-      );
+    developer.log(
+        'initState: widget.selectedAttributes = ${widget.selectedAttributes}');
+    if (widget.selectedAttributes != null) {
+      _selectedVariants = Map.from(widget.selectedAttributes!);
+      developer.log(
+          'initState: _selectedVariants initialized from widget = $_selectedVariants');
+    } else {
+      _selectedVariants = {};
+      developer.log('initState: _selectedVariants initialized as empty');
     }
   }
-
   Future<void> _loadProductData() async {
+    if (!mounted) return;
+
     setState(() => _isLoading = true);
 
     try {
@@ -110,12 +99,13 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
         },
       });
 
-      if (productResult.isNotEmpty) {
+      if (productResult.isNotEmpty && mounted) {
         final productData = productResult[0];
         final templateId = productData['product_tmpl_id'][0] as int;
         List<Map<String, dynamic>> attributes = [];
 
-        // Fetch attribute lines for the product template
+        // developer.log('loadProductData: Fetched product data = $productData');
+
         final attributeLineResult = await client.callKw({
           'model': 'product.template.attribute.line',
           'method': 'search_read',
@@ -128,6 +118,8 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
             'fields': ['product_tmpl_id', 'attribute_id', 'value_ids'],
           },
         });
+
+        developer.log('loadProductData: Attribute lines = $attributeLineResult');
 
         if (attributeLineResult.isNotEmpty) {
           final attributeIds = attributeLineResult
@@ -190,7 +182,7 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
           };
 
           final templateAttributeValueMap =
-              <int, Map<int, Map<int, Map<String, dynamic>>>>{};
+          <int, Map<int, Map<int, Map<String, dynamic>>>>{};
           for (var attrVal in templateAttributeValueResult) {
             final attributeId = attrVal['attribute_id'][0] as int;
             final valueId = attrVal['product_attribute_value_id'][0] as int;
@@ -216,9 +208,9 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
             final extraCosts = <String, double>{
               for (var id in valueIds)
                 attributeValueMap[id as int]!:
-                    templateAttributeValueMap[templateId]?[attributeId]
-                            ?[id as int]?['price_extra'] as double? ??
-                        0.0
+                templateAttributeValueMap[templateId]?[attributeId]
+                ?[id as int]?['price_extra'] as double? ??
+                    0.0
             };
 
             attributes.add({
@@ -228,6 +220,8 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
             });
           }
         }
+
+        developer.log('loadProductData: Processed attributes = $attributes');
 
         String? imageUrl;
         final imageData = productData['image_1920'];
@@ -242,49 +236,56 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
           }
         }
 
-        setState(() {
-          _productData = {
-            ...productData,
-            'attributes': attributes.isNotEmpty ? attributes : null,
-            'barcode': productData['barcode'] is String
-                ? productData['barcode']
-                : 'N/A',
-            'default_code': productData['default_code'] is String
-                ? productData['default_code']
-                : 'N/A',
-            'description_sale': productData['description_sale'] is String
-                ? productData['description_sale']
-                : '',
-            'qty_available':
-                (productData['qty_available'] as num?)?.toInt() ?? 0,
-          };
+        if (mounted) {
+          setState(() {
+            _productData = {
+              ...productData,
+              'attributes': attributes.isNotEmpty ? attributes : null,
+              'barcode': productData['barcode'] is String
+                  ? productData['barcode']
+                  : 'N/A',
+              'default_code': productData['default_code'] is String
+                  ? productData['default_code']
+                  : 'N/A',
+              'description_sale': productData['description_sale'] is String
+                  ? productData['description_sale']
+                  : '',
+              'qty_available':
+              (productData['qty_available'] as num?)?.toInt() ?? 0,
+            };
 
-          _imageGallery = imageUrl != null
-              ? [
-                  imageUrl,
-                  'https://placeholder.com/product_alt_1',
-                  'https://placeholder.com/product_alt_2',
-                ]
-              : [
-                  'https://placeholder.com/product1',
-                  'https://placeholder.com/product_alt_1',
-                  'https://placeholder.com/product_alt_2',
-                ];
+            _imageGallery = imageUrl != null
+                ? [
+              imageUrl,
+              'https://placeholder.com/product_alt_1',
+              'https://placeholder.com/product_alt_2',
+            ]
+                : [
+              'https://placeholder.com/product1',
+              'https://placeholder.com/product_alt_1',
+              'https://placeholder.com/product_alt_2',
+            ];
 
-          // if (widget.selectedAttributes == null && attributes.isNotEmpty) {
-          //   _selectedVariants.clear();
-          //   for (var attr in attributes) {
-          //     if (attr['values'].isNotEmpty) {
-          //       _selectedVariants[attr['name']] = attr['values'][0];
-          //     }
-          //   }
-          // }
-        });
+            if (widget.selectedAttributes == null && attributes.isNotEmpty) {
+              _selectedVariants.clear();
+              for (var attr in attributes) {
+                if (attr['values'].isNotEmpty) {
+                  _selectedVariants[attr['name']] = attr['values'][0];
+                }
+              }
+              developer.log(
+                  'loadProductData: Default _selectedVariants set to $_selectedVariants');
+            } else {
+              developer.log(
+                  'loadProductData: Default variants not set. widget.selectedAttributes = ${widget.selectedAttributes}, attributes.isNotEmpty = ${attributes.isNotEmpty}');
+            }
+          });
+        }
 
         developer.log("Fetched product: ${productData['name']}");
         developer.log(
             "Attributes: ${attributes.isNotEmpty ? attributes.map((a) => '${a['name']}: ${a['values'].join(', ')}').join('; ') : 'None'}");
-      } else {
+      } else if (mounted) {
         setState(() {
           _productData = {
             'name': 'Not Found',
@@ -301,14 +302,17 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
       }
     } catch (e) {
       developer.log("Error loading product data: $e");
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error loading product: $e')),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error loading product: $e')),
+        );
+      }
     } finally {
-      setState(() => _isLoading = false);
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
     }
   }
-
   @override
   void dispose() {
     _tabController.dispose();
@@ -317,20 +321,24 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
     super.dispose();
   }
 
+
   double _calculateFinalPrice() {
     double finalPrice = _productData['list_price']?.toDouble() ?? 0.0;
     final attributes =
         _productData['attributes'] as List<Map<String, dynamic>>?;
-    // if (attributes != null) {
-    //   for (var attribute in attributes) {
-    //     final selectedValue = _selectedVariants[attribute['name']];
-    //     if (selectedValue != null) {
-    //       final extraCosts = attribute['extraCost'] as Map<String, double>;
-    //       final extraCost = extraCosts[selectedValue] ?? 0.0;
-    //       finalPrice += extraCost;
-    //     }
-    //   }
-    // }
+    if (attributes != null) {
+      for (var attribute in attributes) {
+        final selectedValue = _selectedVariants[attribute['name']];
+        if (selectedValue != null) {
+          final extraCosts = attribute['extraCost'] as Map<String, double>;
+          final extraCost = extraCosts[selectedValue] ?? 0.0;
+          finalPrice += extraCost;
+        }
+      }
+    }
+    // Debug: Log final price calculation
+    developer.log(
+        'calculateFinalPrice: _selectedVariants = $_selectedVariants, finalPrice = $finalPrice');
     return finalPrice;
   }
 
@@ -351,7 +359,7 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
             ),
             const SizedBox(width: 8),
             const Text(
-              'Delete Product',
+              'Archive Product',
               style: TextStyle(
                 fontSize: 20,
                 fontWeight: FontWeight.bold,
@@ -364,7 +372,7 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Are you sure you want to delete "${_productData['name']}"?',
+              'Are you sure you want to archive "${_productData['name']}"?',
               style: const TextStyle(
                 fontSize: 16,
                 fontWeight: FontWeight.w500,
@@ -372,7 +380,7 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
             ),
             const SizedBox(height: 8),
             Text(
-              'This action cannot be undone.',
+              'This action can be undone in backend if needed.',
               style: TextStyle(
                 fontSize: 14,
                 color: Colors.grey.shade600,
@@ -387,14 +395,14 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
               'Cancel',
               style: TextStyle(
                 color: Colors.grey.shade600,
-                fontSize: 16,
+                fontSize: 14,
               ),
             ),
           ),
           ElevatedButton(
             onPressed: () async {
-              Navigator.pop(dialogContext); // Close the dialog
-              await _deleteProduct();
+              Navigator.pop(dialogContext);
+              await deleteProduct();
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: primaryColor,
@@ -405,9 +413,9 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
             ),
             child: const Text(
-              'Delete',
+              'Archive',
               style: TextStyle(
-                fontSize: 16,
+                fontSize: 14,
                 fontWeight: FontWeight.bold,
               ),
             ),
@@ -417,22 +425,69 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
     );
   }
 
-  Future<void> _deleteProduct() async {
-    try {
-      setState(() => _isLoading = true);
+  void _showDeletingDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        backgroundColor: Colors.white,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 28.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.delete_rounded, color: primaryColor, size: 32),
+                  const SizedBox(width: 16),
+                  const Text(
+                    'Deleting Product',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              CircularProgressIndicator(
+                strokeWidth: 3,
+                color: primaryColor,
+                backgroundColor: Colors.grey.shade200,
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'Please wait while we delete the product.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 14,
+                  color: Colors.grey.shade600,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 
-      // Archive the product instead of deleting (Odoo's standard practice)
+  Future<void> deleteProduct() async {
+    try {
+      _showDeletingDialog();
+
+      // Attempt to delete the product
       final result = await _odooClient.callKw({
         'model': 'product.product',
-        'method': 'write',
+        'method': 'unlink',
         'args': [
           [int.parse(widget.productId)],
-          {'active': false}, // Archive the product
         ],
         'kwargs': {},
       });
 
       if (result == true && context.mounted) {
+        Navigator.of(context).pop(); // Close the deleting dialog
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Row(
@@ -455,42 +510,134 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
     } catch (e, stackTrace) {
       developer.log('Error deleting product ID: ${widget.productId}',
           error: e, stackTrace: stackTrace);
+
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Row(
-              children: [
-                const Icon(Icons.error_outline, color: Colors.white),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    'Failed to delete product: $e',
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
+        Navigator.of(context).pop(); // Close the deleting dialog
+        String errorMessage = 'Failed to delete product';
+
+        // Check if the error is a foreign key violation
+        if (e is OdooException &&
+            e.toString().contains('ForeignKeyViolation')) {
+          try {
+            // Attempt to archive the product instead
+            final archiveResult = await _odooClient.callKw({
+              'model': 'product.product',
+              'method': 'write',
+              'args': [
+                [int.parse(widget.productId)],
+                {'active': false},
               ],
+              'kwargs': {},
+            });
+
+            if (archiveResult == true && context.mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Row(
+                    children: const [
+                      Icon(Icons.check_circle, color: Colors.white),
+                      SizedBox(width: 8),
+                      Text('Product archived successfully'),
+                    ],
+                  ),
+                  backgroundColor: Colors.green,
+                  behavior: SnackBarBehavior.floating,
+                  duration: const Duration(seconds: 2),
+                ),
+              );
+              // Navigate back to the previous screen
+              Navigator.pop(context);
+              return;
+            } else {
+              errorMessage =
+                  'Cannot delete product due to existing inventory records. Failed to archive product.';
+            }
+          } catch (archiveError, archiveStackTrace) {
+            developer.log('Error archiving product ID: ${widget.productId}',
+                error: archiveError, stackTrace: archiveStackTrace);
+            errorMessage =
+                'Cannot delete product due to existing inventory records. Archiving also failed: $archiveError';
+          }
+        } else if (e is OdooException) {
+          errorMessage = e.message ?? 'Odoo server error';
+        } else {
+          errorMessage = e.toString();
+        }
+
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Row(
+                children: [
+                  const Icon(Icons.error_outline, color: Colors.white),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      errorMessage,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+              backgroundColor: Colors.red,
+              behavior: SnackBarBehavior.floating,
+              duration: const Duration(seconds: 4),
+              action: SnackBarAction(
+                label: 'DETAILS',
+                textColor: Colors.white,
+                onPressed: () {
+                  _showErrorDetailsDialog(context, '$e\n\n$stackTrace');
+                },
+              ),
             ),
-            backgroundColor: Colors.red,
-            behavior: SnackBarBehavior.floating,
-            duration: const Duration(seconds: 4),
-            // action: SnackBarAction(
-            //   label: 'DETAILS',
-            //   textColor: Colors.white,
-            //   onPressed: () {
-            //   },
-            // ),
-          ),
-        );
-      }
-    } finally {
-      if (context.mounted) {
-        setState(() => _isLoading = false);
+          );
+        }
       }
     }
   }
 
+// Add this method in the _ProductDetailsPageState class
+  void _showErrorDetailsDialog(BuildContext context, String errorDetails) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.error_outline, color: Colors.red),
+            SizedBox(width: 8),
+            Text('Error Details'),
+          ],
+        ),
+        content: SingleChildScrollView(
+          child: SelectableText(errorDetails),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('CLOSE'),
+          ),
+          TextButton(
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: errorDetails));
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Error details copied to clipboard'),
+                  duration: Duration(seconds: 1),
+                ),
+              );
+            },
+            child: const Text('COPY'),
+          ),
+        ],
+      ),
+    );
+  }
+
   String _getSelectedVariantDefaultCode() {
+    // Debug: Log default code
+    developer.log(
+        'getSelectedVariantDefaultCode: default_code = ${_productData['default_code']}');
     return _productData['default_code'] is String
         ? _productData['default_code']
         : 'N/A';
@@ -498,6 +645,8 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
 
   @override
   Widget build(BuildContext context) {
+    developer.log(
+        'build: _isLoading = $_isLoading, _productData = ${_productData.isNotEmpty}, _selectedVariants = $_selectedVariants');
     if (_isLoading) {
       return Scaffold(
         appBar: AppBar(
@@ -551,7 +700,7 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
             },
           ),
           IconButton(
-            icon: const Icon(Icons.delete),
+            icon: const Icon(Icons.archive),
             onPressed: _showDeleteConfirmationDialog,
             tooltip: 'Delete Product',
           ),
@@ -663,146 +812,175 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
                     const SizedBox(width: 16),
                     Expanded(
                       child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            _productData['name'],
-                            style: const TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              _productData['name'],
+                              style: const TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                              ),
+                              overflow: TextOverflow.ellipsis,
                             ),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          const SizedBox(height: 4),
-                          if (_productData['barcode'] is String &&
-                              _productData['barcode'].isNotEmpty) ...[
+                            const SizedBox(height: 4),
+                            if (_productData['barcode'] is String &&
+                                _productData['barcode'].isNotEmpty) ...[
+                              Row(
+                                children: [
+                                  const Icon(Icons.barcode_reader,
+                                      size: 16, color: Colors.grey),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    _productData['barcode'] as String,
+                                    style: const TextStyle(color: Colors.grey),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  InkWell(
+                                    onTap: () {
+                                      final barcode =
+                                          _productData['barcode'] as String?;
+                                      if (barcode != null &&
+                                          barcode.trim().isNotEmpty &&
+                                          barcode.trim().toLowerCase() !=
+                                              'n/a') {
+                                        Clipboard.setData(
+                                            ClipboardData(text: barcode));
+                                        ScaffoldMessenger.of(context)
+                                            .showSnackBar(
+                                          const SnackBar(
+                                              content: Text(
+                                                  'Barcode copied to clipboard')),
+                                        );
+                                      }
+                                    },
+                                    child: const Icon(Icons.copy,
+                                        size: 16, color: primaryColor),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 4),
+                            ],
                             Row(
                               children: [
-                                const Icon(Icons.barcode_reader,
+                                const Icon(Icons.category,
                                     size: 16, color: Colors.grey),
                                 const SizedBox(width: 4),
-                                Text(
-                                  _productData['barcode'] as String,
-                                  style: const TextStyle(color: Colors.grey),
-                                ),
-                                const SizedBox(width: 8),
-                                InkWell(
-                                  onTap: () {
-                                    final barcode =
-                                        _productData['barcode'] as String?;
-                                    if (barcode != null &&
-                                        barcode.trim().isNotEmpty &&
-                                        barcode.trim().toLowerCase() != 'n/a') {
-                                      Clipboard.setData(
-                                          ClipboardData(text: barcode));
-                                      ScaffoldMessenger.of(context)
-                                          .showSnackBar(
-                                        const SnackBar(
-                                            content: Text(
-                                                'Barcode copied to clipboard')),
-                                      );
-                                    }
-                                  },
-                                  child: const Icon(Icons.copy,
-                                      size: 16, color: primaryColor),
+                                Expanded(
+                                  child: Text(
+                                    _productData['categ_id'] is List
+                                        ? _productData['categ_id'][1]
+                                        : 'Uncategorized',
+                                    style: const TextStyle(color: Colors.grey),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
                                 ),
                               ],
                             ),
                             const SizedBox(height: 4),
-                          ],
-                          Row(
-                            children: [
-                              const Icon(Icons.category,
-                                  size: 16, color: Colors.grey),
-                              const SizedBox(width: 4),
-                              Expanded(
-                                child: Text(
-                                  _productData['categ_id'] is List
-                                      ? _productData['categ_id'][1]
-                                      : 'Uncategorized',
-                                  style: const TextStyle(color: Colors.grey),
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 4),
-                          Row(
-                            children: [
-                              const Icon(Icons.qr_code,
-                                  size: 16, color: Colors.grey),
-                              const SizedBox(width: 4),
-                              Expanded(
-                                child: Text(
-                                  _getSelectedVariantDefaultCode(),
-                                  style: const TextStyle(color: Colors.grey),
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 4),
-                          Row(
-                            children: [
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 8, vertical: 2),
-                                decoration: BoxDecoration(
-                                  color:
-                                      (_productData['qty_available'] ?? 0) > 0
-                                          ? Colors.green
-                                          : Colors.red,
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                child: Text(
-                                  (_productData['qty_available'] ?? 0) > 0
-                                      ? 'In Stock (${_productData['qty_available']})'
-                                      : 'Out of Stock',
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 12,
+                            Row(
+                              children: [
+                                const Icon(Icons.qr_code,
+                                    size: 16, color: Colors.grey),
+                                const SizedBox(width: 4),
+                                Expanded(
+                                  child: Text(
+                                    _getSelectedVariantDefaultCode(),
+                                    style: const TextStyle(color: Colors.grey),
+                                    overflow: TextOverflow.ellipsis,
                                   ),
                                 ),
-                              ),
-                              const Spacer(),
-                              Column(
-                                crossAxisAlignment: CrossAxisAlignment.end,
-                                children: [
-                                  Text(
-                                    '\$${_calculateFinalPrice().toStringAsFixed(2)}',
+                              ],
+                            ),
+                            const SizedBox(height: 4),
+                            Row(
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 8, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color:
+                                        (_productData['qty_available'] ?? 0) > 0
+                                            ? Colors.green
+                                            : Colors.red,
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: Text(
+                                    (_productData['qty_available'] ?? 0) > 0
+                                        ? 'In Stock (${_productData['qty_available']})'
+                                        : 'Out of Stock',
                                     style: const TextStyle(
-                                      fontSize: 20,
-                                      fontWeight: FontWeight.bold,
-                                      color: primaryColor,
+                                      color: Colors.white,
+                                      fontSize: 12,
                                     ),
                                   ),
-                                  if (_productData['list_price'] !=
-                                      _calculateFinalPrice())
+                                ),
+                                const Spacer(),
+                                Column(
+                                  crossAxisAlignment: CrossAxisAlignment.end,
+                                  children: [
                                     Text(
-                                      'Base: \$${(_productData['list_price'] ?? 0.0).toStringAsFixed(2)}',
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        color: Colors.grey[600],
-                                        decoration: TextDecoration.lineThrough,
+                                      '\$${_calculateFinalPrice().toStringAsFixed(2)}',
+                                      style: const TextStyle(
+                                        fontSize: 20,
+                                        fontWeight: FontWeight.bold,
+                                        color: primaryColor,
                                       ),
                                     ),
-                                ],
+                                    if (_productData['list_price'] !=
+                                        _calculateFinalPrice())
+                                      Text(
+                                        'Base: \$${(_productData['list_price'] ?? 0.0).toStringAsFixed(2)}',
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: Colors.grey[600],
+                                          decoration:
+                                              TextDecoration.lineThrough,
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                            if (_selectedVariants.isNotEmpty) ...[
+                              const SizedBox(height: 8),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 8, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: Colors.grey[100],
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      'Selected Variant:',
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        color: Colors.grey[900],
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: Text(
+                                        _selectedVariants.entries
+                                            .map((e) => '${e.key}: ${e.value}')
+                                            .join(', '),
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: Colors.grey[700],
+                                          fontWeight: FontWeight.w500,
+                                        ),
+                                        overflow: TextOverflow.ellipsis,
+                                        maxLines: 2,
+                                      ),
+                                    ),
+                                  ],
+                                ),
                               ),
                             ],
-                          ),
-                          // if (widget.selectedAttributes != null) ...[
-                          //   const SizedBox(height: 8),
-                          //   Text(
-                          //     'Selected Variant: ${_selectedVariants.entries.map((e) => '${e.key}: ${e.value}').join(', ')}',
-                          //     style: TextStyle(
-                          //       fontSize: 12,
-                          //       color: Colors.grey[700],
-                          //       fontWeight: FontWeight.w500,
-                          //     ),
-                          //   ),
-                          // ],
-                        ],
-                      ),
+                          ]),
                     ),
                   ],
                 ),
@@ -1183,14 +1361,14 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
             onPressed: () => Navigator.pop(context),
             child: const Text('CLOSE'),
           ),
-          TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-              Navigator.pushNamed(context, '/inventory-movements',
-                  arguments: widget.productId);
-            },
-            child: const Text('VIEW FULL HISTORY'),
-          ),
+          // TextButton(
+          //   onPressed: () {
+          //     Navigator.pop(context);
+          //     Navigator.pushNamed(context, '/inventory-movements',
+          //         arguments: widget.productId);
+          //   },
+          //   child: const Text('VIEW FULL HISTORY'),
+          // ),
         ],
       ),
     );
@@ -1357,8 +1535,7 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
           spacing: 8,
           runSpacing: 8,
           children: values.map<Widget>((value) {
-            final isSelected = widget.selectedAttributes != null &&
-                widget.selectedAttributes![attribute['name']] == value;
+            final isSelected = _selectedVariants[attribute['name']] == value;
             final extraCost = extraCosts[value] ?? 0.0;
             return Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),

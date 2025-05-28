@@ -36,10 +36,11 @@ class _AddProductPageState extends State<AddProductPage> {
   final _reorderMaxController = TextEditingController();
   final _customerLeadTimeController = TextEditingController();
   final _tagController = TextEditingController();
-
+  List<Map<String, dynamic>> _categories = [];
+  List<Map<String, dynamic>> categoriesWithPath = [];
+  int? selectedCategoryId;
   List<String> _selectedTags = [];
   String _selectedProductType = 'product';
-  String _selectedResponsible = '';
   String _selectedSalesTax = 'No Tax';
   String _selectedPurchaseTax = 'No Tax';
   String _selectedInvoicePolicy = 'Ordered quantities';
@@ -50,17 +51,11 @@ class _AddProductPageState extends State<AddProductPage> {
   bool _hasVariants = false;
   File? _productImage;
   List<Map<String, dynamic>> _vendors = [];
-  List<Map<String, dynamic>> _categories = [];
   bool _isLoadingVendors = false;
   bool _isLoadingCategories = false;
   bool _isLoading = false;
-  List<String> _users = [
-    'Admin',
-    'Purchasing Manager',
-    'Sales Person',
-    'Inventory Manager'
-  ];
-
+  List<Map<String, dynamic>> _users = [];
+  bool _isLoadingUsers = false;
   List<Map<String, dynamic>> _suppliers = [];
   final _supplierNameController = TextEditingController();
   final _supplierPriceController = TextEditingController();
@@ -75,7 +70,7 @@ class _AddProductPageState extends State<AddProductPage> {
   List<Map<String, dynamic>> _units = [];
   String _selectedUnit = '';
   String _selectedPurchaseUnit = '';
-  String _selectedCategory = '';
+  int? _selectedResponsibleId;
 
   @override
   void dispose() {
@@ -114,6 +109,40 @@ class _AddProductPageState extends State<AddProductPage> {
     }
   }
 
+  Future<void> _fetchUsers() async {
+    setState(() => _isLoadingUsers = true);
+    try {
+      final client = await SessionManager.getActiveClient();
+      if (client == null) throw Exception('No active session found.');
+
+      final result = await client.callKw({
+        'model': 'res.users',
+        'method': 'search_read',
+        'args': [
+          [
+            ['active', '=', true]
+          ], // Fetch only active users
+          ['id', 'name'],
+        ],
+        'kwargs': {},
+      });
+
+      setState(() {
+        _users = List<Map<String, dynamic>>.from(result);
+        _isLoadingUsers = false;
+      });
+    } catch (e) {
+      setState(() => _isLoadingUsers = false);
+      debugPrint('Error fetching users: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error loading users: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
   Future<void> _fetchCategories() async {
     setState(() => _isLoadingCategories = true);
     try {
@@ -125,18 +154,18 @@ class _AddProductPageState extends State<AddProductPage> {
         'method': 'search_read',
         'args': [
           [],
-          ['id', 'name', 'complete_name'],
+          ['id', 'name', 'parent_id', 'complete_name'],
         ],
         'kwargs': {},
       });
 
       setState(() {
         _categories = List<Map<String, dynamic>>.from(result);
-
-        if (_categories.isNotEmpty) {
-          _selectedCategory = _categories[0]['name'];
+        categoriesWithPath = buildCategoryPaths(_categories);
+        if (categoriesWithPath.isNotEmpty) {
+          selectedCategoryId = categoriesWithPath[0]['id'];
         } else {
-          _selectedCategory = '';
+          selectedCategoryId = null;
         }
         _isLoadingCategories = false;
       });
@@ -149,6 +178,60 @@ class _AddProductPageState extends State<AddProductPage> {
         ),
       );
     }
+  }
+
+  List<Map<String, dynamic>> buildCategoryPaths(
+      List<Map<String, dynamic>> categories) {
+    List<Map<String, dynamic>> result = [];
+
+    for (var category in categories) {
+      String displayName;
+
+      if (category['complete_name'] != null &&
+          category['complete_name'].toString().isNotEmpty) {
+        displayName = category['complete_name'];
+      } else {
+        displayName = buildCategoryPath(category, categories);
+      }
+
+      result.add({
+        'id': category['id'],
+        'name': category['name'],
+        'display_name': displayName,
+        'parent_id': category['parent_id'],
+        'level': countPathLevel(displayName),
+      });
+    }
+
+    result.sort((a, b) {
+      int levelCompare = a['level'].compareTo(b['level']);
+      if (levelCompare != 0) return levelCompare;
+      return a['display_name'].compareTo(b['display_name']);
+    });
+
+    return result;
+  }
+
+  String buildCategoryPath(
+      Map<String, dynamic> category, List<Map<String, dynamic>> allCategories) {
+    if (category['parent_id'] == null || category['parent_id'] == false) {
+      return category['name'];
+    }
+
+    var parentId = category['parent_id'] is List
+        ? category['parent_id'][0]
+        : category['parent_id'];
+    var parent = allCategories.firstWhere(
+      (cat) => cat['id'] == parentId,
+      orElse: () => {'name': 'Unknown', 'parent_id': null},
+    );
+
+    String parentPath = buildCategoryPath(parent, allCategories);
+    return '$parentPath / ${category['name']}';
+  }
+
+  int countPathLevel(String path) {
+    return path.split(' / ').length;
   }
 
   Future<void> _fetchUnits() async {
@@ -180,9 +263,19 @@ class _AddProductPageState extends State<AddProductPage> {
           };
         }).toList();
 
+        // Sort units by category_name and then by name
+        _units.sort((a, b) {
+          int categoryCompare =
+              a['category_name'].compareTo(b['category_name']);
+          if (categoryCompare != 0) return categoryCompare;
+          return a['name'].compareTo(b['name']);
+        });
+
+        // Initialize with formatted strings
         if (_units.isNotEmpty) {
-          _selectedUnit = _units[0]['name'];
-          _selectedPurchaseUnit = _units[0]['name'];
+          _selectedUnit = '${_units[0]['category_name']}: ${_units[0]['name']}';
+          _selectedPurchaseUnit =
+              '${_units[0]['category_name']}: ${_units[0]['name']}';
         }
         _isLoadingUnits = false;
       });
@@ -219,6 +312,43 @@ class _AddProductPageState extends State<AddProductPage> {
         keyboardType: keyboardType,
         maxLines: maxLines,
         validator: validator,
+      ),
+    );
+  }
+
+  Widget _buildDropdownFieldUnits({
+    required String label,
+    required String value,
+    required List<String> items,
+    required ValueChanged<String> onChanged,
+    String? helperText,
+    String? Function(dynamic val)? validator,
+  }) {
+    final uniqueItems = items.toSet().toList();
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8.0),
+      child: DropdownButtonFormField<String>(
+        value: uniqueItems.contains(value)
+            ? value
+            : (uniqueItems.isNotEmpty ? uniqueItems[0] : null),
+        validator: validator,
+        decoration: InputDecoration(
+          labelText: label,
+          // helperText: 'Units are grouped by category (e.g., Length, Weight, Volume)',
+          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+        ),
+        items: uniqueItems
+            .map((item) => DropdownMenuItem<String>(
+                  value: item,
+                  child: Text(item, overflow: TextOverflow.ellipsis),
+                ))
+            .toList(),
+        onChanged: (newValue) {
+          if (newValue != null) {
+            onChanged(newValue);
+          }
+        },
       ),
     );
   }
@@ -279,8 +409,9 @@ class _AddProductPageState extends State<AddProductPage> {
     }
   }
 
-
-  int _mapUnitToOdooId(String unitName) {
+  int _mapUnitToOdooId(String selectedUnit) {
+    if (selectedUnit.isEmpty) return 1;
+    String unitName = selectedUnit.split(': ')[1];
     final unit = _units.firstWhere(
       (u) => u['name'] == unitName,
       orElse: () => {'id': 1},
@@ -288,23 +419,22 @@ class _AddProductPageState extends State<AddProductPage> {
     return unit['id'] as int;
   }
 
-  int _mapCategoryToOdooId(String categoryName) {
-    final category = _categories.firstWhere(
-      (c) => c['name'] == categoryName,
-      orElse: () => {'id': 1},
-    );
-    return category['id'] as int;
+  int _mapCategoryToOdooId() {
+    return selectedCategoryId ?? 1; // Fallback to default category ID if null
   }
 
   bool _validateUnitCategories() {
     if (_units.isEmpty) return false;
 
+    String selectedUnitName = _selectedUnit.split(': ')[1];
+    String selectedPurchaseUnitName = _selectedPurchaseUnit.split(': ')[1];
+
     final selectedUnit = _units.firstWhere(
-      (unit) => unit['name'] == _selectedUnit,
+      (unit) => unit['name'] == selectedUnitName,
       orElse: () => {'category_id': null},
     );
     final selectedPurchaseUnit = _units.firstWhere(
-      (unit) => unit['name'] == _selectedPurchaseUnit,
+      (unit) => unit['name'] == selectedPurchaseUnitName,
       orElse: () => {'category_id': null},
     );
 
@@ -315,6 +445,7 @@ class _AddProductPageState extends State<AddProductPage> {
 
     return selectedUnit['category_id'] == selectedPurchaseUnit['category_id'];
   }
+
   Future<bool> _isBarcodeUnique(String barcode, {int? excludeProductId}) async {
     try {
       final client = await SessionManager.getActiveClient();
@@ -325,7 +456,7 @@ class _AddProductPageState extends State<AddProductPage> {
       ];
       if (excludeProductId != null) {
         domain.add(['id', '!=', excludeProductId.toString()]);
-            }
+      }
 
       final result = await client.callKw({
         'model': 'product.product',
@@ -338,7 +469,10 @@ class _AddProductPageState extends State<AddProductPage> {
         final products = await client.callKw({
           'model': 'product.product',
           'method': 'read',
-          'args': [result, ['name', 'default_code']],
+          'args': [
+            result,
+            ['name', 'default_code']
+          ],
           'kwargs': {},
         });
         debugPrint('Barcode $barcode already assigned to: $products');
@@ -350,15 +484,21 @@ class _AddProductPageState extends State<AddProductPage> {
       return false;
     }
   }
+
   Future<void> _addProduct() async {
+    // Show the loading dialog
+    _showLoadingDialog();
+
     setState(() {
-      _isLoading = true;
+      // _isLoading = true;
     });
 
     if (!_formKey.currentState!.validate()) {
       setState(() {
-        _isLoading = false;
+        // _isLoading = false;
       });
+      // Close the loading dialog
+      Navigator.of(context).pop();
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Please fix the errors in the form.'),
@@ -371,8 +511,10 @@ class _AddProductPageState extends State<AddProductPage> {
 
     if (!_validateUnitCategories()) {
       setState(() {
-        _isLoading = false;
+        // _isLoading = false;
       });
+      // Close the loading dialog
+      Navigator.of(context).pop();
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -383,8 +525,7 @@ class _AddProductPageState extends State<AddProductPage> {
           action: SnackBarAction(
             label: 'Fix',
             textColor: Colors.white,
-            onPressed: () {
-            },
+            onPressed: () {},
           ),
         ),
       );
@@ -394,12 +535,16 @@ class _AddProductPageState extends State<AddProductPage> {
     if (_barcodeController.text.isNotEmpty) {
       final isUnique = await _isBarcodeUnique(
         _barcodeController.text,
-        excludeProductId: widget.productToEdit != null ? int.tryParse(widget.productToEdit!['id'].toString()) : null,
+        excludeProductId: widget.productToEdit != null
+            ? int.tryParse(widget.productToEdit!['id'].toString())
+            : null,
       );
       if (!isUnique) {
         setState(() {
-          _isLoading = false;
+          // _isLoading = false;
         });
+        // Close the loading dialog
+        Navigator.of(context).pop();
         showDialog(
           context: context,
           builder: (context) => AlertDialog(
@@ -429,22 +574,35 @@ class _AddProductPageState extends State<AddProductPage> {
             : 'PROD-${DateTime.now().millisecondsSinceEpoch}',
         'list_price': double.parse(_salePriceController.text),
         'standard_price': double.parse(_costController.text),
-        'barcode': _barcodeController.text.isNotEmpty ? _barcodeController.text : null,
+        'barcode':
+            _barcodeController.text.isNotEmpty ? _barcodeController.text : null,
         'type': 'product',
         'uom_id': _mapUnitToOdooId(_selectedUnit),
         'uom_po_id': _mapUnitToOdooId(_selectedPurchaseUnit),
-        'categ_id': _mapCategoryToOdooId(_selectedCategory),
+        'categ_id': _mapCategoryToOdooId(),
         'description_sale': _descriptionController.text,
-        'weight': _weightController.text.isNotEmpty ? double.parse(_weightController.text) : 0.0,
-        'volume': _volumeController.text.isNotEmpty ? double.parse(_volumeController.text) : 0.0,
+        'weight': _weightController.text.isNotEmpty
+            ? double.parse(_weightController.text)
+            : 0.0,
+        'volume': _volumeController.text.isNotEmpty
+            ? double.parse(_volumeController.text)
+            : 0.0,
         'sale_ok': _canBeSold,
         'purchase_ok': _canBePurchased,
-        'responsible_id': _selectedResponsible.isNotEmpty ? 1 : 0,
-        'invoice_policy': _selectedInvoicePolicy == 'Ordered quantities' ? 'order' : 'delivery',
+        'responsible_id': _selectedResponsibleId,
+        'invoice_policy': _selectedInvoicePolicy == 'Ordered quantities'
+            ? 'order'
+            : 'delivery',
         'tracking': _mapTrackingToOdoo(_selectedInventoryTracking),
-        'sale_delay': _customerLeadTimeController.text.isNotEmpty ? double.parse(_customerLeadTimeController.text) : 0.0,
-        'reordering_min_qty': _reorderMinController.text.isNotEmpty ? double.parse(_reorderMinController.text) : 0.0,
-        'reordering_max_qty': _reorderMaxController.text.isNotEmpty ? double.parse(_reorderMaxController.text) : 0.0,
+        'sale_delay': _customerLeadTimeController.text.isNotEmpty
+            ? double.parse(_customerLeadTimeController.text)
+            : 0.0,
+        'reordering_min_qty': _reorderMinController.text.isNotEmpty
+            ? double.parse(_reorderMinController.text)
+            : 0.0,
+        'reordering_max_qty': _reorderMaxController.text.isNotEmpty
+            ? double.parse(_reorderMaxController.text)
+            : 0.0,
         'expiration_time': _expirationTracking ? 30 : 0,
         'use_expiration_date': _expirationTracking,
         'taxes_id': _selectedSalesTax != 'No Tax' ? [1] : [],
@@ -462,7 +620,8 @@ class _AddProductPageState extends State<AddProductPage> {
           debugPrint('Error processing image: $e');
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('Failed to process product image. Continuing without image.'),
+              content: Text(
+                  'Failed to process product image. Continuing without image.'),
               backgroundColor: Colors.orange,
               duration: const Duration(seconds: 3),
             ),
@@ -480,10 +639,12 @@ class _AddProductPageState extends State<AddProductPage> {
         try {
           parsedId = int.parse(widget.productToEdit!['id'].toString());
         } catch (e) {
-          throw Exception('Invalid product ID format: ${widget.productToEdit!['id']}');
+          throw Exception(
+              'Invalid product ID format: ${widget.productToEdit!['id']}');
         }
 
-        debugPrint('Checking product with ID: $parsedId (Type: ${parsedId.runtimeType})');
+        debugPrint(
+            'Checking product with ID: $parsedId (Type: ${parsedId.runtimeType})');
 
         final productExists = await client.callKw({
           'model': 'product.product',
@@ -497,7 +658,8 @@ class _AddProductPageState extends State<AddProductPage> {
         });
 
         if (productExists.isEmpty) {
-          throw Exception('Product with ID $parsedId does not exist or has been deleted');
+          throw Exception(
+              'Product with ID $parsedId does not exist or has been deleted');
         }
 
         debugPrint('Updating product with ID: $parsedId');
@@ -516,7 +678,6 @@ class _AddProductPageState extends State<AddProductPage> {
 
         debugPrint('Product updated successfully with ID: $productId');
       } else {
-
         debugPrint('Creating new product...');
         productId = await client.callKw({
           'model': 'product.product',
@@ -525,10 +686,12 @@ class _AddProductPageState extends State<AddProductPage> {
           'kwargs': {},
         });
 
-        debugPrint('New product created with ID: $productId (Type: ${productId.runtimeType})');
+        debugPrint(
+            'New product created with ID: $productId (Type: ${productId.runtimeType})');
       }
 
-      if (_quantityController.text.isNotEmpty && int.parse(_quantityController.text) > 0) {
+      if (_quantityController.text.isNotEmpty &&
+          int.parse(_quantityController.text) > 0) {
         debugPrint('Creating initial inventory...');
         await client.callKw({
           'model': 'stock.quant',
@@ -574,13 +737,17 @@ class _AddProductPageState extends State<AddProductPage> {
       }
 
       debugPrint('Refreshing product list...');
-      final salesProvider = Provider.of<SalesOrderProvider>(context, listen: false);
+      final salesProvider =
+          Provider.of<SalesOrderProvider>(context, listen: false);
       await salesProvider.loadProducts();
       _availableProducts = salesProvider.products.cast<ProductItem>();
       _needsProductRefresh = true;
       debugPrint('Product list refreshed');
       HapticFeedback.mediumImpact();
       _productImage = null;
+
+      // Close the loading dialog
+      Navigator.of(context).pop();
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -608,23 +775,29 @@ class _AddProductPageState extends State<AddProductPage> {
       if (e.toString().contains('odoo.exceptions.ValidationError')) {
         if (e.toString().contains('Barcode(s) already assigned')) {
           errorMessage =
-          'The barcode "${_barcodeController.text}" is already assigned to another product. Please enter a different barcode or leave it blank.';
+              'The barcode "${_barcodeController.text}" is already assigned to another product. Please enter a different barcode or leave it blank.';
           showRetry = true;
-        } else if (e.toString().contains('The default Unit of Measure and the purchase Unit of Measure must be in the same category')) {
+        } else if (e.toString().contains(
+            'The default Unit of Measure and the purchase Unit of Measure must be in the same category')) {
           errorMessage =
-          'The Unit of Measure and Purchase Unit of Measure must belong to the same category (e.g., both units or both weights). Please select compatible units.';
+              'The Unit of Measure and Purchase Unit of Measure must belong to the same category (e.g., both units or both weights). Please select compatible units.';
           showRetry = true;
         } else {
-          errorMessage = 'Invalid product data. Please check all fields and try again.';
+          errorMessage =
+              'Invalid product data. Please check all fields and try again.';
           showRetry = true;
         }
       } else if (e.toString().contains('No active session found')) {
         errorMessage = 'Session expired. Please log in again.';
         showRetry = false;
-      } else if (e.toString().contains('Product with ID') && e.toString().contains('does not exist')) {
+      } else if (e.toString().contains('Product with ID') &&
+          e.toString().contains('does not exist')) {
         errorMessage = 'The product you are trying to update no longer exists.';
         showRetry = false;
       }
+
+      // Close the loading dialog
+      Navigator.of(context).pop();
 
       showDialog(
         context: context,
@@ -649,10 +822,11 @@ class _AddProductPageState extends State<AddProductPage> {
       );
     } finally {
       setState(() {
-        _isLoading = false;
+        // _isLoading = false;
       });
     }
   }
+
   String _mapTrackingToOdoo(String tracking) {
     switch (tracking) {
       case 'No tracking':
@@ -716,19 +890,21 @@ class _AddProductPageState extends State<AddProductPage> {
         'kwargs': {},
       });
 
-      await _fetchCategories();
-      setState(() => _selectedCategory = categoryId.toString());
+      await _fetchCategories(); // Refresh categories to include new one
+      setState(() => selectedCategoryId = categoryId);
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-            content: Text('Category created successfully'),
-            backgroundColor: Colors.green),
+          content: Text('Category created successfully'),
+          backgroundColor: Colors.green,
+        ),
       );
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-            content: Text('Error creating category: $e'),
-            backgroundColor: Colors.red),
+          content: Text('Error creating category: $e'),
+          backgroundColor: Colors.red,
+        ),
       );
     }
   }
@@ -745,6 +921,7 @@ class _AddProductPageState extends State<AddProductPage> {
     _fetchVendors();
     _fetchCategories();
     _fetchUnits();
+    _fetchUsers();
 
     if (widget.productToEdit != null) {
       _initializeFormWithProductData();
@@ -771,9 +948,11 @@ class _AddProductPageState extends State<AddProductPage> {
           (_units.isNotEmpty ? _units[0]['name'] : '');
       _selectedPurchaseUnit = product['uom_po_id']?[1]?.toString() ??
           (_units.isNotEmpty ? _units[0]['name'] : '');
-      _selectedCategory = product['categ_id']?[1]?.toString() ??
-          (_categories.isNotEmpty ? _categories[0]['name'] : '');
-      _selectedResponsible = product['responsible_id']?[1]?.toString() ?? '';
+      selectedCategoryId =
+          product['categ_id'] is List ? product['categ_id'][0] : null;
+      _selectedResponsibleId = product['responsible_id'] is List
+          ? product['responsible_id'][0]
+          : null;
       _canBeSold = product['sale_ok'] ?? true;
       _canBePurchased = product['purchase_ok'] ?? true;
       _expirationTracking = product['use_expiration_date'] ?? false;
@@ -869,6 +1048,52 @@ class _AddProductPageState extends State<AddProductPage> {
     );
   }
 
+  void _showLoadingDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        backgroundColor: Colors.white,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 28.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.save_rounded, color: primaryColor, size: 32),
+                  const SizedBox(width: 16),
+                  const Text(
+                    'Saving Changes',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              CircularProgressIndicator(
+                strokeWidth: 3,
+                color: primaryColor,
+                backgroundColor: Colors.grey.shade200,
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'Please wait while we save your changes.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 14,
+                  color: Colors.grey.shade600,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -960,16 +1185,31 @@ class _AddProductPageState extends State<AddProductPage> {
                     return null;
                   },
                 ),
-                _buildDropdownField(
-                  label: 'Responsible',
-                  value: _selectedResponsible.isEmpty
-                      ? 'Select Responsible'
-                      : _selectedResponsible,
-                  items: ['Select Responsible', ..._users],
-                  onChanged: (val) => setState(() => _selectedResponsible =
-                      val == 'Select Responsible' ? '' : val),
-                  validator: (val) {
-                    if (val == null || val == 'Select Responsible') {
+                DropdownButtonFormField<int>(
+                  decoration: InputDecoration(
+                    labelText: 'Responsible',
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  value: _selectedResponsibleId,
+                  items: [
+                    const DropdownMenuItem<int>(
+                      value: null,
+                      child: Text('Select Responsible'),
+                    ),
+                    ..._users.map((user) => DropdownMenuItem<int>(
+                          value: user['id'],
+                          child: Text(user['name']),
+                        )),
+                  ],
+                  onChanged: (value) {
+                    setState(() {
+                      _selectedResponsibleId = value;
+                    });
+                  },
+                  validator: (value) {
+                    if (value == null) {
                       return 'Please select a responsible person';
                     }
                     return null;
@@ -1064,65 +1304,90 @@ class _AddProductPageState extends State<AddProductPage> {
                 ),
                 _isLoadingUnits
                     ? const CircularProgressIndicator()
-                    : _buildDropdownField(
+                    : _buildDropdownFieldUnits(
                         label: 'Unit of Measure',
                         value: _selectedUnit.isEmpty && _units.isNotEmpty
                             ? _units[0]['name']
                             : _selectedUnit,
                         items: _units
-                            .map((unit) => unit['name'].toString())
+                            .map((unit) =>
+                                '${unit['category_name']}: ${unit['name']}')
                             .toList(),
                         onChanged: (val) => setState(() => _selectedUnit = val),
-                        validator: (val) {
-                          if (val == null ||
-                              !_units.any((unit) => unit['name'] == val)) {
-                            return 'Please select a valid unit of measure';
-                          }
-                          return null;
-                        },
+                        // validator: (val) {
+                        //   if (val == null ||
+                        //       !_units.any((unit) => unit['name'] == val)) {
+                        //     return 'Please select a valid unit of measure';
+                        //   }
+                        //   return null;
+                        // },
                       ),
                 _isLoadingUnits
                     ? const CircularProgressIndicator()
-                    : _buildDropdownField(
+                    : _buildDropdownFieldUnits(
                         label: 'Purchase Unit of Measure',
                         value:
                             _selectedPurchaseUnit.isEmpty && _units.isNotEmpty
                                 ? _units[0]['name']
                                 : _selectedPurchaseUnit,
                         items: _units
-                            .map((unit) => unit['name'].toString())
+                            .map((unit) =>
+                                '${unit['category_name']}: ${unit['name']}')
                             .toList(),
                         onChanged: (val) =>
                             setState(() => _selectedPurchaseUnit = val),
-                        validator: (val) {
-                          if (val == null ||
-                              !_units.any((unit) => unit['name'] == val)) {
-                            return 'Please select a valid purchase unit';
-                          }
-                          return null;
-                        },
+                        // validator: (val) {
+                        //   if (val == null ||
+                        //       !_units.any((unit) => unit['name'] == val)) {
+                        //     return 'Please select a valid purchase unit';
+                        //   }
+                        //   return null;
+                        // },
                       ),
                 _isLoadingCategories
                     ? const CircularProgressIndicator()
-                    : _buildDropdownField(
-                        label: 'Category',
-                        value:
-                            _selectedCategory.isEmpty && _categories.isNotEmpty
-                                ? _categories[0]['name']
-                                : _selectedCategory,
-                        items: _categories
-                            .map((category) => category['name'].toString())
-                            .toList(),
-                        onChanged: (val) =>
-                            setState(() => _selectedCategory = val),
-                        validator: (val) {
-                          if (val == null ||
-                              !_categories
-                                  .any((category) => category['name'] == val)) {
-                            return 'Please select a valid category';
-                          }
-                          return null;
+                    : DropdownButtonFormField<int>(
+                        decoration: InputDecoration(
+                          labelText: 'Category',
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        value: selectedCategoryId,
+                        items: categoriesWithPath.map((category) {
+                          int level =
+                              category['level'] - 1; // 0-based indentation
+                          String indent = '  ' * level; // 2 spaces per level
+
+                          return DropdownMenuItem<int>(
+                            value: category['id'],
+                            child: Container(
+                              width: double.infinity,
+                              child: Text(
+                                '$indent${category['display_name']}',
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: level == 0 ? 14 : 13,
+                                  fontWeight: level == 0
+                                      ? FontWeight.w600
+                                      : FontWeight.normal,
+                                  color: level == 0
+                                      ? Colors.black87
+                                      : Colors.black54,
+                                ),
+                              ),
+                            ),
+                          );
+                        }).toList(),
+                        onChanged: (value) {
+                          setState(() {
+                            selectedCategoryId = value;
+                          });
                         },
+                        validator: (value) =>
+                            value == null ? 'Please select a category' : null,
+                        isExpanded: true,
+                        menuMaxHeight: 300,
                       ),
                 _buildTextField(
                   controller: _minOrderQuantityController,
@@ -1355,8 +1620,7 @@ class _AddProductPageState extends State<AddProductPage> {
                     ),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: _isLoading
-                          ? primaryColor.withOpacity(
-                              0.7)
+                          ? primaryColor.withOpacity(0.7)
                           : primaryColor,
                       padding: const EdgeInsets.symmetric(
                           horizontal: 32, vertical: 12),
@@ -1364,9 +1628,7 @@ class _AddProductPageState extends State<AddProductPage> {
                         borderRadius: BorderRadius.circular(12),
                       ),
                     ),
-                    onPressed: _isLoading
-                        ? null
-                        : _addProduct,
+                    onPressed: _isLoading ? null : _addProduct,
                   ),
                 ),
               ],
@@ -1397,7 +1659,6 @@ class _AddProductPageState extends State<AddProductPage> {
     );
   }
 }
-
 
 extension ProductItemExtension on ProductItem {
   List<String> get units => [

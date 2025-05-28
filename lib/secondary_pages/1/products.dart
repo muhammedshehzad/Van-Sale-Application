@@ -39,9 +39,9 @@ class _ProductsPageState extends State<ProductsPage> {
         'initState: Initial availableProducts count: ${widget.availableProducts.length}');
     if (widget.availableProducts.isEmpty) {
       setState(() {
-        _isLoading = true; // Start loading
+        _isLoading = true;
       });
-      _refreshProducts(); // Trigger product loading if empty
+      _refreshProducts();
     } else {
       _initializeProductTemplates();
       _restoreDraftState();
@@ -319,13 +319,13 @@ class _ProductsPageState extends State<ProductsPage> {
   }
 
   Future<void> _showVariantsDialog(
-    BuildContext context,
-    Map<String, dynamic> template,
-    OdooClient odooClient,
-    Map<String, String>? selectedAttributes,
-  ) async {
+      BuildContext context,
+      Map<String, dynamic> template,
+      OdooClient odooClient,
+      Map<String, String>? selectedAttributes,
+      ) async {
     final variants =
-        (template['variants'] as List<dynamic>).cast<Product>().toList();
+    (template['variants'] as List<dynamic>).cast<Product>().toList();
     if (variants.isEmpty) return;
 
     final deviceSize = MediaQuery.of(context).size;
@@ -352,7 +352,6 @@ class _ProductsPageState extends State<ProductsPage> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  // Header
                   Container(
                     padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
@@ -383,7 +382,6 @@ class _ProductsPageState extends State<ProductsPage> {
                       ],
                     ),
                   ),
-                  // Variants list
                   Flexible(
                     child: FutureBuilder<
                         List<Map<Product, List<Map<String, String>>>>>(
@@ -400,20 +398,24 @@ class _ProductsPageState extends State<ProductsPage> {
                           return const VariantsDialogShimmer();
                         }
                         if (snapshot.hasError) {
+                          developer.log(
+                              'showVariantsDialog: Error loading variants: ${snapshot.error}');
                           return const Center(
                               child: Text('Error loading variants'));
                         }
                         final variantAttributes = snapshot.data ?? [];
 
-                        // Filter unique variants by default_code and attributes
                         final uniqueVariants =
-                            <String, Map<Product, List<Map<String, String>>>>{};
+                        <String, Map<Product, List<Map<String, String>>>>{};
                         for (var entry in variantAttributes) {
                           final variant = entry.keys.first;
                           final attrs = entry.values.first;
                           final key =
                               '${variant.defaultCode ?? variant.id}_${attrs.map((a) => '${a['attribute_name']}:${a['value_name']}').join('|')}';
                           uniqueVariants[key] = entry;
+                          // Debug: Log variant attributes
+                          developer.log(
+                              'showVariantsDialog: Variant ${variant.id} attributes = $attrs');
                         }
 
                         return ListView.separated(
@@ -428,7 +430,7 @@ class _ProductsPageState extends State<ProductsPage> {
                           ),
                           itemBuilder: (context, index) {
                             final entry =
-                                uniqueVariants.values.elementAt(index);
+                            uniqueVariants.values.elementAt(index);
                             final variant = entry.keys.first;
                             final attributes = entry.values.first;
                             return _buildVariantListItem(
@@ -452,7 +454,6 @@ class _ProductsPageState extends State<ProductsPage> {
       },
     );
   }
-
   Widget _buildVariantListItem({
     required Product variant,
     required BuildContext dialogContext,
@@ -484,18 +485,30 @@ class _ProductsPageState extends State<ProductsPage> {
     bool isSelected = false;
     if (selectedAttributes != null) {
       isSelected = attributes.every((attr) =>
-          selectedAttributes[attr['attribute_name']] == attr['value_name']);
+      selectedAttributes[attr['attribute_name']] == attr['value_name']);
     }
 
     return InkWell(
       onTap: () async {
         Navigator.of(dialogContext).pop();
+        // Construct selectedAttributes from attributes list
+        final variantAttributes = Map<String, String>.fromEntries(
+          attributes.map((attr) => MapEntry(
+            attr['attribute_name']!,
+            attr['value_name']!,
+          )),
+        );
+        // Debug: Log navigation and attributes
+        developer.log(
+            'buildVariantListItem: Navigating to ProductDetailsPage for variant ${variant.id}, selectedAttributes = $variantAttributes');
         await Navigator.push(
           context,
           SlidingPageTransitionRL(
             page: ProductDetailsPage(
               productId: variant.id,
-              selectedAttributes: variant.selectedVariants,
+              selectedAttributes: variantAttributes.isNotEmpty
+                  ? variantAttributes
+                  : null, // Pass null if no attributes
             ),
           ),
         );
@@ -506,7 +519,6 @@ class _ProductsPageState extends State<ProductsPage> {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Product image
             Container(
               width: 60,
               height: 60,
@@ -519,55 +531,54 @@ class _ProductsPageState extends State<ProductsPage> {
                 borderRadius: BorderRadius.circular(8),
                 child: imageUrl != null && imageUrl.isNotEmpty
                     ? (imageUrl.startsWith('http')
-                        ? CachedNetworkImage(
-                            imageUrl: imageUrl,
-                            httpHeaders: {
-                              "Cookie":
-                                  "session_id=${Provider.of<CylloSessionModel>(context, listen: false).sessionId}",
-                            },
-                            width: 60,
-                            height: 60,
-                            fit: BoxFit.cover,
-                            progressIndicatorBuilder:
-                                (context, url, downloadProgress) => SizedBox(
-                              width: 60,
-                              height: 60,
-                              child: Center(
-                                child: CircularProgressIndicator(
-                                  value: downloadProgress.progress,
-                                  strokeWidth: 2,
-                                  color: primaryColor,
-                                ),
-                              ),
-                            ),
-                            errorWidget: (context, url, error) {
-                              return const Icon(
-                                Icons.inventory_2_rounded,
-                                color: primaryColor,
-                                size: 24,
-                              );
-                            },
-                          )
-                        : Image.memory(
-                            imageBytes!,
-                            fit: BoxFit.cover,
-                            errorBuilder: (context, error, stackTrace) {
-                              return const Icon(
-                                Icons.inventory_2_rounded,
-                                color: primaryColor,
-                                size: 24,
-                              );
-                            },
-                          ))
-                    : const Icon(
-                        Icons.inventory_2_rounded,
+                    ? CachedNetworkImage(
+                  imageUrl: imageUrl,
+                  httpHeaders: {
+                    "Cookie":
+                    "session_id=${Provider.of<CylloSessionModel>(context, listen: false).sessionId}",
+                  },
+                  width: 60,
+                  height: 60,
+                  fit: BoxFit.cover,
+                  progressIndicatorBuilder:
+                      (context, url, downloadProgress) => SizedBox(
+                    width: 60,
+                    height: 60,
+                    child: Center(
+                      child: CircularProgressIndicator(
+                        value: downloadProgress.progress,
+                        strokeWidth: 2,
                         color: primaryColor,
-                        size: 24,
                       ),
+                    ),
+                  ),
+                  errorWidget: (context, url, error) {
+                    return const Icon(
+                      Icons.inventory_2_rounded,
+                      color: primaryColor,
+                      size: 24,
+                    );
+                  },
+                )
+                    : Image.memory(
+                  imageBytes!,
+                  fit: BoxFit.cover,
+                  errorBuilder: (context, error, stackTrace) {
+                    return const Icon(
+                      Icons.inventory_2_rounded,
+                      color: primaryColor,
+                      size: 24,
+                    );
+                  },
+                ))
+                    : const Icon(
+                  Icons.inventory_2_rounded,
+                  color: primaryColor,
+                  size: 24,
+                ),
               ),
             ),
             const SizedBox(width: 12),
-            // Product details
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -583,17 +594,15 @@ class _ProductsPageState extends State<ProductsPage> {
                     overflow: TextOverflow.ellipsis,
                   ),
                   const SizedBox(height: 6),
-                  // Attributes section
                   if (attributes.isNotEmpty)
                     Text(
                       attributes
                           .map((attr) =>
-                              '${attr['attribute_name']}: ${attr['value_name']}')
+                      '${attr['attribute_name']}: ${attr['value_name']}')
                           .join(', '),
                       style: TextStyle(color: Colors.grey[600], fontSize: 12),
                     ),
                   const SizedBox(height: 6),
-                  // SKU and price row
                   Row(
                     children: [
                       Container(
@@ -625,7 +634,6 @@ class _ProductsPageState extends State<ProductsPage> {
                     ],
                   ),
                   const SizedBox(height: 6),
-                  // Stock status
                   Container(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 6,
@@ -651,7 +659,6 @@ class _ProductsPageState extends State<ProductsPage> {
                 ],
               ),
             ),
-            // Arrow icon
             Icon(
               Icons.chevron_right,
               color: Colors.grey[600],
@@ -662,7 +669,6 @@ class _ProductsPageState extends State<ProductsPage> {
       ),
     );
   }
-
   List<String> nameParts(String name) {
     final parts = name.split(' [');
     if (parts.length > 1) {
@@ -698,12 +704,12 @@ class _ProductsPageState extends State<ProductsPage> {
               prefixIcon: const Icon(Icons.search, color: Colors.grey),
               suffixIcon: searchController.text.isNotEmpty
                   ? IconButton(
-                      icon: const Icon(Icons.clear, color: Colors.grey),
-                      onPressed: () {
-                        searchController.clear();
-                        _filterProductTemplates('');
-                      },
-                    )
+                icon: const Icon(Icons.clear, color: Colors.grey),
+                onPressed: () {
+                  searchController.clear();
+                  _filterProductTemplates('');
+                },
+              )
                   : null,
               filled: true,
               fillColor: Colors.white,
@@ -730,11 +736,11 @@ class _ProductsPageState extends State<ProductsPage> {
             unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.w500),
             tabs: categories
                 .map((category) => Tab(
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 8.0),
-                        child: Text(category),
-                      ),
-                    ))
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                child: Text(category),
+              ),
+            ))
                 .toList(),
           ),
           const SizedBox(height: 10),
@@ -744,90 +750,143 @@ class _ProductsPageState extends State<ProductsPage> {
                 final filteredByCategory = category == 'All Products'
                     ? filteredProductTemplates
                     : filteredProductTemplates
-                        .where((p) => p['category'] == category)
-                        .toList();
+                    .where((p) => p['category'] == category)
+                    .toList();
                 developer.log(
                     'buildProductsList: Category "$category" has ${filteredByCategory.length} templates');
 
                 return filteredByCategory.isEmpty
                     ? Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(Icons.inventory_2_outlined,
-                                size: 48, color: Colors.grey[400]),
-                            const SizedBox(height: 8),
-                            Text(
-                              searchController.text.isNotEmpty
-                                  ? 'No products found for "${searchController.text}"'
-                                  : 'No products in this category',
-                              style: TextStyle(
-                                  color: Colors.grey[600],
-                                  fontStyle: FontStyle.italic),
-                              textAlign: TextAlign.center,
-                            ),
-                          ],
-                        ),
-                      )
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.inventory_2_outlined,
+                          size: 48, color: Colors.grey[400]),
+                      const SizedBox(height: 8),
+                      Text(
+                        searchController.text.isNotEmpty
+                            ? 'No products found for "${searchController.text}"'
+                            : 'No products in this category',
+                        style: TextStyle(
+                            color: Colors.grey[600],
+                            fontStyle: FontStyle.italic),
+                        textAlign: TextAlign.center,
+                      ),
+                    ],
+                  ),
+                )
                     : RefreshIndicator(
-                        onRefresh: _refreshProducts,
-                        color: const Color(0xFF1F2C54),
-                        child: ListView.builder(
-                          physics: const AlwaysScrollableScrollPhysics(),
-                          itemCount: filteredByCategory.length,
-                          itemBuilder: (context, index) {
-                            final template = filteredByCategory[index];
-                            return GestureDetector(
-                              onTap: () async {
-                                if (template['variants'].length > 1) {
-                                  final odooClient =
-                                      await SessionManager.getActiveClient();
-                                  if (odooClient == null) {
-                                    developer.log(
-                                        'Error: Failed to initialize OdooClient');
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(
-                                        content: Text(
-                                            'Unable to load variants: Session not initialized'),
-                                        backgroundColor: Colors.red,
-                                        behavior: SnackBarBehavior.floating,
-                                      ),
-                                    );
-                                    return;
-                                  }
+                  onRefresh: _refreshProducts,
+                  color: const Color(0xFF1F2C54),
+                  child: ListView.builder(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    itemCount: filteredByCategory.length,
+                    itemBuilder: (context, index) {
+                      final template = filteredByCategory[index];
+                      return GestureDetector(
+                        onTap: () async {
+                          if (template['variants'].length > 1) {
+                            final odooClient =
+                            await SessionManager.getActiveClient();
+                            if (odooClient == null) {
+                              developer.log(
+                                  'buildProductsList: Error: Failed to initialize OdooClient');
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text(
+                                      'Unable to load variants: Session not initialized'),
+                                  backgroundColor: Colors.red,
+                                  behavior: SnackBarBehavior.floating,
+                                ),
+                              );
+                              return;
+                            }
 
-                                  Map<String, String>? selectedAttributes;
-                                  if (template['variants'].isNotEmpty) {
-                                    selectedAttributes =
-                                        (template['variants'][0] as Product)
-                                            .selectedVariants;
-                                  }
-                                  await _showVariantsDialog(
-                                    context,
-                                    template,
-                                    odooClient,
-                                    selectedAttributes,
-                                  );
-                                } else {
-                                  await Navigator.push(
-                                    context,
-                                    SlidingPageTransitionRL(
-                                      page: ProductDetailsPage(
-                                        productId: template['variants'][0].id,
-                                        selectedAttributes:
-                                            (template['variants'][0] as Product)
-                                                .selectedVariants,
-                                      ),
-                                    ),
-                                  );
-                                  _refreshProducts();
-                                }
-                              },
-                              child: _buildProductCard(template),
+                            Map<String, String>? selectedAttributes;
+                            if (template['variants'].isNotEmpty) {
+                              final firstVariant =
+                              template['variants'][0] as Product;
+                              // Fetch attributes if selectedVariants is null or empty
+                              if (firstVariant.selectedVariants == null ||
+                                  firstVariant
+                                      .selectedVariants!.isEmpty) {
+                                final attributes =
+                                await _fetchVariantAttributes(
+                                  odooClient,
+                                  firstVariant
+                                      .productTemplateAttributeValueIds,
+                                );
+                                selectedAttributes = attributes.fold<Map<String, String>>({},
+                                        (map, attr) {
+                                      if (attr['attribute_name'] != null && attr['value_name'] != null) {
+                                        map[attr['attribute_name']!] = attr['value_name']!;
+                                      }
+                                      return map;
+                                    }
+                                );
+                              } else {
+                                selectedAttributes =
+                                    firstVariant.selectedVariants;
+                              }
+                              // Debug: Log selectedAttributes
+                              developer.log(
+                                  'buildProductsList: Variants dialog for template ${template['name']}, selectedAttributes = $selectedAttributes');
+                            }
+                             _showVariantsDialog(
+                              context,
+                              template,
+                              odooClient,
+                              selectedAttributes,
                             );
-                          },
-                        ),
+                          } else {
+                            final variant =
+                            template['variants'][0] as Product;
+                            Map<String, String>? selectedAttributes;
+                            // Fetch attributes if selectedVariants is null or empty
+                            if (variant.selectedVariants == null ||
+                                variant.selectedVariants!.isEmpty) {
+                              final odooClient =
+                              await SessionManager.getActiveClient();
+                              if (odooClient != null) {
+                                final attributes =
+                                await _fetchVariantAttributes(
+                                  odooClient,
+                                  variant
+                                      .productTemplateAttributeValueIds,
+                                );
+                                selectedAttributes = Map.fromEntries(
+                                  attributes.map((attr) => MapEntry(
+                                    attr['attribute_name']!,
+                                    attr['value_name']!,
+                                  )),
+                                );
+                              }
+                            } else {
+                              selectedAttributes =
+                                  variant.selectedVariants;
+                            }
+                            // Debug: Log navigation and attributes
+                            developer.log(
+                              'buildProductsList: Navigating to ProductDetailsPage for productId ${variant.id}, selectedAttributes = $selectedAttributes',
+                            );
+                            await Navigator.push(
+                              context,
+                              SlidingPageTransitionRL(
+                                page: ProductDetailsPage(
+                                  productId: variant.id,
+                                  selectedAttributes:
+                                  selectedAttributes,
+                                ),
+                              ),
+                            );
+                            _refreshProducts();
+                          }
+                        },
+                        child: _buildProductCard(template),
                       );
+                    },
+                  ),
+                );
               }).toList(),
             ),
           ),
@@ -835,7 +894,6 @@ class _ProductsPageState extends State<ProductsPage> {
       ),
     );
   }
-
   Widget _buildProductCard(Map<String, dynamic> template) {
     final imageUrl = template['imageUrl'] as String?;
     Uint8List? imageBytes;
@@ -1045,9 +1103,9 @@ class _ProductsPageState extends State<ProductsPage> {
 }
 
 Future<List<Map<String, String>>> _fetchVariantAttributes(
-  OdooClient odooClient,
-  List<int> attributeValueIds,
-) async {
+    OdooClient odooClient,
+    List<int> attributeValueIds,
+    ) async {
   try {
     final attributeValueResult = await odooClient.callKw({
       'model': 'product.template.attribute.value',
@@ -1085,14 +1143,19 @@ Future<List<Map<String, String>>> _fetchVariantAttributes(
         },
       });
 
+      // Debug: Log fetched attribute
+      developer.log(
+          'fetchVariantAttributes: Fetched attribute - name=${attributeData[0]['name']}, value=${valueData[0]['name']}');
       attributes.add({
         'attribute_name': attributeData[0]['name'] as String,
         'value_name': valueData[0]['name'] as String,
       });
     }
+    // Debug: Log all attributes
+    developer.log('fetchVariantAttributes: attributes = $attributes}');
     return attributes;
   } catch (e) {
-    developer.log("Error fetching variant attributes: $e");
+    developer.log('fetchVariantAttributes: Error fetching attributes: $e');
     return [];
   }
 }
@@ -1280,141 +1343,99 @@ class ProductPageShimmer extends StatelessWidget {
   }
 }
 
-// Shimmer for Variants Dialog
 class VariantsDialogShimmer extends StatelessWidget {
   const VariantsDialogShimmer({Key? key}) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        // Shimmer for Dialog Header
-        Shimmer.fromColors(
-          baseColor: Colors.grey[300]!,
-          highlightColor: Colors.grey[100]!,
-          child: Container(
-            padding: const EdgeInsets.all(16),
-            decoration: const BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.only(
-                topLeft: Radius.circular(16),
-                topRight: Radius.circular(16),
-              ),
-            ),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Container(
-                    height: 18,
-                    color: Colors.white,
-                  ),
-                ),
-                Container(
-                  width: 24,
-                  height: 24,
-                  color: Colors.white,
-                ),
-              ],
-            ),
-          ),
-        ),
-        // Shimmer for Variants List
-        Flexible(
-          child: ListView.separated(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            shrinkWrap: true,
-            itemCount: 3,
-            // Number of shimmer variant items
-            separatorBuilder: (context, index) => const Divider(
-              height: 1,
-              thickness: 1,
-              indent: 16,
-              endIndent: 16,
-            ),
-            itemBuilder: (context, index) => _buildVariantListItemShimmer(),
-          ),
-        ),
-      ],
+    return ListView.separated(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      shrinkWrap: true,
+      itemCount: 4, // Number of shimmer variant items
+      separatorBuilder: (context, index) => const Divider(
+        height: 1,
+        thickness: 1,
+        indent: 16,
+        endIndent: 16,
+      ),
+      itemBuilder: (context, index) => _buildVariantListItemShimmer(),
     );
   }
 
   Widget _buildVariantListItemShimmer() {
-    return Expanded(
-      child: Padding(
-        padding: const EdgeInsets.all(8.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // Shimmer for Variant Name
-            Shimmer.fromColors(
-              baseColor: Colors.grey[300]!,
-              highlightColor: Colors.grey[100]!,
-              child: Container(
-                width: double.infinity,
-                height: 15,
-                color: Colors.white,
-              ),
+    return Padding(
+      padding: const EdgeInsets.all(8.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Shimmer for Variant Name
+          Shimmer.fromColors(
+            baseColor: Colors.grey[300]!,
+            highlightColor: Colors.grey[100]!,
+            child: Container(
+              width: double.infinity,
+              height: 15,
+              color: Colors.white,
             ),
-            const SizedBox(height: 6),
-            // Shimmer for Attributes
-            Shimmer.fromColors(
-              baseColor: Colors.grey[300]!,
-              highlightColor: Colors.grey[100]!,
-              child: Container(
-                width: 150,
-                height: 12,
-                color: Colors.white,
-              ),
+          ),
+          const SizedBox(height: 6),
+          // Shimmer for Attributes
+          Shimmer.fromColors(
+            baseColor: Colors.grey[300]!,
+            highlightColor: Colors.grey[100]!,
+            child: Container(
+              width: 150,
+              height: 12,
+              color: Colors.white,
             ),
-            const SizedBox(height: 6),
-            // Shimmer for SKU and Price
-            Row(
-              children: [
-                Shimmer.fromColors(
-                  baseColor: Colors.grey[300]!,
-                  highlightColor: Colors.grey[100]!,
-                  child: Container(
-                    width: 80,
-                    height: 12,
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(4),
-                    ),
+          ),
+          const SizedBox(height: 6),
+          // Shimmer for SKU and Price
+          Row(
+            children: [
+              Shimmer.fromColors(
+                baseColor: Colors.grey[300]!,
+                highlightColor: Colors.grey[100]!,
+                child: Container(
+                  width: 80,
+                  height: 12,
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(4),
                   ),
                 ),
-                const SizedBox(width: 8),
-                Shimmer.fromColors(
-                  baseColor: Colors.grey[300]!,
-                  highlightColor: Colors.grey[100]!,
-                  child: Container(
-                    width: 60,
-                    height: 12,
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(4),
-                    ),
+              ),
+              const SizedBox(width: 8),
+              Shimmer.fromColors(
+                baseColor: Colors.grey[300]!,
+                highlightColor: Colors.grey[100]!,
+                child: Container(
+                  width: 60,
+                  height: 12,
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(4),
                   ),
                 ),
-              ],
-            ),
-            const SizedBox(height: 6),
-            // Shimmer for Stock Status
-            Shimmer.fromColors(
-              baseColor: Colors.grey[300]!,
-              highlightColor: Colors.grey[100]!,
-              child: Container(
-                width: 80,
-                height: 12,
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(4),
-                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          // Shimmer for Stock Status
+          Shimmer.fromColors(
+            baseColor: Colors.grey[300]!,
+            highlightColor: Colors.grey[100]!,
+            child: Container(
+              width: 80,
+              height: 12,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(4),
               ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }

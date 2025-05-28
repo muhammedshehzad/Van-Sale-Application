@@ -26,6 +26,8 @@ class _EditProductPageState extends State<EditProductPage> {
   bool _isSaving = false;
   Map<String, dynamic> _productData = {};
   File? _productImage;
+  Map<int, TextEditingController> _variantStockControllers = {};
+  late Map<int, TextEditingController> _variantPriceControllers;
 
   // Form field controllers
   final _nameController = TextEditingController();
@@ -39,7 +41,6 @@ class _EditProductPageState extends State<EditProductPage> {
   final _stockQuantityController = TextEditingController();
 
   // Dropdown selections
-  int? _selectedCategoryId;
   List<Map<String, dynamic>> _categories = [];
   List<int> _selectedTaxIds = [];
   List<Map<String, dynamic>> _taxes = [];
@@ -48,6 +49,9 @@ class _EditProductPageState extends State<EditProductPage> {
   int? _selectedExpenseAccountId;
   List<Map<String, dynamic>> _expenseAccounts = [];
   List<Map<String, dynamic>> _variants = [];
+  List<Map<String, dynamic>> categories = [];
+  List<Map<String, dynamic>> categoriesWithPath = [];
+  int? selectedCategoryId;
 
   // Attributes with IDs for better tracking
   List<Map<String, dynamic>> _attributes = [];
@@ -55,6 +59,7 @@ class _EditProductPageState extends State<EditProductPage> {
   @override
   void initState() {
     super.initState();
+    _variantPriceControllers = {};
     _initializeOdooClient();
   }
 
@@ -85,11 +90,13 @@ class _EditProductPageState extends State<EditProductPage> {
         'method': 'search_read',
         'args': [[]],
         'kwargs': {
-          'fields': ['id', 'name']
+          'fields': ['id', 'name', 'parent_id', 'complete_name']
         },
       });
       setState(() {
-        _categories = List<Map<String, dynamic>>.from(categoryResult);
+        categories = List<Map<String, dynamic>>.from(categoryResult);
+        // Build hierarchical paths
+        categoriesWithPath = buildCategoryPaths(categories);
       });
 
       // Load taxes
@@ -124,6 +131,67 @@ class _EditProductPageState extends State<EditProductPage> {
         SnackBar(content: Text('Error loading dropdown options: $e')),
       );
     }
+  }
+
+// Method to build category paths
+  List<Map<String, dynamic>> buildCategoryPaths(
+      List<Map<String, dynamic>> categories) {
+    List<Map<String, dynamic>> result = [];
+
+    for (var category in categories) {
+      String displayName;
+
+      // If Odoo provides complete_name, use it (it includes the full path)
+      if (category['complete_name'] != null &&
+          category['complete_name'].toString().isNotEmpty) {
+        displayName = category['complete_name'];
+      } else {
+        // Build path manually if complete_name is not available
+        displayName = buildCategoryPath(category, categories);
+      }
+
+      result.add({
+        'id': category['id'],
+        'name': category['name'],
+        'display_name': displayName,
+        'parent_id': category['parent_id'],
+        'level': countPathLevel(displayName),
+      });
+    }
+
+    // Sort by hierarchy level and then alphabetically
+    result.sort((a, b) {
+      int levelCompare = a['level'].compareTo(b['level']);
+      if (levelCompare != 0) return levelCompare;
+      return a['display_name'].compareTo(b['display_name']);
+    });
+
+    return result;
+  }
+
+// Build category path recursively
+  String buildCategoryPath(
+      Map<String, dynamic> category, List<Map<String, dynamic>> allCategories) {
+    if (category['parent_id'] == null || category['parent_id'] == false) {
+      return category['name'];
+    }
+
+    // Find parent category
+    var parentId = category['parent_id'] is List
+        ? category['parent_id'][0]
+        : category['parent_id'];
+    var parent = allCategories.firstWhere(
+      (cat) => cat['id'] == parentId,
+      orElse: () => {'name': 'Unknown', 'parent_id': null},
+    );
+
+    String parentPath = buildCategoryPath(parent, allCategories);
+    return '$parentPath / ${category['name']}';
+  }
+
+// Count the hierarchy level based on separators
+  int countPathLevel(String path) {
+    return path.split(' / ').length;
   }
 
   Future<void> _loadProductData() async {
@@ -286,6 +354,8 @@ class _EditProductPageState extends State<EditProductPage> {
             'id': variant['id'],
             'name': variant['name'],
             'qty_available': variant['qty_available']?.toInt() ?? 0,
+            'original_qty_available': variant['qty_available']?.toInt() ?? 0,
+            // Added
             'list_price': variant['list_price']?.toDouble() ?? 0.0,
             'attributes': variantAttributes,
           });
@@ -310,6 +380,14 @@ class _EditProductPageState extends State<EditProductPage> {
         setState(() {
           _productData = productData;
           _variants = variants;
+          for (var variant in _variants) {
+            _variantStockControllers[variant['id']] = TextEditingController(
+              text: variant['qty_available'].toString(), // Fixed key
+            );
+            _variantPriceControllers[variant['id']] = TextEditingController(
+              text: variant['list_price'].toString(),
+            );
+          }
           _nameController.text = _productData['name'] ?? '';
           _defaultCodeController.text = _productData['default_code'] is String
               ? _productData['default_code']
@@ -329,7 +407,7 @@ class _EditProductPageState extends State<EditProductPage> {
           _stockQuantityController.text = _productData['qty_available'] != null
               ? _productData['qty_available'].toInt().toString()
               : '0';
-          _selectedCategoryId = _productData['categ_id'] is List
+          selectedCategoryId = _productData['categ_id'] is List
               ? _productData['categ_id'][0]
               : null;
           _selectedTaxIds = _productData['taxes_id'] is List
@@ -362,6 +440,53 @@ class _EditProductPageState extends State<EditProductPage> {
     }
   }
 
+  void _showLoadingDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        backgroundColor: Colors.white,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 28.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.save_rounded, color: primaryColor, size: 32),
+                  const SizedBox(width: 16),
+                  const Text(
+                    'Saving Changes',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              CircularProgressIndicator(
+                strokeWidth: 3,
+                color: primaryColor,
+                backgroundColor: Colors.grey.shade200,
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'Please wait while we save your changes.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 14,
+                  color: Colors.grey.shade600,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Future<void> _pickImage() async {
     final picker = ImagePicker();
     final pickedFile = await picker.pickImage(source: ImageSource.gallery);
@@ -376,9 +501,9 @@ class _EditProductPageState extends State<EditProductPage> {
   Future<void> _saveProduct() async {
     if (!_formKey.currentState!.validate()) return;
 
-    setState(() => _isSaving = true);
+    _showLoadingDialog(); // Show loading dialog
+    // setState(() => _isSaving = true);
     try {
-      // Save product template data
       final productData = {
         'name': _nameController.text,
         'default_code': _defaultCodeController.text,
@@ -388,7 +513,7 @@ class _EditProductPageState extends State<EditProductPage> {
         'weight': double.parse(_weightController.text),
         'volume': double.parse(_volumeController.text),
         'description_sale': _descriptionController.text,
-        'categ_id': _selectedCategoryId,
+        'categ_id': selectedCategoryId,
         'taxes_id': [
           [6, 0, _selectedTaxIds]
         ],
@@ -396,22 +521,9 @@ class _EditProductPageState extends State<EditProductPage> {
         'property_account_expense_id': _selectedExpenseAccountId,
       };
 
-      // Process the product image
-      if (_productImage != null) {
-        try {
-          final bytes = await _productImage!.readAsBytes();
-          final base64Image = base64Encode(bytes);
-          productData['image_1920'] = base64Image;
-        } catch (e) {
-          developer.log('Error processing image: $e');
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Error processing image: $e')),
-          );
-        }
-      }
+      developer.log("Saving product data: ${jsonEncode(productData)}");
 
-      // Update the main product
-      await _odooClient.callKw({
+      final result = await _odooClient.callKw({
         'model': 'product.product',
         'method': 'write',
         'args': [
@@ -421,21 +533,133 @@ class _EditProductPageState extends State<EditProductPage> {
         'kwargs': {},
       });
 
-      // Update variants
+      developer.log("Odoo write response for main product: $result");
+
       for (var variant in _variants) {
-        await _odooClient.callKw({
-          'model': 'product.product',
-          'method': 'write',
-          'args': [
-            [variant['id']],
-            {
-              'qty_available': variant['qty_available'],
-              'list_price': variant['list_price'],
+        if (variant['list_price'] <= 0) {
+          developer.log(
+              "Invalid list_price for variant ${variant['id']}: ${variant['list_price']}");
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+                content: Text(
+                    'Sales price for variant ${variant['id']} must be positive')),
+          );
+          continue;
+        }
+        try {
+          developer.log(
+              "Updating variant ${variant['id']} with list_price: ${variant['list_price']}");
+          await _odooClient.callKw({
+            'model': 'product.product',
+            'method': 'write',
+            'args': [
+              [variant['id']],
+              {
+                'list_price': variant['list_price'],
+              }
+            ],
+            'kwargs': {},
+          });
+          developer.log(
+              "Successfully updated list_price for variant ${variant['id']}");
+        } catch (e) {
+          developer.log(
+              "Error updating list_price for variant ${variant['id']}: $e");
+          throw e;
+        }
+
+        final newQuantity = variant['qty_available'];
+        final originalQuantity = variant['original_qty_available'];
+        final productId = variant['id'];
+
+        if (newQuantity != originalQuantity) {
+          developer.log(
+              "Stock quantity changed for variant $productId: $originalQuantity -> $newQuantity");
+          final locationResult = await _odooClient.callKw({
+            'model': 'stock.location',
+            'method': 'search_read',
+            'args': [
+              [
+                ['usage', '=', 'internal']
+              ]
+            ],
+            'kwargs': {
+              'fields': ['id'],
+              'limit': 1,
+            },
+          });
+
+          if (locationResult.isEmpty) {
+            throw Exception('No internal stock location found');
+          }
+          final locationId = locationResult[0]['id'];
+
+          try {
+            final quantResult = await _odooClient.callKw({
+              'model': 'stock.quant',
+              'method': 'search_read',
+              'args': [
+                [
+                  ['product_id', '=', productId],
+                  ['location_id', '=', locationId],
+                ]
+              ],
+              'kwargs': {
+                'fields': ['id', 'quantity'],
+              },
+            });
+
+            if (quantResult.isNotEmpty) {
+              final quantId = quantResult[0]['id'];
+              await _odooClient.callKw({
+                'model': 'stock.quant',
+                'method': 'write',
+                'args': [
+                  [quantId],
+                  {'quantity': newQuantity}
+                ],
+                'kwargs': {},
+              });
+              developer.log(
+                  "Updated stock quant $quantId for variant $productId to $newQuantity");
+            } else {
+              await _odooClient.callKw({
+                'model': 'stock.quant',
+                'method': 'create',
+                'args': [
+                  {
+                    'product_id': productId,
+                    'location_id': locationId,
+                    'quantity': newQuantity,
+                  }
+                ],
+                'kwargs': {},
+              });
+              developer.log(
+                  "Created new stock quant for variant $productId with quantity $newQuantity");
             }
-          ],
-          'kwargs': {},
-        });
+          } catch (e) {
+            if (e.toString().contains('stock.quant')) {
+              developer
+                  .log("Stock module not available, skipping stock update: $e");
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text(
+                      'Stock updates are not supported without the Inventory module.'),
+                ),
+              );
+            } else {
+              developer.log("Error updating stock for variant $productId: $e");
+              throw e;
+            }
+          }
+        } else {
+          developer.log(
+              "No stock quantity change for variant $productId, skipping update");
+        }
       }
+
+      await _loadProductData();
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -443,12 +667,22 @@ class _EditProductPageState extends State<EditProductPage> {
       );
       Navigator.pop(context);
     } catch (e) {
-      developer.log("Error saving product: $e");
+      String errorMessage = 'Error saving product';
+      if (e is OdooException) {
+        errorMessage = 'Odoo Error: ${e.message}';
+        developer.log("Odoo Exception: ${e.message}, Details: ${e.toString()}");
+      } else {
+        errorMessage = 'Error saving product: $e';
+        developer
+            .log("Unexpected error: $e, Stack trace: ${StackTrace.current}");
+      }
+
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error saving product: $e')),
+        SnackBar(content: Text(errorMessage)),
       );
     } finally {
-      setState(() => _isSaving = false);
+      // setState(() => _isSaving = false);
+      Navigator.of(context).pop(); // Dismiss loading dialog
     }
   }
 
@@ -488,7 +722,7 @@ class _EditProductPageState extends State<EditProductPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
             content:
-                Text('Attribute "${attribute['name']}" removed from product')),
+            Text('Attribute "${attribute['name']}" removed from product')),
       );
 
       await _loadProductData();
@@ -515,7 +749,6 @@ class _EditProductPageState extends State<EditProductPage> {
       );
     }
   }
-
   void _showAttributeDialog([Map<String, dynamic>? attribute]) {
     showDialog(
       context: context,
@@ -552,6 +785,8 @@ class _EditProductPageState extends State<EditProductPage> {
     _volumeController.dispose();
     _descriptionController.dispose();
     _stockQuantityController.dispose();
+    _variantStockControllers.forEach((_, controller) => controller.dispose());
+    _variantPriceControllers.forEach((_, controller) => controller.dispose());
     _odooClient.close();
     super.dispose();
   }
@@ -566,7 +801,7 @@ class _EditProductPageState extends State<EditProductPage> {
         elevation: 0,
       ),
       body: _isLoading
-          ?  Center(child: buildEditProductPageShimmer(context))
+          ? Center(child: buildEditProductPageShimmer(context))
           : SingleChildScrollView(
               padding: const EdgeInsets.all(16.0),
               child: Form(
@@ -636,20 +871,42 @@ class _EditProductPageState extends State<EditProductPage> {
                         labelText: 'Category',
                         border: OutlineInputBorder(),
                       ),
-                      value: _selectedCategoryId,
-                      items: _categories.map((category) {
+                      value: selectedCategoryId,
+                      items: categoriesWithPath.map((category) {
+                        int level =
+                            category['level'] - 1; // 0-based indentation
+                        String indent = '  ' * level; // 2 spaces per level
+
                         return DropdownMenuItem<int>(
                           value: category['id'],
-                          child: Text(category['name']),
+                          child: Container(
+                            width: double.infinity,
+                            child: Text(
+                              '$indent${category['display_name']}',
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: level == 0 ? 14 : 13,
+                                fontWeight: level == 0
+                                    ? FontWeight.w600
+                                    : FontWeight.normal,
+                                color: level == 0
+                                    ? Colors.black87
+                                    : Colors.black54,
+                              ),
+                            ),
+                          ),
                         );
                       }).toList(),
                       onChanged: (value) {
                         setState(() {
-                          _selectedCategoryId = value;
+                          selectedCategoryId = value;
                         });
                       },
                       validator: (value) =>
                           value == null ? 'Please select a category' : null,
+                      isExpanded: true,
+                      // This prevents overflow issues
+                      menuMaxHeight: 300, // Limit dropdown height
                     ),
                     const SizedBox(height: 16),
 
@@ -667,6 +924,13 @@ class _EditProductPageState extends State<EditProductPage> {
                         if (double.tryParse(value) == null)
                           return 'Invalid number';
                         return null;
+                      },
+                      onChanged: (value) {
+                        // Update all variants' sales price when the main price changes
+                        final newPrice = double.tryParse(value) ?? 0.0;
+                        for (var variant in _variants) {
+                          variant['list_price'] = newPrice;
+                        }
                       },
                     ),
                     const SizedBox(height: 16),
@@ -942,10 +1206,6 @@ class _EditProductPageState extends State<EditProductPage> {
                       const SizedBox(height: 8),
                     ],
                     const SizedBox(height: 16),
-// Add this in the Column of the Form widget in the build method
-                    // Add this in the Column of the Form widget in the build method
-                    // In the build method, variants section
-                    const SizedBox(height: 16),
                     const Text(
                       'Variants',
                       style:
@@ -964,10 +1224,10 @@ class _EditProductPageState extends State<EditProductPage> {
                         final variantId = variant['id'];
                         final variantAttributes =
                             variant['attributes'] as List<Map<String, dynamic>>;
-                        final stockController = TextEditingController(
-                            text: variant['qty_available'].toString());
-                        final priceController = TextEditingController(
-                            text: variant['list_price'].toString());
+                        final stockController =
+                            _variantStockControllers[variantId]!;
+                        final priceController =
+                            _variantPriceControllers[variantId];
 
                         return Card(
                           margin: const EdgeInsets.symmetric(vertical: 4.0),
@@ -1012,8 +1272,15 @@ class _EditProductPageState extends State<EditProductPage> {
                                     FilteringTextInputFormatter.digitsOnly,
                                   ],
                                   onChanged: (value) {
-                                    variant['qty_available'] =
-                                        int.tryParse(value) ?? 0;
+                                    final newQty = int.tryParse(value);
+                                    if (newQty != null && newQty >= 0) {
+                                      variant['qty_available'] = newQty;
+                                      developer.log(
+                                          "Updated qty_available for variant $variantId: $newQty");
+                                    } else {
+                                      developer.log(
+                                          "Invalid stock quantity input for variant $variantId: $value");
+                                    }
                                   },
                                 ),
                                 const SizedBox(height: 8),
@@ -1033,8 +1300,11 @@ class _EditProductPageState extends State<EditProductPage> {
                                     return null;
                                   },
                                   onChanged: (value) {
-                                    variant['list_price'] =
+                                    final newPrice =
                                         double.tryParse(value) ?? 0.0;
+                                    variant['list_price'] = newPrice;
+                                    developer.log(
+                                        "Updated list_price for variant $variantId: $newPrice");
                                   },
                                 ),
                               ],
@@ -1271,7 +1541,7 @@ class _AttributeDialogState extends State<_AttributeDialog> {
       } else {
         await _createNewAttribute();
       }
-
+      Navigator.pop(context);
       Navigator.pop(context);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -1308,7 +1578,10 @@ class _AttributeDialogState extends State<_AttributeDialog> {
       );
     } finally {
       setState(() => _isSaving = false);
+      Navigator.pop(context);
+
     }
+
   }
 
   Future<void> _updateExistingAttribute() async {
@@ -1598,7 +1871,6 @@ class _AttributeDialogState extends State<_AttributeDialog> {
   }
 }
 
-
 Widget buildEditProductPageShimmer(BuildContext context) {
   return Shimmer.fromColors(
     baseColor: Colors.grey[300]!,
@@ -1641,61 +1913,7 @@ Widget buildEditProductPageShimmer(BuildContext context) {
               borderRadius: BorderRadius.circular(4),
             ),
           ),
-          const SizedBox(height: 16),
 
-          // Barcode TextField Placeholder
-          Container(
-            width: double.infinity,
-            height: 56,
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(4),
-            ),
-          ),
-          const SizedBox(height: 16),
-
-          // Category Dropdown Placeholder
-          Container(
-            width: double.infinity,
-            height: 56,
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(4),
-            ),
-          ),
-          const SizedBox(height: 16),
-
-          // Sales Price TextField Placeholder
-          Container(
-            width: double.infinity,
-            height: 56,
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(4),
-            ),
-          ),
-          const SizedBox(height: 16),
-
-          // Cost TextField Placeholder
-          Container(
-            width: double.infinity,
-            height: 56,
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(4),
-            ),
-          ),
-          const SizedBox(height: 16),
-
-          // Weight TextField Placeholder
-          Container(
-            width: double.infinity,
-            height: 56,
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(4),
-            ),
-          ),
           const SizedBox(height: 16),
 
           // Volume TextField Placeholder
@@ -1709,18 +1927,6 @@ Widget buildEditProductPageShimmer(BuildContext context) {
           ),
           const SizedBox(height: 16),
 
-          // Stock Quantity TextField Placeholder
-          Container(
-            width: double.infinity,
-            height: 56,
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(4),
-            ),
-          ),
-          const SizedBox(height: 16),
-
-          // Taxes Dropdown and Chips Placeholder
           Container(
             width: double.infinity,
             height: 56,
@@ -1733,8 +1939,8 @@ Widget buildEditProductPageShimmer(BuildContext context) {
           Wrap(
             spacing: 8,
             children: List.generate(
-              2, // Simulate 2 selected taxes
-                  (index) => Container(
+              3,
+              (index) => Container(
                 width: 80,
                 height: 32,
                 decoration: BoxDecoration(
@@ -1815,7 +2021,7 @@ Widget buildEditProductPageShimmer(BuildContext context) {
           // Attribute Cards Placeholder (2 attributes)
           ...List.generate(
             2,
-                (index) => Card(
+            (index) => Card(
               margin: const EdgeInsets.symmetric(vertical: 4.0),
               elevation: 0,
               shape: RoundedRectangleBorder(
@@ -1823,7 +2029,8 @@ Widget buildEditProductPageShimmer(BuildContext context) {
                 side: BorderSide(color: Colors.grey.shade200),
               ),
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
@@ -1890,7 +2097,7 @@ Widget buildEditProductPageShimmer(BuildContext context) {
           // Variant Cards Placeholder (2 variants)
           ...List.generate(
             2,
-                (index) => Card(
+            (index) => Card(
               margin: const EdgeInsets.symmetric(vertical: 4.0),
               elevation: 0,
               shape: RoundedRectangleBorder(

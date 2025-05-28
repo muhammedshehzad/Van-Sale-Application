@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
@@ -40,6 +41,7 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
   bool showCustomerDetails = false;
   bool showDeliveryDetails = false;
   bool showInvoiceDetails = false;
+  bool _isMounted = true;
 
   @override
   void initState() {
@@ -50,6 +52,7 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
   @override
   void dispose() {
     _tabController.dispose();
+    _isMounted = false;
     super.dispose();
   }
 
@@ -142,7 +145,10 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                                     style: ElevatedButton.styleFrom(
                                         backgroundColor:
                                             const Color(0xFF1976D2)),
-                                    child: const Text('Retry'),
+                                    child: Text(
+                                      'Retry',
+                                      style: TextStyle(color: Colors.white),
+                                    ),
                                   ),
                                 ],
                               ),
@@ -174,6 +180,52 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
   }
 
   Future<void> generateSaleOrderPdf(BuildContext context) async {
+    // Show loading dialog
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        backgroundColor: Colors.white,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 28.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.download_rounded, color: primaryColor, size: 32),
+                  const SizedBox(width: 16),
+                  const Text(
+                    'Generating Sale Order',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              CircularProgressIndicator(
+                strokeWidth: 3,
+                color: primaryColor,
+                backgroundColor: Colors.grey.shade200,
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'Please wait while we generate your sale order.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 14,
+                  color: Colors.grey.shade600,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
     final provider =
         Provider.of<SaleOrderDetailProvider>(context, listen: false);
     final orderData = provider.orderDetails!;
@@ -766,10 +818,46 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
       final safeFilename = 'SO_$orderCode.pdf';
 
       await Printing.sharePdf(bytes: await pdf.save(), filename: safeFilename);
-    } catch (e) {
+
+      // Show success message
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to generate PDF: $e')),
+        SnackBar(
+          content: Row(
+            children: const [
+              Icon(Icons.check_circle, color: Colors.white),
+              SizedBox(width: 8),
+              Text('Sale order generated successfully'),
+            ],
+          ),
+          backgroundColor: Colors.green.shade600,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          duration: const Duration(seconds: 3),
+          margin: const EdgeInsets.all(16),
+        ),
       );
+    } catch (e) {
+      print('Failed to generate sale order: $e');
+
+      // Show error message
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.error_outline, color: Colors.white),
+              const SizedBox(width: 8),
+              Expanded(child: Text('Failed to generate sale order: $e')),
+            ],
+          ),
+          backgroundColor: Colors.red.shade600,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          duration: const Duration(seconds: 4),
+          margin: const EdgeInsets.all(16),
+        ),
+      );
+    } finally {
+      Navigator.of(context).pop(); // Close loading dialog
     }
   }
 
@@ -2414,10 +2502,11 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                                                     style: TextStyle(
                                                         color: Colors.white),
                                                   ),
-                                                  onPressed: () {
+                                                  onPressed: () async {
                                                     debugPrint(
                                                         'Navigating to InvoiceDetailsPage with invoice: $invoice');
-                                                    Navigator.push(
+                                                    final result =
+                                                        await Navigator.push(
                                                       context,
                                                       SlidingPageTransitionRL(
                                                         page:
@@ -2441,14 +2530,19 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                                                           },
                                                         ),
                                                       ),
-                                                    ).then((result) {
-                                                      if (result == true) {
-                                                        Provider.of<SaleOrderDetailProvider>(
-                                                                context,
-                                                                listen: false)
-                                                            .fetchOrderDetails();
-                                                      }
-                                                    });
+                                                    );
+                                                    if (result == true &&
+                                                        mounted) {
+                                                      await provider
+                                                          .fetchOrderDetails();
+                                                      ScaffoldMessenger.of(
+                                                              context)
+                                                          .showSnackBar(
+                                                        const SnackBar(
+                                                            content: Text(
+                                                                'Invoice details updated')),
+                                                      );
+                                                    }
                                                   },
                                                   style:
                                                       ElevatedButton.styleFrom(
@@ -2470,30 +2564,34 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                                       );
                                     },
                                   ),
-                                  if (invoices.any((invoice) =>
-                                          invoice['state'] == 'cancel') ||
-                                      invoices.every((invoice) =>
-                                          invoice['state'] == 'draft'))
-                                    TextButton(
-                                      onPressed: () async {
-                                        Navigator.push(
-                                          context,
-                                          SlidingPageTransitionRL(
-                                            page: InvoiceCreationPage(
-                                                saleOrderData: orderData),
-                                          ),
-                                        ).then((result) {
-                                          if (result == true) {
-                                            Provider.of<SaleOrderDetailProvider>(
-                                                    context,
-                                                    listen: false)
-                                                .fetchOrderDetails();
-                                          }
-                                        });
-                                      },
-                                      child: const Text(
-                                        'Create Draft Invoice',
-                                        style: TextStyle(color: primaryColor),
+                                  if (orderData['state'] == 'sale' &&
+                                      orderData['invoice_status'] ==
+                                          'to invoice')
+                                    SizedBox(
+                                      width: double.infinity,
+                                      child: TextButton(
+                                        onPressed: () async {
+                                          debugPrint(
+                                              'Sale Order Data before navigation: ${jsonEncode(orderData)}');
+                                          Navigator.push(
+                                            context,
+                                            SlidingPageTransitionRL(
+                                              page: InvoiceCreationPage(
+                                                  saleOrderData: orderData),
+                                            ),
+                                          ).then((result) {
+                                            if (result == true) {
+                                              Provider.of<SaleOrderDetailProvider>(
+                                                      context,
+                                                      listen: false)
+                                                  .fetchOrderDetails();
+                                            }
+                                          });
+                                        },
+                                        child: const Text(
+                                            'Create Draft Invoice',
+                                            style:
+                                                TextStyle(color: primaryColor)),
                                       ),
                                     ),
                                 ],
@@ -2586,23 +2684,26 @@ class _SaleOrderDetailPageState extends State<SaleOrderDetailPage>
                               ),
                               TextButton(
                                 onPressed: () async {
+                                  Navigator.pop(context);
                                   try {
                                     await provider.cancelSaleOrder(
                                         provider.orderDetails!['id'] as int);
-                                    Navigator.pop(context);
+                                    if (_isMounted && context.mounted) {
+                                      Navigator.pop(
+                                          context); // Safely pop the page
+                                    }
                                     ScaffoldMessenger.of(context).showSnackBar(
                                       const SnackBar(
                                           content: Text(
                                               'Order cancelled successfully')),
                                     );
-                                    Navigator.pop(context);
                                   } catch (e) {
-                                    Navigator.pop(context);
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(
-                                          content: Text(
-                                              'Failed to cancel order: $e')),
-                                    );
+                                    if (_isMounted && context.mounted) {
+                                      ScaffoldMessenger.of(context)
+                                          .showSnackBar(
+                                        SnackBar(content: Text('Error: $e')),
+                                      );
+                                    }
                                   }
                                 },
                                 child: const Text('Yes'),

@@ -2269,7 +2269,11 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
                           final tracking =
                               line['tracking'] as String? ?? 'none';
                           final quantity = line['quantity'] as double;
-                          return tracking == 'lot' && quantity > 0;
+                          final lotName = line['lot_name'];
+                          return tracking == 'lot' &&
+                              quantity > 0 &&
+                              lotName != null &&
+                              lotName != false;
                         })) ...[
                           _buildSection(
                             'Lot Numbers',
@@ -2279,11 +2283,14 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
                           ),
                           const SizedBox(height: 24),
                         ],
-                        _buildSection(
-                          'Delivery Notes',
-                          Icons.note_outlined,
-                          _buildNotesSection(context, pickingDetail),
-                        ),
+                        if (_noteController.text.isNotEmpty ||
+                            pickingDetail['state'] != 'done') ...[
+                          _buildSection(
+                            'Delivery Notes',
+                            Icons.note_outlined,
+                            _buildNotesSection(context, pickingDetail),
+                          ),
+                        ],
                         if (pickingDetail['state'] != 'done') ...[
                           const SizedBox(height: 32),
                           _buildConfirmButton(
@@ -2370,6 +2377,55 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
                   label: 'Print',
                   color: Colors.grey[800] ?? Colors.grey,
                   onPressed: () async {
+                    // Show loading dialog
+                    showDialog(
+                      context: context,
+                      barrierDismissible: false,
+                      builder: (_) => Dialog(
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                        backgroundColor: Colors.white,
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 24.0, vertical: 28.0),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Row(
+                                children: [
+                                  Icon(Icons.print_rounded,
+                                      color: primaryColor, size: 32),
+                                  const SizedBox(width: 16),
+                                  const Text(
+                                    'Preparing to Print',
+                                    style: TextStyle(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 16),
+                              CircularProgressIndicator(
+                                strokeWidth: 3,
+                                color: primaryColor,
+                                backgroundColor: Colors.grey.shade200,
+                              ),
+                              const SizedBox(height: 16),
+                              Text(
+                                'Please wait while we prepare your delivery slip for printing.',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  color: Colors.grey[600],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    );
+
                     try {
                       final deliveryDetails = await _deliveryDetailsFuture;
                       if (deliveryDetails == null) {
@@ -2403,16 +2459,50 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
                       );
                       if (mounted) {
                         ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                              content: Text('Printing delivery slip...')),
+                          SnackBar(
+                            content: Row(
+                              children: const [
+                                Icon(Icons.check_circle, color: Colors.white),
+                                SizedBox(width: 8),
+                                Text('Delivery slip sent to printer'),
+                              ],
+                            ),
+                            backgroundColor: Colors.green.shade600,
+                            behavior: SnackBarBehavior.floating,
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8)),
+                            duration: const Duration(seconds: 3),
+                            margin: const EdgeInsets.all(16),
+                          ),
                         );
                       }
                     } catch (e, s) {
                       debugPrint('Error while printing: $e\nStack trace:\n$s');
                       if (mounted) {
                         ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text('Failed to generate PDF: $e')),
+                          SnackBar(
+                            content: Row(
+                              children: [
+                                const Icon(Icons.error_outline,
+                                    color: Colors.white),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                    child: Text(
+                                        'Failed to print delivery slip: $e')),
+                              ],
+                            ),
+                            backgroundColor: Colors.red.shade600,
+                            behavior: SnackBarBehavior.floating,
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8)),
+                            duration: const Duration(seconds: 4),
+                            margin: const EdgeInsets.all(16),
+                          ),
                         );
+                      }
+                    } finally {
+                      if (mounted) {
+                        Navigator.of(context).pop(); // Close loading dialog
                       }
                     }
                   },
@@ -2466,9 +2556,53 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
   }
 
   Future<void> _emailDeliverySlip() async {
-    try {
-      setState(() => _isLoading = true);
+    // Show loading dialog
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        backgroundColor: Colors.white,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 28.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.email_rounded, color: primaryColor, size: 32),
+                  const SizedBox(width: 16),
+                  const Text(
+                    'Preparing Email',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              CircularProgressIndicator(
+                strokeWidth: 3,
+                color: primaryColor,
+                backgroundColor: Colors.grey.shade200,
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'Please wait while we prepare your delivery slip for emailing.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 14,
+                  color: Colors.grey[600],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
 
+    try {
       final deliveryDetails = await _deliveryDetailsFuture;
       if (deliveryDetails == null) {
         throw Exception('Delivery details are not available');
@@ -2535,7 +2669,7 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
       final subject = 'Delivery Slip - $pickingName';
       final body =
           'Please find attached the delivery slip for $pickingName.\n\n'
-          "Receiver Mail:\n$customerEmail\n";
+          'Receiver Mail:\n$customerEmail\n';
 
       final emailAddress =
           customerEmail is String ? customerEmail : customerEmail.toString();
@@ -2559,9 +2693,20 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Mail app opened with draft and PDF attached'),
-            backgroundColor: Colors.green,
+          SnackBar(
+            content: Row(
+              children: const [
+                Icon(Icons.check_circle, color: Colors.white),
+                SizedBox(width: 8),
+                Text('Mail app opened with draft and PDF attached'),
+              ],
+            ),
+            backgroundColor: Colors.green.shade600,
+            behavior: SnackBarBehavior.floating,
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            duration: const Duration(seconds: 3),
+            margin: const EdgeInsets.all(16),
           ),
         );
       }
@@ -2573,14 +2718,25 @@ class _DeliveryDetailsPageState extends State<DeliveryDetailsPage>
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Failed to prepare email: ${e.toString()}'),
-            backgroundColor: Colors.red,
+            content: Row(
+              children: [
+                const Icon(Icons.error_outline, color: Colors.white),
+                const SizedBox(width: 8),
+                Expanded(child: Text('Failed to prepare email: $e')),
+              ],
+            ),
+            backgroundColor: Colors.red.shade600,
+            behavior: SnackBarBehavior.floating,
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            duration: const Duration(seconds: 4),
+            margin: const EdgeInsets.all(16),
           ),
         );
       }
     } finally {
       if (mounted) {
-        setState(() => _isLoading = false);
+        Navigator.of(context).pop(); // Close loading dialog
       }
     }
   }

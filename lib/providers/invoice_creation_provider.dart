@@ -81,6 +81,10 @@ String _numberToWords(double amount) {
 class InvoiceCreationProvider extends ChangeNotifier {
   bool _isLoading = false;
   String _errorMessage = '';
+  bool _invoiceBalanceOnly = true;
+
+  bool get invoiceBalanceOnly => _invoiceBalanceOnly;
+
   List<Map<String, dynamic>> _invoiceLines = [];
   List<Map<String, dynamic>> _availableProducts = [];
   List<Map<String, dynamic>> _availableCustomers = [];
@@ -147,6 +151,12 @@ class InvoiceCreationProvider extends ChangeNotifier {
   int? get fiscalPositionId => _fiscalPositionId;
 
   int? get salespersonId => _salespersonId;
+
+  void setInvoiceMode(bool balanceOnly) {
+    _invoiceBalanceOnly = balanceOnly;
+    _updateFromSaleOrder(_saleOrderData); // Rebuild invoice lines based on mode
+    notifyListeners();
+  }
 
   double get amountUntaxed => _invoiceLines.fold(
         0.0,
@@ -243,7 +253,6 @@ class InvoiceCreationProvider extends ChangeNotifier {
     _fiscalPositionId = saleOrderData['fiscal_position_id'] is List
         ? saleOrderData['fiscal_position_id'][0]
         : null;
-
     _journalId =
         _availableJournals.isNotEmpty ? _availableJournals[0]['id'] : null;
 
@@ -262,25 +271,46 @@ class InvoiceCreationProvider extends ChangeNotifier {
     final orderLinesRaw = saleOrderData['line_details'] ?? [];
     final orderLines = orderLinesRaw is List
         ? orderLinesRaw
-            .where((line) => line is Map)
+            .where((line) =>
+                line is Map &&
+                line['id'] != null) // Filter out lines without an ID
             .map((line) => Map<String, dynamic>.from(line as Map))
             .toList()
         : <Map<String, dynamic>>[];
 
-    _invoiceLines = orderLines
-        .where((line) => (line['product_uom_qty'] as num? ?? 0) > 0)
-        .map((line) {
+    debugPrint('Order lines before filtering:');
+    for (var line in orderLines) {
+      debugPrint(
+          'Line: ${line['name']}, product_uom_qty: ${line['product_uom_qty']}, qty_invoiced: ${line['qty_invoiced']}, id: ${line['id']}');
+    }
+
+    _invoiceLines = orderLines.where((line) {
+      if (_invoiceBalanceOnly) {
+        // Balance invoice mode: only include lines with remaining quantities
+        final productUomQty = (line['product_uom_qty'] as num? ?? 0).toDouble();
+        final qtyInvoiced = (line['qty_invoiced'] as num? ?? 0).toDouble();
+        return productUomQty > qtyInvoiced;
+      }
+      return true; // Regular invoice mode: include all lines
+    }).map((line) {
       final productId = line['product_id'] is List ? line['product_id'][0] : 0;
       final productName =
           line['product_id'] is List ? line['product_id'][1] : line['name'];
+      final productUomQty = (line['product_uom_qty'] as num? ?? 0).toDouble();
+      final qtyInvoiced = (line['qty_invoiced'] as num? ?? 0).toDouble();
+      final quantity =
+          _invoiceBalanceOnly ? (productUomQty - qtyInvoiced) : productUomQty;
       return {
+        'id': line['id'],
         'product_id': [productId, productName ?? 'Unknown'],
         'name': line['name']?.toString() ?? 'Unknown',
         'description': line['name']?.toString() ?? '',
-        'quantity': (line['product_uom_qty'] as num?)?.toDouble() ?? 1.0,
+        'quantity': quantity,
         'price_unit': (line['price_unit'] as num?)?.toDouble() ?? 0.0,
-        'price_subtotal': (line['price_subtotal'] as num?)?.toDouble() ?? 0.0,
-        'price_total': (line['price_subtotal'] as num?)?.toDouble() ?? 0.0,
+        'price_subtotal':
+            ((line['price_unit'] as num?)?.toDouble() ?? 0.0) * quantity,
+        'price_total':
+            ((line['price_unit'] as num?)?.toDouble() ?? 0.0) * quantity,
         'discount': (line['discount'] as num?)?.toDouble() ?? 0.0,
         'tax_ids': line['tax_id'] is List ? line['tax_id'] : [],
         'default_code': line['default_code']?.toString() ?? 'N/A',
@@ -288,8 +318,12 @@ class InvoiceCreationProvider extends ChangeNotifier {
         'selected_attributes': [],
       };
     }).toList();
-
-    debugPrint('Updated invoice lines: $_invoiceLines');
+    debugPrint(
+        'Invoice lines after filtering (mode: ${_invoiceBalanceOnly ? "Balance" : "Regular"}):');
+    for (var line in _invoiceLines) {
+      debugPrint(
+          'Product: ${line['name']}, Quantity: ${line['quantity']}, ID: ${line['id']}');
+    }
     notifyListeners();
   }
 
@@ -659,97 +693,124 @@ class InvoiceCreationProvider extends ChangeNotifier {
         throw Exception('No active session');
       }
       debugPrint('Active client obtained successfully');
+
+      // Fetch sale order details
       final saleOrderData = await client.callKw({
         'model': 'sale.order',
         'method': 'read',
         'args': [
           [saleOrderId],
-          ['name'],
+          ['name', 'partner_id', 'order_line', 'payment_term_id'],
         ],
         'kwargs': {},
       });
       if (saleOrderData.isEmpty) {
         throw Exception('Sale order with ID $saleOrderId not found');
       }
-      final saleOrderName = saleOrderData[0]['name'] as String;
-      final existingInvoices = await client.callKw({
-        'model': 'account.move',
-        'method': 'search_read',
-        'args': [
-          [
-            ['invoice_origin', '=', saleOrderName],
-            ['move_type', '=', 'out_invoice'],
-            ['state', '!=', 'cancel'],
-          ],
-          ['id', 'name', 'state'],
-        ],
-        'kwargs': {'limit': 1},
-      });
+      final saleOrder = saleOrderData[0];
+      final saleOrderName = saleOrder['name'] as String;
+      final orderLineIds = saleOrder['order_line'] as List<dynamic>? ?? [];
 
-      if (existingInvoices.isNotEmpty) {
-        final existingInvoice = existingInvoices[0];
-        _errorMessage =
-            'An invoice already exists for this sale order: ${existingInvoice['name']} (State: ${existingInvoice['state']})';
+      // Fetch sale order lines to validate quantities
+      final orderLines = orderLineIds.isNotEmpty
+          ? await client.callKw({
+              'model': 'sale.order.line',
+              'method': 'read',
+              'args': [
+                orderLineIds,
+                [
+                  'id',
+                  'product_id',
+                  'name',
+                  'product_uom_qty',
+                  'qty_invoiced',
+                  'price_unit',
+                  'discount',
+                  'tax_id',
+                ],
+              ],
+              'kwargs': {},
+            })
+          : [];
+
+      // Create a map of sale order lines for quick lookup
+      final orderLinesMap = {
+        for (var line in orderLines)
+          line['id']: {
+            'product_id':
+                line['product_id'] is List ? line['product_id'][0] : null,
+            'product_uom_qty':
+                (line['product_uom_qty'] as num? ?? 0).toDouble(),
+            'qty_invoiced': (line['qty_invoiced'] as num? ?? 0).toDouble(),
+          }
+      };
+
+      // Validate invoice lines against sale order lines
+      final invoiceLines = <List<dynamic>>[];
+      for (var line in _invoiceLines) {
+        final saleLineId = line['id'] as int?;
+        final productId =
+            line['product_id'] is List ? line['product_id'][0] : null;
+        final quantity = line['quantity'] as double? ?? 0.0;
+
+        if (saleLineId == null || productId == null) {
+          throw Exception(
+              'Invalid invoice line: Missing sale line ID or product ID');
+        }
+
+        final orderLine = orderLinesMap[saleLineId];
+        if (orderLine == null) {
+          throw Exception('Sale order line ID $saleLineId not found');
+        }
+
+        final productUomQty = orderLine['product_uom_qty'] as double;
+        final qtyInvoiced = orderLine['qty_invoiced'] as double;
+        final remainingQty = productUomQty - qtyInvoiced;
+
+        if (quantity > remainingQty) {
+          throw Exception(
+              'Quantity $quantity for product ${line['name']} exceeds remaining quantity $remainingQty');
+        }
+
+        if (orderLine['product_id'] != productId) {
+          throw Exception(
+              'Product mismatch for sale order line ID $saleLineId');
+        }
+
+        invoiceLines.add([
+          0,
+          0,
+          {
+            'product_id': productId,
+            'name': line['name'],
+            'quantity': quantity,
+            'price_unit': line['price_unit'] as double,
+            'discount': line['discount'] as double? ?? 0.0,
+            'tax_ids': line['tax_ids'] is List
+                ? [
+                    [6, 0, line['tax_ids']]
+                  ]
+                : [
+                    [6, 0, []]
+                  ],
+            'sale_line_ids': [
+              [4, saleLineId]
+            ],
+          }
+        ]);
+      }
+
+      if (invoiceLines.isEmpty) {
+        _errorMessage = 'No products selected for invoicing.';
         _isLoading = false;
         notifyListeners();
-        debugPrint(_errorMessage);
-
-        showProfessionalDraftInvoiceDialog(
-          context,
-          invoiceId: existingInvoice['id'],
-          invoiceName: existingInvoice['name'],
-          state: existingInvoice['state'],
-          alreadyExists: true,
-          onConfirm: () {
-            Navigator.pushReplacement(
-              context,
-              SlidingPageTransitionRL(
-                page: InvoiceDetailsPage(
-                    invoiceId: existingInvoice['id'].toString()),
-              ),
-            );
-          },
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(_errorMessage)),
         );
-
-        return {
-          'already_exists': true,
-          'id': existingInvoice['id'],
-          'name': existingInvoice['name'],
-          'state': existingInvoice['state'],
-        };
+        return null;
       }
 
-      String? saleOrderPaymentTermField;
-      try {
-        final saleOrderFields = await client.callKw({
-          'model': 'ir.model.fields',
-          'method': 'search_read',
-          'args': [
-            [
-              ['model', '=', 'sale.order'],
-              [
-                'name',
-                'in',
-                ['payment_term_id', 'invoice_payment_term_id']
-              ],
-            ],
-            ['name'],
-          ],
-          'kwargs': {},
-        });
-        if (saleOrderFields.isNotEmpty) {
-          saleOrderPaymentTermField = saleOrderFields[0]['name'];
-          debugPrint(
-              'Sale order payment term field: $saleOrderPaymentTermField');
-        } else {
-          debugPrint(
-              'No payment term field found for sale.order. Proceeding without it.');
-        }
-      } catch (e) {
-        debugPrint(
-            'Failed to fetch sale.order fields: $e. Proceeding without payment term.');
-      }
-
+      // Handle payment term field
       String? accountMovePaymentTermField;
       try {
         final accountMoveFields = await client.callKw({
@@ -770,99 +831,15 @@ class InvoiceCreationProvider extends ChangeNotifier {
         });
         if (accountMoveFields.isNotEmpty) {
           accountMovePaymentTermField = accountMoveFields[0]['name'];
-          debugPrint(
-              'Account move payment term field: $accountMovePaymentTermField');
-        } else {
-          debugPrint(
-              'No payment term field found for account.move. Proceeding without it.');
         }
       } catch (e) {
-        debugPrint(
-            'Failed to fetch account.move fields: $e. Proceeding without payment term.');
+        debugPrint('Failed to fetch account.move fields: $e');
       }
 
-      final saleOrderFields = ['name', 'partner_id', 'order_line'];
-      if (saleOrderPaymentTermField != null) {
-        saleOrderFields.add(saleOrderPaymentTermField);
-      }
-      final saleOrderDataFull = await client.callKw({
-        'model': 'sale.order',
-        'method': 'read',
-        'args': [
-          [saleOrderId],
-          saleOrderFields,
-        ],
-        'kwargs': {},
-      });
-      if (saleOrderDataFull.isEmpty) {
-        throw Exception('Sale order with ID $saleOrderId not found');
-      }
-
-      final saleOrder = saleOrderDataFull[0];
-      final orderLineIds = saleOrder['order_line'] as List<dynamic>? ?? [];
-      final orderLines = orderLineIds.isNotEmpty
-          ? await client.callKw({
-              'model': 'sale.order.line',
-              'method': 'read',
-              'args': [
-                orderLineIds,
-                [
-                  'product_id',
-                  'name',
-                  'product_uom_qty',
-                  'price_unit',
-                  'discount',
-                  'tax_id',
-                  'price_subtotal',
-                ],
-              ],
-              'kwargs': {},
-            })
-          : [];
-
-      final invoiceLines = orderLines.map((line) {
-        final productId =
-            line['product_id'] is List ? line['product_id'][0] : null;
-        if (productId == null) {
-          throw Exception(
-              'Invalid product in sale order line: ${line['name']}');
-        }
-        return [
-          0,
-          0,
-          {
-            'product_id': productId,
-            'name': line['name'],
-            'quantity': line['product_uom_qty'] as double,
-            'price_unit': line['price_unit'] as double,
-            'discount': line['discount'] as double? ?? 0.0,
-            'tax_ids': line['tax_id'] is List
-                ? [
-                    [6, 0, line['tax_id']]
-                  ]
-                : [
-                    [6, 0, []]
-                  ],
-            'sale_line_ids': [
-              [4, line['id']]
-            ],
-          }
-        ];
-      }).toList();
-
-      if (invoiceLines.isEmpty) {
-        throw Exception(
-            'No valid invoice lines found for sale order $saleOrderId');
-      }
-
-      int? paymentTermId;
-      if (saleOrderPaymentTermField != null &&
-          saleOrder[saleOrderPaymentTermField] is List &&
-          saleOrder[saleOrderPaymentTermField].isNotEmpty) {
-        paymentTermId = saleOrder[saleOrderPaymentTermField][0];
-      } else {
-        paymentTermId = _paymentTermId;
-      }
+      int? paymentTermId = saleOrder['payment_term_id'] is List &&
+              saleOrder['payment_term_id'].isNotEmpty
+          ? saleOrder['payment_term_id'][0]
+          : _paymentTermId;
 
       if (paymentTermId != null) {
         final paymentTermExists = await client.callKw({
@@ -876,12 +853,12 @@ class InvoiceCreationProvider extends ChangeNotifier {
           'kwargs': {'limit': 1},
         });
         if (paymentTermExists.isEmpty) {
-          debugPrint(
-              'Warning: Invalid payment term ID $paymentTermId. Ignoring payment term.');
+          debugPrint('Warning: Invalid payment term ID $paymentTermId');
           paymentTermId = null;
         }
       }
 
+      // Prepare invoice data
       final invoiceData = {
         'partner_id': saleOrder['partner_id'][0],
         'invoice_date': DateFormat('yyyy-MM-dd').format(_invoiceDate),
@@ -896,9 +873,9 @@ class InvoiceCreationProvider extends ChangeNotifier {
         invoiceData[accountMovePaymentTermField] = paymentTermId;
       }
 
-      debugPrint('Creating invoice via account.move create with data:');
-      debugPrint(jsonEncode(invoiceData));
+      debugPrint('Creating invoice with data: ${jsonEncode(invoiceData)}');
 
+      // Create the invoice
       final invoiceResult = await client.callKw({
         'model': 'account.move',
         'method': 'create',
@@ -911,7 +888,7 @@ class InvoiceCreationProvider extends ChangeNotifier {
             'Failed to create invoice: Invalid response: $invoiceResult');
       }
 
-      debugPrint('createDraftInvoice response: Invoice ID $invoiceResult');
+      debugPrint('Invoice created: ID $invoiceResult');
       _isLoading = false;
       notifyListeners();
 
@@ -931,6 +908,9 @@ class InvoiceCreationProvider extends ChangeNotifier {
       return {'id': invoiceResult};
     } catch (e, stackTrace) {
       _errorMessage = 'Failed to create invoice: $e';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(_errorMessage)),
+      );
       _isLoading = false;
       notifyListeners();
       debugPrint('$_errorMessage');

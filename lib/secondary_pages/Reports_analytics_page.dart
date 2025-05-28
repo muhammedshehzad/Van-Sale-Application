@@ -1,9 +1,14 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:fl_chart/fl_chart.dart';
+import 'package:latest_van_sale_application/providers/invoice_details_provider.dart';
 import 'package:latest_van_sale_application/secondary_pages/deliveries_page.dart';
 import 'package:latest_van_sale_application/secondary_pages/sale_order_details_page.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:shimmer/shimmer.dart';
 import '../assets/widgets and consts/page_transition.dart';
 import '../authentication/cyllo_session_model.dart';
@@ -11,6 +16,11 @@ import '../providers/order_picking_provider.dart';
 import '../providers/sale_order_detail_provider.dart';
 import '../secondary_pages/invoice_details_page.dart';
 import 'delivey_details_page.dart';
+import 'package:flutter/material.dart';
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:printing/printing.dart';
+import 'package:intl/intl.dart';
 
 const Color accentColor = Color(0xFFFFA500);
 const double cardElevation = 4.0;
@@ -401,7 +411,13 @@ class _ReportsAnalyticsPageState extends State<ReportsAnalyticsPage>
             'state',
             'invoice_line_ids',
             'partner_id',
-            'payment_state'
+            'payment_state',
+            'company_id', // Added company_id
+            'amount_untaxed', // Added for totals
+            'amount_tax', // Added for totals
+            'currency_id', // Added for currency
+            'ref', // Added for customer reference
+            'invoice_payment_term_id', // Added for payment terms
           ],
         ],
         'kwargs': {
@@ -2439,6 +2455,100 @@ class _ReportsAnalyticsPageState extends State<ReportsAnalyticsPage>
           );
   }
 
+  Future<void> _downloadInvoice(Map<String, dynamic> invoice) async {
+    // Show loading dialog
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        backgroundColor: Colors.white,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 28.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.download_rounded, color: primaryColor, size: 32),
+                  const SizedBox(width: 16),
+                  const Text(
+                    'Downloading Invoice',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              CircularProgressIndicator(
+                strokeWidth: 3,
+                color: primaryColor,
+                backgroundColor: Colors.grey.shade200,
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'Please wait while we generate your invoice.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 14,
+                  color: Colors.grey.shade600,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    try {
+      await InvoicePdfGenerator.generateAndSharePdf(
+        context: context,
+        invoiceData: invoice['invoiceData'],
+        customFilename: 'Invoice_${invoice['id'].replaceAll('/', '_')}.pdf',
+      );
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: const [
+              Icon(Icons.check_circle, color: Colors.white),
+              SizedBox(width: 8),
+              Text('Invoice downloaded successfully'),
+            ],
+          ),
+          backgroundColor: Colors.green.shade600,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          duration: const Duration(seconds: 3),
+          margin: const EdgeInsets.all(16),
+        ),
+      );
+    } catch (e) {
+      print('Failed to download invoice: $e');
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.error_outline, color: Colors.white),
+              const SizedBox(width: 8),
+              Expanded(child: Text('Failed to download invoice: $e')),
+            ],
+          ),
+          backgroundColor: Colors.red.shade600,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          duration: const Duration(seconds: 4),
+          margin: const EdgeInsets.all(16),
+        ),
+      );
+    } finally {
+      Navigator.of(context).pop(); // Close loading dialog
+    }
+  }
+
   Widget _buildRecentInvoicesTable(bool isMobile) {
     return _recentInvoices.isEmpty
         ? const Center(child: Text('No invoices available'))
@@ -2530,13 +2640,7 @@ class _ReportsAnalyticsPageState extends State<ReportsAnalyticsPage>
                           IconButton(
                             icon: const Icon(Icons.download, size: 20),
                             color: primaryColor,
-                            onPressed: () async {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                    content: Text('Downloading invoice...')),
-                              );
-                              // Implement actual download logic here
-                            },
+                            onPressed: () => _downloadInvoice(invoice),
                             tooltip: 'Download Invoice',
                           ),
                         ],
@@ -2655,5 +2759,703 @@ class _Badge extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+class InvoicePdfGenerator {
+  static Future<void> generateAndSharePdf({
+    required BuildContext context,
+    required Map<String, dynamic> invoiceData,
+    String? customFilename,
+  }) async {
+    final pdf = pw.Document(
+      theme: pw.ThemeData.withFont(
+        base: pw.Font.helvetica(),
+        bold: pw.Font.helveticaBold(),
+        italic: pw.Font.helveticaOblique(),
+      ),
+    );
+
+    try {
+      // Validate input data
+      if (invoiceData['line_details'] == null) {
+        throw Exception('Invoice line details are missing');
+      }
+      if (invoiceData['name'] == null || invoiceData['partner_id'] == null) {
+        throw Exception(
+            'Required invoice data (name or partner_id) is missing');
+      }
+
+      final dateFormat = DateFormat('MMM dd, yyyy');
+      final primaryColor = PdfColor.fromHex('#A12424');
+      final borderColor = PdfColor.fromHex('#DDDDDD');
+      final accentColor = PdfColor.fromHex('#F5F5F5');
+
+      // Create safe filename
+      final safeInvoiceNumber = invoiceData['name']
+          .toString()
+          .replaceAll(RegExp(r'[^a-zA-Z0-9]'), '_');
+      final filename = customFilename ?? 'Invoice_$safeInvoiceNumber.pdf';
+
+      // Extract invoice data
+      final invoiceNumber = invoiceData['name']?.toString() ?? 'N/A';
+      final customerName =
+          invoiceData['partner_id']?[1]?.toString() ?? 'Unknown Customer';
+      final customerReference = invoiceData['ref']?.toString() ?? '';
+      final invoiceDate = invoiceData['invoice_date'] != null
+          ? DateTime.parse(invoiceData['invoice_date'].toString())
+          : null;
+      final dueDate = invoiceData['invoice_date_due'] != null
+          ? DateTime.parse(invoiceData['invoice_date_due'].toString())
+          : null;
+      final paymentTerms =
+          invoiceData['invoice_payment_term_id']?[1]?.toString() ?? 'Net 30';
+      final invoiceLines = (invoiceData['line_details'] as List?) ?? [];
+      final amountUntaxed =
+          (invoiceData['amount_untaxed'] as num?)?.toDouble() ?? 0.0;
+      final amountTax = (invoiceData['amount_tax'] as num?)?.toDouble() ?? 0.0;
+      final invoiceAmount =
+          (invoiceData['amount_total'] as num?)?.toDouble() ?? 0.0;
+      final amountResidual =
+          (invoiceData['amount_residual'] as num?)?.toDouble() ?? 0.0;
+      final currency = invoiceData['currency_id']?[1]?.toString() ?? 'USD';
+
+      final currencyFormat =
+          NumberFormat.currency(symbol: '\$', decimalDigits: 2);
+
+      // Fetch company data
+      final companyId = invoiceData['company_id']?[0];
+      final client = await SessionManager.getActiveClient();
+      if (client == null || companyId == null) {
+        throw Exception('No active client session or company ID missing');
+      }
+
+      final companyResult = await client.callKw({
+        'model': 'res.company',
+        'method': 'search_read',
+        'args': [
+          [
+            ['id', '=', companyId]
+          ],
+          ['name', 'street', 'email', 'phone', 'website'],
+        ],
+        'kwargs': {},
+      });
+
+      if (companyResult == null || companyResult.isEmpty) {
+        throw Exception('Company data not found');
+      }
+
+      final companyData = companyResult[0];
+      final companyName = companyData['name'] ?? 'Company Name Not Available';
+      final companyAddress = companyData['street'] ?? 'Address Not Available';
+      final companyEmail = companyData['email'] ?? 'Email Not Available';
+      final companyPhone = companyData['phone'] ?? 'Phone Not Available';
+      final companyWebsite = companyData['website'] ?? 'Website Not Available';
+      final pdf = pw.Document();
+      pw.Widget buildMainHeader() {
+        return pw.Container(
+          padding: const pw.EdgeInsets.all(12),
+          decoration: pw.BoxDecoration(
+            color: primaryColor,
+            borderRadius: const pw.BorderRadius.all(pw.Radius.circular(6)),
+          ),
+          child: pw.Row(
+            mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+            children: [
+              pw.Column(
+                crossAxisAlignment: pw.CrossAxisAlignment.start,
+                children: [
+                  pw.Text(
+                    'INVOICE',
+                    style: pw.TextStyle(
+                      color: PdfColors.white,
+                      fontSize: 20,
+                      fontWeight: pw.FontWeight.bold,
+                    ),
+                  ),
+                  pw.SizedBox(height: 4),
+                  pw.Text(
+                    'Invoice #: $invoiceNumber',
+                    style: pw.TextStyle(
+                      color: PdfColors.white,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
+              pw.Column(
+                crossAxisAlignment: pw.CrossAxisAlignment.end,
+                children: [
+                  pw.Text(
+                    companyName.toUpperCase(),
+                    style: pw.TextStyle(
+                      color: PdfColors.white,
+                      fontSize: 14,
+                      fontWeight: pw.FontWeight.bold,
+                    ),
+                  ),
+                  pw.SizedBox(height: 4),
+                  pw.Text(
+                    companyWebsite,
+                    style: pw.TextStyle(
+                      color: PdfColors.white,
+                      fontSize: 10,
+                    ),
+                  ),
+                  pw.Text(
+                    companyEmail,
+                    style: pw.TextStyle(
+                      color: PdfColors.white,
+                      fontSize: 10,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        );
+      }
+
+      pdf.addPage(
+        pw.MultiPage(
+          pageFormat: PdfPageFormat.a4,
+          margin: const pw.EdgeInsets.all(24),
+          header: (pw.Context context) {
+            final pageNumber = context.pageNumber;
+            if (pageNumber == 1) {
+              return pw.Align(
+                alignment: pw.Alignment.center,
+                child: pw.Container(
+                  width: 500,
+                  padding: const pw.EdgeInsets.all(12),
+                  decoration: pw.BoxDecoration(
+                    color: primaryColor,
+                    borderRadius:
+                        const pw.BorderRadius.all(pw.Radius.circular(6)),
+                  ),
+                  child: pw.Row(
+                    mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                    children: [
+                      pw.Column(
+                        crossAxisAlignment: pw.CrossAxisAlignment.start,
+                        children: [
+                          pw.Text('INVOICE',
+                              style: pw.TextStyle(
+                                  color: PdfColors.white,
+                                  fontSize: 20,
+                                  fontWeight: pw.FontWeight.bold)),
+                          pw.SizedBox(height: 4),
+                          pw.Text('Invoice #: $invoiceNumber',
+                              style: pw.TextStyle(
+                                  color: PdfColors.white, fontSize: 12)),
+                        ],
+                      ),
+                      pw.Column(
+                        crossAxisAlignment: pw.CrossAxisAlignment.end,
+                        children: [
+                          pw.Text(companyName.toUpperCase(),
+                              style: pw.TextStyle(
+                                  color: PdfColors.white,
+                                  fontSize: 14,
+                                  fontWeight: pw.FontWeight.bold)),
+                          pw.SizedBox(height: 4),
+                          pw.Text(companyWebsite,
+                              style: pw.TextStyle(
+                                  color: PdfColors.white, fontSize: 10)),
+                          pw.Text(companyEmail,
+                              style: pw.TextStyle(
+                                  color: PdfColors.white, fontSize: 10)),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            }
+            return pw.Align(
+              alignment: pw.Alignment.center,
+              child: pw.Container(
+                width: 500,
+                padding: const pw.EdgeInsets.all(8),
+                decoration: pw.BoxDecoration(
+                  color: primaryColor,
+                  borderRadius:
+                      const pw.BorderRadius.all(pw.Radius.circular(6)),
+                ),
+                child: pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  children: [
+                    pw.Text('INVOICE - Page $pageNumber',
+                        style: pw.TextStyle(
+                            color: PdfColors.white,
+                            fontSize: 12,
+                            fontWeight: pw.FontWeight.bold)),
+                    pw.Text('Invoice #: $invoiceNumber',
+                        style: const pw.TextStyle(
+                            color: PdfColors.white, fontSize: 10)),
+                  ],
+                ),
+              ),
+            );
+          },
+          footer: (pw.Context context) {
+            final pageNumber = context.pageNumber;
+            final totalPages = context.pagesCount;
+            if (pageNumber == 1 && totalPages == 1) {
+              return pw.Align(
+                alignment: pw.Alignment.center,
+                child: pw.Container(
+                  width: 500,
+                  margin: const pw.EdgeInsets.only(top: 10),
+                  padding: const pw.EdgeInsets.all(10),
+                  decoration: pw.BoxDecoration(
+                    color: primaryColor,
+                    borderRadius:
+                        const pw.BorderRadius.all(pw.Radius.circular(6)),
+                  ),
+                  child: pw.Text(
+                    'Thank you for your business!',
+                    style: pw.TextStyle(
+                        color: PdfColors.white,
+                        fontSize: 10,
+                        fontWeight: pw.FontWeight.bold),
+                  ),
+                ),
+              );
+            }
+            return pw.Align(
+              alignment: pw.Alignment.center,
+              child: pw.Container(
+                width: 500,
+                margin: const pw.EdgeInsets.only(top: 10),
+                child: pw.Text(
+                  'Page $pageNumber of $totalPages',
+                  style: const pw.TextStyle(fontSize: 10),
+                  textAlign: pw.TextAlign.center,
+                ),
+              ),
+            );
+          },
+          build: (pw.Context context) {
+            return [
+              pw.Align(
+                alignment: pw.Alignment.center,
+                child: pw.Container(
+                  width: 500,
+                  child: pw.Column(
+                    crossAxisAlignment: pw.CrossAxisAlignment.start,
+                    children: [
+                      pw.Container(
+                        padding: const pw.EdgeInsets.all(10),
+                        decoration: pw.BoxDecoration(
+                            border: pw.Border.all(color: borderColor),
+                            borderRadius: const pw.BorderRadius.all(
+                                pw.Radius.circular(6))),
+                        child: pw.Column(
+                          crossAxisAlignment: pw.CrossAxisAlignment.start,
+                          children: [
+                            pw.Row(children: [
+                              pw.Container(
+                                  width: 14,
+                                  height: 14,
+                                  decoration: pw.BoxDecoration(
+                                      color: primaryColor,
+                                      shape: pw.BoxShape.circle),
+                                  child: pw.Center(
+                                      child: pw.Text('C',
+                                          style: pw.TextStyle(
+                                              color: PdfColors.white,
+                                              fontSize: 8,
+                                              fontWeight:
+                                                  pw.FontWeight.bold)))),
+                              pw.SizedBox(width: 6),
+                              pw.Text('COMPANY DETAILS',
+                                  style: pw.TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: pw.FontWeight.bold,
+                                      color: primaryColor)),
+                            ]),
+                            pw.Divider(color: borderColor),
+                            pw.SizedBox(height: 4),
+                            pw.Text(companyName,
+                                style: const pw.TextStyle(fontSize: 11)),
+                            pw.Text(companyAddress,
+                                style: const pw.TextStyle(fontSize: 11)),
+                            pw.Text('Email: $companyEmail',
+                                style: const pw.TextStyle(fontSize: 11)),
+                            pw.Text('Phone: $companyPhone',
+                                style: const pw.TextStyle(fontSize: 11)),
+                          ],
+                        ),
+                      ),
+                      pw.SizedBox(height: 15),
+                      pw.Container(
+                        padding: const pw.EdgeInsets.all(10),
+                        decoration: pw.BoxDecoration(
+                            border: pw.Border.all(color: borderColor),
+                            borderRadius: const pw.BorderRadius.all(
+                                pw.Radius.circular(6))),
+                        child: pw.Column(
+                          crossAxisAlignment: pw.CrossAxisAlignment.start,
+                          children: [
+                            pw.Row(children: [
+                              pw.Container(
+                                  width: 14,
+                                  height: 14,
+                                  decoration: pw.BoxDecoration(
+                                      color: primaryColor,
+                                      shape: pw.BoxShape.circle),
+                                  child: pw.Center(
+                                      child: pw.Text('I',
+                                          style: pw.TextStyle(
+                                              color: PdfColors.white,
+                                              fontSize: 8,
+                                              fontWeight:
+                                                  pw.FontWeight.bold)))),
+                              pw.SizedBox(width: 6),
+                              pw.Text('INVOICE DETAILS',
+                                  style: pw.TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: pw.FontWeight.bold,
+                                      color: primaryColor)),
+                            ]),
+                            pw.Divider(color: borderColor),
+                            pw.SizedBox(height: 4),
+                            pw.Text('Billed To: $customerName',
+                                style: const pw.TextStyle(fontSize: 11)),
+                            if (customerReference.isNotEmpty)
+                              pw.Text('Reference: $customerReference',
+                                  style: const pw.TextStyle(fontSize: 11)),
+                            if (invoiceDate != null)
+                              pw.Text('Date: ${dateFormat.format(invoiceDate)}',
+                                  style: const pw.TextStyle(fontSize: 11)),
+                            if (dueDate != null)
+                              pw.Text('Due Date: ${dateFormat.format(dueDate)}',
+                                  style: const pw.TextStyle(fontSize: 11)),
+                            pw.Text('Terms: $paymentTerms',
+                                style: const pw.TextStyle(fontSize: 11)),
+                          ],
+                        ),
+                      ),
+                      pw.SizedBox(height: 15),
+                      pw.Text('INVOICE LINES',
+                          style: pw.TextStyle(
+                              fontSize: 14,
+                              fontWeight: pw.FontWeight.bold,
+                              color: primaryColor)),
+                      pw.SizedBox(height: 6),
+                      pw.Container(
+                        decoration: pw.BoxDecoration(
+                            border: pw.Border.all(color: borderColor),
+                            borderRadius: const pw.BorderRadius.all(
+                                pw.Radius.circular(6))),
+                        child: pw.Table(
+                          border: null,
+                          columnWidths: {
+                            0: const pw.FlexColumnWidth(3),
+                            1: const pw.FlexColumnWidth(1),
+                            2: const pw.FlexColumnWidth(1),
+                            3: const pw.FlexColumnWidth(1),
+                            4: const pw.FlexColumnWidth(1),
+                            5: const pw.FlexColumnWidth(1)
+                          },
+                          children: [
+                            pw.TableRow(
+                              decoration: pw.BoxDecoration(
+                                  color: primaryColor,
+                                  borderRadius: const pw.BorderRadius.only(
+                                      topLeft: pw.Radius.circular(6),
+                                      topRight: pw.Radius.circular(6))),
+                              children: [
+                                pw.Padding(
+                                    padding: const pw.EdgeInsets.all(6),
+                                    child: pw.Text('DESCRIPTION',
+                                        style: pw.TextStyle(
+                                            fontWeight: pw.FontWeight.bold,
+                                            color: PdfColors.white,
+                                            fontSize: 11))),
+                                pw.Padding(
+                                    padding: const pw.EdgeInsets.all(6),
+                                    child: pw.Text('QTY',
+                                        style: pw.TextStyle(
+                                            fontWeight: pw.FontWeight.bold,
+                                            color: PdfColors.white,
+                                            fontSize: 11),
+                                        textAlign: pw.TextAlign.center)),
+                                pw.Padding(
+                                    padding: const pw.EdgeInsets.all(6),
+                                    child: pw.Text('UNIT PRICE',
+                                        style: pw.TextStyle(
+                                            fontWeight: pw.FontWeight.bold,
+                                            color: PdfColors.white,
+                                            fontSize: 11),
+                                        textAlign: pw.TextAlign.right)),
+                                pw.Padding(
+                                    padding: const pw.EdgeInsets.all(6),
+                                    child: pw.Text('TAX',
+                                        style: pw.TextStyle(
+                                            fontWeight: pw.FontWeight.bold,
+                                            color: PdfColors.white,
+                                            fontSize: 11),
+                                        textAlign: pw.TextAlign.right)),
+                                pw.Padding(
+                                    padding: const pw.EdgeInsets.all(6),
+                                    child: pw.Text('DISCOUNT',
+                                        style: pw.TextStyle(
+                                            fontWeight: pw.FontWeight.bold,
+                                            color: PdfColors.white,
+                                            fontSize: 11),
+                                        textAlign: pw.TextAlign.right)),
+                                pw.Padding(
+                                    padding: const pw.EdgeInsets.all(6),
+                                    child: pw.Text('TOTAL',
+                                        style: pw.TextStyle(
+                                            fontWeight: pw.FontWeight.bold,
+                                            color: PdfColors.white,
+                                            fontSize: 11),
+                                        textAlign: pw.TextAlign.right)),
+                              ],
+                            ),
+                            if (invoiceLines.isEmpty)
+                              pw.TableRow(children: [
+                                pw.Padding(
+                                    padding: const pw.EdgeInsets.all(6),
+                                    child: pw.Text('No invoice lines available',
+                                        style:
+                                            const pw.TextStyle(fontSize: 11))),
+                                pw.Padding(
+                                    padding: const pw.EdgeInsets.all(6),
+                                    child: pw.Text('')),
+                                pw.Padding(
+                                    padding: const pw.EdgeInsets.all(6),
+                                    child: pw.Text('')),
+                                pw.Padding(
+                                    padding: const pw.EdgeInsets.all(6),
+                                    child: pw.Text('')),
+                                pw.Padding(
+                                    padding: const pw.EdgeInsets.all(6),
+                                    child: pw.Text('')),
+                                pw.Padding(
+                                    padding: const pw.EdgeInsets.all(6),
+                                    child: pw.Text('')),
+                              ])
+                            else
+                              ...invoiceLines.asMap().entries.map((entry) {
+                                final index = entry.key;
+                                final line = entry.value;
+                                final productName =
+                                    line['product_id']?[1]?.toString() ??
+                                        'Unknown';
+                                final quantity =
+                                    (line['quantity'] as num?)?.toDouble() ??
+                                        0.0;
+                                final unitPrice =
+                                    (line['price_unit'] as num?)?.toDouble() ??
+                                        0.0;
+                                final subtotal =
+                                    (line['price_subtotal'] as num?)
+                                            ?.toDouble() ??
+                                        0.0;
+                                final total =
+                                    (line['price_total'] as num?)?.toDouble() ??
+                                        0.0;
+                                final taxAmount = total - subtotal;
+                                final discount =
+                                    (line['discount'] as num?)?.toDouble() ??
+                                        0.0;
+                                final taxName = (line['tax_ids'] is List &&
+                                        (line['tax_ids'] as List).isNotEmpty &&
+                                        (line['tax_ids'] as List).first
+                                            is List &&
+                                        (line['tax_ids'] as List).first.length >
+                                            1)
+                                    ? (line['tax_ids'] as List)
+                                        .first[1]
+                                        .toString()
+                                    : '';
+                                return pw.TableRow(
+                                  decoration: index % 2 == 0
+                                      ? null
+                                      : pw.BoxDecoration(
+                                          color: PdfColor.fromHex('#F5F5F5')),
+                                  children: [
+                                    pw.Padding(
+                                        padding: const pw.EdgeInsets.all(6),
+                                        child: pw.Text(productName,
+                                            style: const pw.TextStyle(
+                                                fontSize: 11))),
+                                    pw.Padding(
+                                        padding: const pw.EdgeInsets.all(6),
+                                        child: pw.Text(
+                                            quantity.toStringAsFixed(
+                                                quantity.truncateToDouble() ==
+                                                        quantity
+                                                    ? 0
+                                                    : 2),
+                                            style: const pw.TextStyle(
+                                                fontSize: 11),
+                                            textAlign: pw.TextAlign.center)),
+                                    pw.Padding(
+                                        padding: const pw.EdgeInsets.all(6),
+                                        child: pw.Text(
+                                            currencyFormat.format(unitPrice),
+                                            style: const pw.TextStyle(
+                                                fontSize: 11),
+                                            textAlign: pw.TextAlign.right)),
+                                    pw.Padding(
+                                        padding: const pw.EdgeInsets.all(6),
+                                        child: pw.Text(
+                                            taxName.isNotEmpty
+                                                ? '$taxName (${currencyFormat.format(taxAmount)})'
+                                                : '-',
+                                            style: const pw.TextStyle(
+                                                fontSize: 11),
+                                            textAlign: pw.TextAlign.right)),
+                                    pw.Padding(
+                                        padding: const pw.EdgeInsets.all(6),
+                                        child: pw.Text(
+                                            discount > 0
+                                                ? '${discount.toStringAsFixed(1)}%'
+                                                : '-',
+                                            style: const pw.TextStyle(
+                                                fontSize: 11),
+                                            textAlign: pw.TextAlign.right)),
+                                    pw.Padding(
+                                        padding: const pw.EdgeInsets.all(6),
+                                        child: pw.Text(
+                                            currencyFormat.format(total),
+                                            style: const pw.TextStyle(
+                                                fontSize: 11),
+                                            textAlign: pw.TextAlign.right)),
+                                  ],
+                                );
+                              }),
+                          ],
+                        ),
+                      ),
+                      pw.SizedBox(height: 15),
+                      pw.Align(
+                        alignment: pw.Alignment.centerRight,
+                        child: pw.Container(
+                          width: 300,
+                          decoration: pw.BoxDecoration(
+                              border: pw.Border.all(color: borderColor),
+                              borderRadius: const pw.BorderRadius.all(
+                                  pw.Radius.circular(6))),
+                          child: pw.Table(
+                            border: null,
+                            children: [
+                              pw.TableRow(children: [
+                                pw.Padding(
+                                    padding: const pw.EdgeInsets.all(6),
+                                    child: pw.Text('Subtotal',
+                                        style: pw.TextStyle(
+                                            fontSize: 11,
+                                            fontWeight: pw.FontWeight.bold))),
+                                pw.Padding(
+                                    padding: const pw.EdgeInsets.all(6),
+                                    child: pw.Text(
+                                        currencyFormat.format(amountUntaxed),
+                                        style: const pw.TextStyle(fontSize: 11),
+                                        textAlign: pw.TextAlign.right)),
+                              ]),
+                              pw.TableRow(children: [
+                                pw.Padding(
+                                    padding: const pw.EdgeInsets.all(6),
+                                    child: pw.Text('Taxes',
+                                        style: pw.TextStyle(
+                                            fontSize: 11,
+                                            fontWeight: pw.FontWeight.bold))),
+                                pw.Padding(
+                                    padding: const pw.EdgeInsets.all(6),
+                                    child: pw.Text(
+                                        currencyFormat.format(amountTax),
+                                        style: const pw.TextStyle(fontSize: 11),
+                                        textAlign: pw.TextAlign.right)),
+                              ]),
+                              pw.TableRow(
+                                decoration: pw.BoxDecoration(
+                                    color: primaryColor,
+                                    borderRadius: const pw.BorderRadius.only(
+                                        bottomLeft: pw.Radius.circular(6),
+                                        bottomRight: pw.Radius.circular(6))),
+                                children: [
+                                  pw.Padding(
+                                      padding: const pw.EdgeInsets.all(6),
+                                      child: pw.Text('Total ($currency)',
+                                          style: pw.TextStyle(
+                                              fontSize: 11,
+                                              fontWeight: pw.FontWeight.bold,
+                                              color: PdfColors.white))),
+                                  pw.Padding(
+                                      padding: const pw.EdgeInsets.all(6),
+                                      child: pw.Text(
+                                          currencyFormat.format(invoiceAmount),
+                                          style: pw.TextStyle(
+                                              fontSize: 11,
+                                              fontWeight: pw.FontWeight.bold,
+                                              color: PdfColors.white),
+                                          textAlign: pw.TextAlign.right)),
+                                ],
+                              ),
+                              if (amountResidual > 0)
+                                pw.TableRow(
+                                  decoration: pw.BoxDecoration(
+                                      color: PdfColor.fromHex('#FFF5F5')),
+                                  children: [
+                                    pw.Padding(
+                                        padding: const pw.EdgeInsets.all(6),
+                                        child: pw.Text('Amount Due ($currency)',
+                                            style: pw.TextStyle(
+                                                fontSize: 11,
+                                                fontWeight: pw.FontWeight.bold,
+                                                color: primaryColor))),
+                                    pw.Padding(
+                                        padding: const pw.EdgeInsets.all(6),
+                                        child: pw.Text(
+                                            currencyFormat
+                                                .format(amountResidual),
+                                            style: pw.TextStyle(
+                                                fontSize: 11,
+                                                fontWeight: pw.FontWeight.bold,
+                                                color: primaryColor),
+                                            textAlign: pw.TextAlign.right)),
+                                  ],
+                                ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ];
+          },
+        ),
+      );
+      final tempDir = await getTemporaryDirectory();
+      final tempPath = tempDir.path;
+      final filePath = '$tempPath/$filename';
+      final file = File(filePath);
+      await file.writeAsBytes(await pdf.save());
+
+      await Share.shareXFiles(
+        [XFile(filePath)],
+        text: 'Invoice ${invoiceData['name']}',
+        subject:
+            'Invoice from ${invoiceData['company_id']?[1] ?? 'Our Company'}',
+      );
+    } catch (e, stackTrace) {
+      debugPrint('PDF Generation Error: $e\n$stackTrace');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to generate PDF: ${e.toString()}'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      rethrow;
+    }
   }
 }

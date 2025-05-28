@@ -9,6 +9,9 @@ import 'package:printing/printing.dart';
 import '../../providers/sale_order_provider.dart';
 import 'dart:developer' as developer;
 
+import '../authentication/cyllo_session_model.dart';
+import '../providers/order_picking_provider.dart';
+
 class OrderConfirmationPage extends StatelessWidget {
   final String orderId;
   final List<OrderItem> items;
@@ -803,646 +806,796 @@ class OrderConfirmationPage extends StatelessWidget {
   }
 
   Future<void> _printReceipt(BuildContext context) async {
-    final currencyFormat = NumberFormat.currency(symbol: '\$');
-    final dateFormat = DateFormat('MMM dd, yyyy • hh:mm a');
-    const taxRate = 0;
-    final subtotal = totalAmount - shippingCost;
-    final tax = (subtotal - discountAmount) * taxRate;
-
-    final addressParts = <String>[];
-    if (deliveryAddress != null) {
-      if (deliveryAddress!.street.isNotEmpty)
-        addressParts.add(deliveryAddress!.street);
-      if (deliveryAddress!.city.isNotEmpty)
-        addressParts.add(deliveryAddress!.city);
-      // Add other fields like zip, state, country if available in DeliveryAddress
-    } else if (customer != null) {
-      if (customer!.street != null && customer!.street!.isNotEmpty) {
-        addressParts.add(customer!.street!);
-      }
-      if (customer!.street2 != null && customer!.street2!.isNotEmpty) {
-        addressParts.add(customer!.street2!);
-      }
-      if (customer!.city != null && customer!.city!.isNotEmpty) {
-        addressParts.add(customer!.city!);
-      }
-      if (customer!.zip != null && customer!.zip!.isNotEmpty) {
-        addressParts.add(customer!.zip!);
-      }
-      if (customer!.stateId != null && customer!.stateId!.isNotEmpty) {
-        addressParts.add(customer!.stateId!);
-      }
-      if (customer!.countryId != null && customer!.countryId!.isNotEmpty) {
-        addressParts.add(customer!.countryId!);
-      }
-    }
-    final formattedAddress =
-        addressParts.isNotEmpty ? addressParts.join(', ') : null;
-
-    final primaryColor = PdfColor.fromHex('#A12424');
-    final accentColor = PdfColor.fromHex('#F5F5F5');
-    final borderColor = PdfColor.fromHex('#DDDDDD');
-
-    final pdf = pw.Document(
-      theme: pw.ThemeData.withFont(
-        base: pw.Font.helvetica(),
-        bold: pw.Font.helveticaBold(),
-        italic: pw.Font.helveticaOblique(),
-      ),
-    );
-
-    pdf.addPage(
-      pw.Page(
-        pageFormat: PdfPageFormat.a4,
-        margin: const pw.EdgeInsets.all(24),
-        build: (pw.Context context) {
-          return pw.Column(
-            crossAxisAlignment: pw.CrossAxisAlignment.start,
+    // Show loading dialog
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        backgroundColor: Colors.white,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 28.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              pw.Container(
-                padding: const pw.EdgeInsets.all(16),
-                decoration: pw.BoxDecoration(
-                  color: primaryColor,
-                  borderRadius:
-                      const pw.BorderRadius.all(pw.Radius.circular(8)),
-                ),
-                child: pw.Row(
-                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-                  children: [
-                    pw.Column(
-                      crossAxisAlignment: pw.CrossAxisAlignment.start,
-                      children: [
-                        pw.Text(
-                          'SALES RECEIPT',
-                          style: pw.TextStyle(
-                            color: PdfColors.white,
-                            fontSize: 24,
-                            fontWeight: pw.FontWeight.bold,
-                          ),
-                        ),
-                        pw.SizedBox(height: 4),
-                        pw.Text(
-                          'Order #$orderId',
-                          style: pw.TextStyle(
-                            color: PdfColors.white,
-                            fontSize: 14,
-                          ),
-                        ),
-                        if (customerReference != null &&
-                            customerReference!.isNotEmpty)
-                          pw.Text(
-                            'Customer Ref: $customerReference',
-                            style: pw.TextStyle(
-                              color: PdfColors.white,
-                              fontSize: 14,
-                            ),
-                          ),
-                      ],
-                    ),
-                    pw.Column(
-                      crossAxisAlignment: pw.CrossAxisAlignment.end,
-                      children: [
-                        pw.Text(
-                          'YOUR COMPANY NAME',
-                          style: pw.TextStyle(
-                            color: PdfColors.white,
-                            fontSize: 16,
-                            fontWeight: pw.FontWeight.bold,
-                          ),
-                        ),
-                        pw.SizedBox(height: 4),
-                        pw.Text(
-                          'www.yourcompany.com',
-                          style: pw.TextStyle(
-                            color: PdfColors.white,
-                            fontSize: 12,
-                          ),
-                        ),
-                        pw.Text(
-                          'support@yourcompany.com',
-                          style: pw.TextStyle(
-                            color: PdfColors.white,
-                            fontSize: 12,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-              pw.SizedBox(height: 20),
-              pw.Container(
-                padding: const pw.EdgeInsets.all(12),
-                decoration: pw.BoxDecoration(
-                  color: accentColor,
-                  borderRadius:
-                      const pw.BorderRadius.all(pw.Radius.circular(6)),
-                ),
-                child: pw.Row(
-                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-                  children: [
-                    pw.Text(
-                      'Date: ${dateFormat.format(orderDate)}',
-                      style: pw.TextStyle(
-                        fontSize: 12,
-                        color: PdfColors.black,
-                      ),
-                    ),
-                    pw.Text(
-                      paymentMethod != null && paymentMethod!.isNotEmpty
-                          ? 'Payment: $paymentMethod (${paymentMethod == 'Invoice' ? 'Pending' : 'Paid'})'
-                          : 'Payment: N/A',
-                      style: pw.TextStyle(
-                        fontSize: 12,
-                        color: PdfColors.black,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              pw.SizedBox(height: 20),
-              pw.Row(
-                crossAxisAlignment: pw.CrossAxisAlignment.start,
+              Row(
                 children: [
-                  pw.Expanded(
-                    child: pw.Container(
-                      padding: const pw.EdgeInsets.all(12),
-                      decoration: pw.BoxDecoration(
-                        border: pw.Border.all(color: borderColor),
-                        borderRadius:
-                            const pw.BorderRadius.all(pw.Radius.circular(6)),
-                      ),
-                      child: pw.Column(
-                        crossAxisAlignment: pw.CrossAxisAlignment.start,
-                        children: [
-                          pw.Row(
-                            children: [
-                              pw.Container(
-                                width: 16,
-                                height: 16,
-                                decoration: pw.BoxDecoration(
-                                  color: primaryColor,
-                                  shape: pw.BoxShape.circle,
-                                ),
-                                child: pw.Center(
-                                  child: pw.Text(
-                                    'C',
-                                    style: pw.TextStyle(
-                                      color: PdfColors.white,
-                                      fontSize: 10,
-                                      fontWeight: pw.FontWeight.bold,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              pw.SizedBox(width: 8),
-                              pw.Text(
-                                'CUSTOMER',
-                                style: pw.TextStyle(
-                                  fontSize: 14,
-                                  fontWeight: pw.FontWeight.bold,
-                                  color: primaryColor,
-                                ),
-                              ),
-                            ],
-                          ),
-                          pw.Divider(color: borderColor),
-                          pw.SizedBox(height: 6),
-                          pw.Text(
-                            customer?.name ?? 'N/A',
-                            style: pw.TextStyle(
-                              fontSize: 14,
-                              fontWeight: pw.FontWeight.bold,
-                            ),
-                          ),
-                          if (customer?.email != null &&
-                              customer!.email!.isNotEmpty)
-                            pw.Text(
-                              'Email: ${customer!.email}',
-                              style: const pw.TextStyle(fontSize: 12),
-                            ),
-                          if (customer?.phone != null &&
-                              customer!.phone!.isNotEmpty)
-                            pw.Text(
-                              'Phone: ${customer!.phone}',
-                              style: const pw.TextStyle(fontSize: 12),
-                            )
-                          else if (customer?.mobile != null &&
-                              customer!.mobile!.isNotEmpty)
-                            pw.Text(
-                              'Mobile: ${customer!.mobile}',
-                              style: const pw.TextStyle(fontSize: 12),
-                            ),
-                          if (customer?.vat != null &&
-                              customer!.vat!.isNotEmpty)
-                            pw.Text(
-                              'VAT: ${customer!.vat}',
-                              style: const pw.TextStyle(fontSize: 12),
-                            ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  pw.SizedBox(width: 12),
-                  pw.Expanded(
-                    child: pw.Container(
-                      padding: const pw.EdgeInsets.all(12),
-                      decoration: pw.BoxDecoration(
-                        border: pw.Border.all(color: borderColor),
-                        borderRadius:
-                            const pw.BorderRadius.all(pw.Radius.circular(6)),
-                      ),
-                      child: pw.Column(
-                        crossAxisAlignment: pw.CrossAxisAlignment.start,
-                        children: [
-                          pw.Row(
-                            children: [
-                              pw.Container(
-                                width: 16,
-                                height: 16,
-                                decoration: pw.BoxDecoration(
-                                  color: primaryColor,
-                                  shape: pw.BoxShape.circle,
-                                ),
-                                child: pw.Center(
-                                  child: pw.Text(
-                                    'S',
-                                    style: pw.TextStyle(
-                                      color: PdfColors.white,
-                                      fontSize: 10,
-                                      fontWeight: pw.FontWeight.bold,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              pw.SizedBox(width: 8),
-                              pw.Text(
-                                'SHIPPING ADDRESS',
-                                style: pw.TextStyle(
-                                  fontSize: 14,
-                                  fontWeight: pw.FontWeight.bold,
-                                  color: primaryColor,
-                                ),
-                              ),
-                            ],
-                          ),
-                          pw.Divider(color: borderColor),
-                          pw.SizedBox(height: 6),
-                          pw.Text(
-                            formattedAddress!,
-                            style: const pw.TextStyle(fontSize: 12),
-                          ),
-                          if (deliveryDate != null)
-                            pw.Text(
-                              'Delivery Date: ${dateFormat.format(deliveryDate!)}',
-                              style: const pw.TextStyle(fontSize: 12),
-                            ),
-                        ],
-                      ),
+                  Icon(Icons.print_rounded, color: primaryColor, size: 32),
+                  const SizedBox(width: 16),
+                  const Text(
+                    'Preparing Receipt',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w600,
                     ),
                   ),
                 ],
               ),
-              pw.SizedBox(height: 20),
-              pw.Text(
-                'ORDER DETAILS',
-                style: pw.TextStyle(
-                  fontSize: 16,
-                  fontWeight: pw.FontWeight.bold,
-                  color: primaryColor,
+              const SizedBox(height: 16),
+              CircularProgressIndicator(
+                strokeWidth: 3,
+                color: primaryColor,
+                backgroundColor: Colors.grey.shade200,
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'Please wait while we prepare your receipt for printing.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 14,
+                  color: Colors.grey[600],
                 ),
               ),
-              pw.SizedBox(height: 8),
-              pw.Container(
-                decoration: pw.BoxDecoration(
-                  border: pw.Border.all(color: borderColor),
-                  borderRadius:
-                      const pw.BorderRadius.all(pw.Radius.circular(6)),
-                ),
-                child: pw.Table(
-                  border: null,
-                  columnWidths: {
-                    0: const pw.FlexColumnWidth(3),
-                    1: const pw.FlexColumnWidth(1),
-                    2: const pw.FlexColumnWidth(1),
-                    3: const pw.FlexColumnWidth(1.5),
-                  },
-                  children: [
-                    pw.TableRow(
-                      decoration: pw.BoxDecoration(
-                        color: primaryColor,
-                        borderRadius: const pw.BorderRadius.only(
-                          topLeft: pw.Radius.circular(6),
-                          topRight: pw.Radius.circular(6),
-                        ),
-                      ),
-                      children: [
-                        pw.Padding(
-                          padding: const pw.EdgeInsets.all(8),
-                          child: pw.Text(
-                            'PRODUCT',
-                            style: pw.TextStyle(
-                              fontWeight: pw.FontWeight.bold,
-                              color: PdfColors.white,
-                            ),
-                          ),
-                        ),
-                        pw.Padding(
-                          padding: const pw.EdgeInsets.all(8),
-                          child: pw.Text(
-                            'QTY',
-                            style: pw.TextStyle(
-                              fontWeight: pw.FontWeight.bold,
-                              color: PdfColors.white,
-                            ),
-                          ),
-                        ),
-                        pw.Padding(
-                          padding: const pw.EdgeInsets.all(8),
-                          child: pw.Text(
-                            'PRICE',
-                            style: pw.TextStyle(
-                              fontWeight: pw.FontWeight.bold,
-                              color: PdfColors.white,
-                            ),
-                          ),
-                        ),
-                        pw.Padding(
-                          padding: const pw.EdgeInsets.all(8),
-                          child: pw.Text(
-                            'AMOUNT',
-                            textAlign: pw.TextAlign.right,
-                            style: pw.TextStyle(
-                              fontWeight: pw.FontWeight.bold,
-                              color: PdfColors.white,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    ...List.generate(
-                      items.length,
-                      (index) => pw.TableRow(
-                        decoration: index % 2 == 0
-                            ? null
-                            : pw.BoxDecoration(color: accentColor),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    try {
+      final currencyFormat = NumberFormat.currency(symbol: '\$');
+      final dateFormat = DateFormat('MMM dd, yyyy • hh:mm a');
+      const taxRate = 0;
+      final subtotal = totalAmount - shippingCost;
+      final tax = (subtotal - discountAmount) * taxRate;
+
+      final addressParts = <String>[];
+      if (deliveryAddress != null) {
+        if (deliveryAddress!.street.isNotEmpty) {
+          addressParts.add(deliveryAddress!.street);
+        }
+        if (deliveryAddress!.city.isNotEmpty) {
+          addressParts.add(deliveryAddress!.city);
+        }
+      } else if (customer != null) {
+        if (customer!.street != null && customer!.street!.isNotEmpty) {
+          addressParts.add(customer!.street!);
+        }
+        if (customer!.street2 != null && customer!.street2!.isNotEmpty) {
+          addressParts.add(customer!.street2!);
+        }
+        if (customer!.city != null && customer!.city!.isNotEmpty) {
+          addressParts.add(customer!.city!);
+        }
+        if (customer!.zip != null && customer!.zip!.isNotEmpty) {
+          addressParts.add(customer!.zip!);
+        }
+        if (customer!.stateId != null && customer!.stateId!.isNotEmpty) {
+          addressParts.add(customer!.stateId!);
+        }
+        if (customer!.countryId != null && customer!.countryId!.isNotEmpty) {
+          addressParts.add(customer!.countryId!);
+        }
+      }
+      final formattedAddress =
+          addressParts.isNotEmpty ? addressParts.join(', ') : 'N/A';
+
+      final primaryColor = PdfColor.fromHex('#A12424');
+      final accentColor = PdfColor.fromHex('#F5F5F5');
+      final borderColor = PdfColor.fromHex('#DDDDDD');
+
+      // Fetch company data from Odoo
+      final client = await SessionManager.getActiveClient();
+      if (client == null) {
+        throw Exception('No active session');
+      }
+
+      // Fetch sales order to get company_id
+      final orderResult = await client.callKw({
+        'model': 'sale.order',
+        'method': 'search_read',
+        'args': [
+          [
+            ['name', '=', orderId]
+          ],
+          ['company_id'],
+        ],
+        'kwargs': {},
+      });
+
+      if (orderResult.isEmpty) {
+        throw Exception('Sales order not found for orderId: $orderId');
+      }
+
+      final companyId = orderResult[0]['company_id'][0];
+
+      // Fetch company details
+      final companyResult = await client.callKw({
+        'model': 'res.company',
+        'method': 'search_read',
+        'args': [
+          [
+            ['id', '=', companyId]
+          ],
+          ['name', 'street', 'email', 'phone', 'website'],
+        ],
+        'kwargs': {},
+      });
+
+      if (companyResult.isEmpty) {
+        throw Exception('Company not found for companyId: $companyId');
+      }
+
+      final companyData = companyResult[0];
+      final companyName = companyData['name'] ?? 'Company Name Not Available';
+      final companyAddress = companyData['street'] ?? 'Address Not Available';
+      final companyEmail = companyData['email'] ?? 'Email Not Available';
+      final companyPhone = companyData['phone'] ?? 'Phone Not Available';
+      final companyWebsite = companyData['website'] ?? 'Website Not Available';
+
+      final pdf = pw.Document(
+        theme: pw.ThemeData.withFont(
+          base: pw.Font.helvetica(),
+          bold: pw.Font.helveticaBold(),
+          italic: pw.Font.helveticaOblique(),
+        ),
+      );
+
+      pdf.addPage(
+        pw.Page(
+          pageFormat: PdfPageFormat.a4,
+          margin: const pw.EdgeInsets.all(24),
+          build: (pw.Context context) {
+            return pw.Column(
+              crossAxisAlignment: pw.CrossAxisAlignment.start,
+              children: [
+                pw.Container(
+                  padding: const pw.EdgeInsets.all(16),
+                  decoration: pw.BoxDecoration(
+                    color: primaryColor,
+                    borderRadius:
+                        const pw.BorderRadius.all(pw.Radius.circular(8)),
+                  ),
+                  child: pw.Row(
+                    mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                    children: [
+                      pw.Column(
+                        crossAxisAlignment: pw.CrossAxisAlignment.start,
                         children: [
-                          pw.Padding(
-                            padding: const pw.EdgeInsets.all(8),
-                            child: pw.Column(
-                              crossAxisAlignment: pw.CrossAxisAlignment.start,
-                              children: [
-                                pw.Text(
-                                  items[index].product.name,
-                                  style: pw.TextStyle(
-                                    fontWeight: pw.FontWeight.bold,
-                                  ),
-                                ),
-                                if (items[index].product.defaultCode != null &&
-                                    items[index]
-                                        .product
-                                        .defaultCode!
-                                        .isNotEmpty)
-                                  pw.Text(
-                                    'SKU: ${items[index].product.defaultCode}',
-                                    style: const pw.TextStyle(fontSize: 10),
-                                  ),
-                                if (items[index].selectedAttributes != null &&
-                                    items[index].selectedAttributes!.isNotEmpty)
-                                  pw.Text(
-                                    'Options: ${items[index].selectedAttributes!.entries.map((e) => '${e.key}: ${e.value}').join(', ')}',
-                                    style: pw.TextStyle(
-                                      fontSize: 10,
-                                      fontStyle: pw.FontStyle.italic,
-                                    ),
-                                  ),
-                              ],
+                          pw.Text(
+                            'SALES RECEIPT',
+                            style: pw.TextStyle(
+                              color: PdfColors.white,
+                              fontSize: 24,
+                              fontWeight: pw.FontWeight.bold,
                             ),
                           ),
-                          pw.Padding(
-                            padding: const pw.EdgeInsets.all(8),
-                            child: pw.Text(
-                              items[index].quantity.toString(),
-                              style: const pw.TextStyle(fontSize: 12),
+                          pw.SizedBox(height: 4),
+                          pw.Text(
+                            'Order #$orderId',
+                            style: pw.TextStyle(
+                              color: PdfColors.white,
+                              fontSize: 14,
                             ),
                           ),
-                          pw.Padding(
-                            padding: const pw.EdgeInsets.all(8),
-                            child: pw.Text(
-                              currencyFormat.format(items[index].product.price),
-                              style: const pw.TextStyle(fontSize: 12),
+                          if (customerReference != null &&
+                              customerReference!.isNotEmpty)
+                            pw.Text(
+                              'Customer Ref: $customerReference',
+                              style: pw.TextStyle(
+                                color: PdfColors.white,
+                                fontSize: 14,
+                              ),
                             ),
-                          ),
-                          pw.Padding(
-                            padding: const pw.EdgeInsets.all(8),
-                            child: pw.Text(
-                              currencyFormat.format(items[index].subtotal),
-                              textAlign: pw.TextAlign.right,
-                              style: const pw.TextStyle(fontSize: 12),
-                            ),
-                          ),
                         ],
                       ),
-                    ),
-                  ],
+                      pw.Column(
+                        crossAxisAlignment: pw.CrossAxisAlignment.end,
+                        children: [
+                          pw.Text(
+                            companyName.toUpperCase(),
+                            style: pw.TextStyle(
+                              color: PdfColors.white,
+                              fontSize: 16,
+                              fontWeight: pw.FontWeight.bold,
+                            ),
+                          ),
+                          pw.SizedBox(height: 4),
+                          if (companyWebsite != 'Website Not Available')
+                            pw.Text(
+                              companyWebsite,
+                              style: pw.TextStyle(
+                                color: PdfColors.white,
+                                fontSize: 12,
+                              ),
+                            ),
+                          if (companyPhone != 'Phone Not Available')
+                            pw.Text(
+                              companyPhone,
+                              style: pw.TextStyle(
+                                color: PdfColors.white,
+                                fontSize: 12,
+                              ),
+                            ),
+                          if (companyEmail != 'Email Not Available')
+                            pw.Text(
+                              companyEmail,
+                              style: pw.TextStyle(
+                                color: PdfColors.white,
+                                fontSize: 12,
+                              ),
+                            ),
+                          if (companyAddress != 'Address Not Available')
+                            pw.Text(
+                              companyAddress,
+                              style: pw.TextStyle(
+                                color: PdfColors.white,
+                                fontSize: 12,
+                              ),
+                            ),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-              pw.SizedBox(height: 20),
-              if (orderNotes != null && orderNotes!.isNotEmpty)
+                // Rest of the PDF content remains the same...
+                pw.SizedBox(height: 20),
                 pw.Container(
                   padding: const pw.EdgeInsets.all(12),
                   decoration: pw.BoxDecoration(
                     color: accentColor,
                     borderRadius:
                         const pw.BorderRadius.all(pw.Radius.circular(6)),
-                    border: pw.Border.all(color: borderColor),
                   ),
-                  child: pw.Column(
-                    crossAxisAlignment: pw.CrossAxisAlignment.start,
+                  child: pw.Row(
+                    mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
                     children: [
                       pw.Text(
-                        'ORDER NOTES',
-                        style: pw.TextStyle(
-                          fontSize: 14,
-                          fontWeight: pw.FontWeight.bold,
-                          color: primaryColor,
-                        ),
-                      ),
-                      pw.Divider(color: borderColor),
-                      pw.Text(
-                        orderNotes!,
+                        'Date: ${dateFormat.format(orderDate)}',
                         style: pw.TextStyle(
                           fontSize: 12,
-                          fontStyle: pw.FontStyle.italic,
+                          color: PdfColors.black,
+                        ),
+                      ),
+                      pw.Text(
+                        paymentMethod != null && paymentMethod!.isNotEmpty
+                            ? 'Payment: $paymentMethod (${paymentMethod == 'Invoice' ? 'Pending' : 'Paid'})'
+                            : 'Payment: N/A',
+                        style: pw.TextStyle(
+                          fontSize: 12,
+                          color: PdfColors.black,
                         ),
                       ),
                     ],
                   ),
                 ),
-              if (orderNotes != null && orderNotes!.isNotEmpty)
                 pw.SizedBox(height: 20),
-              pw.Row(
-                children: [
-                  pw.Spacer(),
-                  pw.Expanded(
-                    child: pw.Container(
-                      padding: const pw.EdgeInsets.all(12),
-                      decoration: pw.BoxDecoration(
-                        border: pw.Border.all(color: borderColor),
-                        borderRadius:
-                            const pw.BorderRadius.all(pw.Radius.circular(6)),
+                pw.Row(
+                  crossAxisAlignment: pw.CrossAxisAlignment.start,
+                  children: [
+                    pw.Expanded(
+                      child: pw.Container(
+                        padding: const pw.EdgeInsets.all(12),
+                        decoration: pw.BoxDecoration(
+                          border: pw.Border.all(color: borderColor),
+                          borderRadius:
+                              const pw.BorderRadius.all(pw.Radius.circular(6)),
+                        ),
+                        child: pw.Column(
+                          crossAxisAlignment: pw.CrossAxisAlignment.start,
+                          children: [
+                            pw.Row(
+                              children: [
+                                pw.Container(
+                                  width: 16,
+                                  height: 16,
+                                  decoration: pw.BoxDecoration(
+                                    color: primaryColor,
+                                    shape: pw.BoxShape.circle,
+                                  ),
+                                  child: pw.Center(
+                                    child: pw.Text(
+                                      'C',
+                                      style: pw.TextStyle(
+                                        color: PdfColors.white,
+                                        fontSize: 10,
+                                        fontWeight: pw.FontWeight.bold,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                pw.SizedBox(width: 8),
+                                pw.Text(
+                                  'CUSTOMER',
+                                  style: pw.TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: pw.FontWeight.bold,
+                                    color: primaryColor,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            pw.Divider(color: borderColor),
+                            pw.SizedBox(height: 6),
+                            pw.Text(
+                              customer?.name ?? 'N/A',
+                              style: pw.TextStyle(
+                                fontSize: 14,
+                                fontWeight: pw.FontWeight.bold,
+                              ),
+                            ),
+                            if (customer?.email != null &&
+                                customer!.email!.isNotEmpty)
+                              pw.Text(
+                                'Email: ${customer!.email}',
+                                style: const pw.TextStyle(fontSize: 12),
+                              ),
+                            if (customer?.phone != null &&
+                                customer!.phone!.isNotEmpty)
+                              pw.Text(
+                                'Phone: ${customer!.phone}',
+                                style: const pw.TextStyle(fontSize: 12),
+                              )
+                            else if (customer?.mobile != null &&
+                                customer!.mobile!.isNotEmpty)
+                              pw.Text(
+                                'Mobile: ${customer!.mobile}',
+                                style: const pw.TextStyle(fontSize: 12),
+                              ),
+                            if (customer?.vat != null &&
+                                customer!.vat!.isNotEmpty)
+                              pw.Text(
+                                'VAT: ${customer!.vat}',
+                                style: const pw.TextStyle(fontSize: 12),
+                              ),
+                          ],
+                        ),
                       ),
-                      child: pw.Column(
-                        children: [
-                          pw.Row(
-                            mainAxisAlignment:
-                                pw.MainAxisAlignment.spaceBetween,
-                            children: [
+                    ),
+                    pw.SizedBox(width: 12),
+                    pw.Expanded(
+                      child: pw.Container(
+                        padding: const pw.EdgeInsets.all(12),
+                        decoration: pw.BoxDecoration(
+                          border: pw.Border.all(color: borderColor),
+                          borderRadius:
+                              const pw.BorderRadius.all(pw.Radius.circular(6)),
+                        ),
+                        child: pw.Column(
+                          crossAxisAlignment: pw.CrossAxisAlignment.start,
+                          children: [
+                            pw.Row(
+                              children: [
+                                pw.Container(
+                                  width: 16,
+                                  height: 16,
+                                  decoration: pw.BoxDecoration(
+                                    color: primaryColor,
+                                    shape: pw.BoxShape.circle,
+                                  ),
+                                  child: pw.Center(
+                                    child: pw.Text(
+                                      'S',
+                                      style: pw.TextStyle(
+                                        color: PdfColors.white,
+                                        fontSize: 10,
+                                        fontWeight: pw.FontWeight.bold,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                pw.SizedBox(width: 8),
+                                pw.Text(
+                                  'SHIPPING ADDRESS',
+                                  style: pw.TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: pw.FontWeight.bold,
+                                    color: primaryColor,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            pw.Divider(color: borderColor),
+                            pw.SizedBox(height: 6),
+                            pw.Text(
+                              formattedAddress,
+                              style: const pw.TextStyle(fontSize: 12),
+                            ),
+                            if (deliveryDate != null)
                               pw.Text(
-                                'Subtotal',
+                                'Delivery Date: ${dateFormat.format(deliveryDate!)}',
                                 style: const pw.TextStyle(fontSize: 12),
                               ),
-                              pw.Text(
-                                currencyFormat
-                                    .format(subtotal - tax - discountAmount),
-                                style: const pw.TextStyle(fontSize: 12),
-                              ),
-                            ],
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                pw.SizedBox(height: 20),
+                pw.Text(
+                  'ORDER DETAILS',
+                  style: pw.TextStyle(
+                    fontSize: 16,
+                    fontWeight: pw.FontWeight.bold,
+                    color: primaryColor,
+                  ),
+                ),
+                pw.SizedBox(height: 8),
+                pw.Container(
+                  decoration: pw.BoxDecoration(
+                    border: pw.Border.all(color: borderColor),
+                    borderRadius:
+                        const pw.BorderRadius.all(pw.Radius.circular(6)),
+                  ),
+                  child: pw.Table(
+                    border: null,
+                    columnWidths: {
+                      0: const pw.FlexColumnWidth(3),
+                      1: const pw.FlexColumnWidth(1),
+                      2: const pw.FlexColumnWidth(1),
+                      3: const pw.FlexColumnWidth(1.5),
+                    },
+                    children: [
+                      pw.TableRow(
+                        decoration: pw.BoxDecoration(
+                          color: primaryColor,
+                          borderRadius: const pw.BorderRadius.only(
+                            topLeft: pw.Radius.circular(6),
+                            topRight: pw.Radius.circular(6),
                           ),
-                          if (discountAmount > 0)
-                            pw.Row(
-                              mainAxisAlignment:
-                                  pw.MainAxisAlignment.spaceBetween,
-                              children: [
-                                pw.Text(
-                                  'Discount (${discountPercentage.toStringAsFixed(1)}%)',
-                                  style: const pw.TextStyle(fontSize: 12),
-                                ),
-                                pw.Text(
-                                  '-${currencyFormat.format(discountAmount)}',
-                                  style: const pw.TextStyle(fontSize: 12),
-                                ),
-                              ],
-                            ),
-                          if (shippingCost > 0)
-                            pw.Row(
-                              mainAxisAlignment:
-                                  pw.MainAxisAlignment.spaceBetween,
-                              children: [
-                                pw.Text(
-                                  'Shipping Cost',
-                                  style: const pw.TextStyle(fontSize: 12),
-                                ),
-                                pw.Text(
-                                  currencyFormat.format(shippingCost),
-                                  style: const pw.TextStyle(fontSize: 12),
-                                ),
-                              ],
-                            ),
-                          pw.SizedBox(height: 8),
-                          if (tax > 0)
-                            pw.Row(
-                              mainAxisAlignment:
-                                  pw.MainAxisAlignment.spaceBetween,
-                              children: [
-                                pw.Text(
-                                  'Tax',
-                                  style: const pw.TextStyle(fontSize: 12),
-                                ),
-                                pw.Text(
-                                  currencyFormat.format(tax),
-                                  style: const pw.TextStyle(fontSize: 12),
-                                ),
-                              ],
-                            ),
-                          pw.Divider(color: borderColor),
-                          pw.Row(
-                            mainAxisAlignment:
-                                pw.MainAxisAlignment.spaceBetween,
-                            children: [
-                              pw.Text(
-                                'TOTAL',
-                                style: pw.TextStyle(
-                                  fontSize: 14,
-                                  fontWeight: pw.FontWeight.bold,
-                                  color: primaryColor,
-                                ),
+                        ),
+                        children: [
+                          pw.Padding(
+                            padding: const pw.EdgeInsets.all(8),
+                            child: pw.Text(
+                              'PRODUCT',
+                              style: pw.TextStyle(
+                                fontWeight: pw.FontWeight.bold,
+                                color: PdfColors.white,
                               ),
-                              pw.Text(
-                                currencyFormat.format(totalAmount),
-                                style: pw.TextStyle(
-                                  fontSize: 14,
-                                  fontWeight: pw.FontWeight.bold,
-                                  color: primaryColor,
-                                ),
+                            ),
+                          ),
+                          pw.Padding(
+                            padding: const pw.EdgeInsets.all(8),
+                            child: pw.Text(
+                              'QTY',
+                              style: pw.TextStyle(
+                                fontWeight: pw.FontWeight.bold,
+                                color: PdfColors.white,
                               ),
-                            ],
+                            ),
+                          ),
+                          pw.Padding(
+                            padding: const pw.EdgeInsets.all(8),
+                            child: pw.Text(
+                              'PRICE',
+                              style: pw.TextStyle(
+                                fontWeight: pw.FontWeight.bold,
+                                color: PdfColors.white,
+                              ),
+                            ),
+                          ),
+                          pw.Padding(
+                            padding: const pw.EdgeInsets.all(8),
+                            child: pw.Text(
+                              'AMOUNT',
+                              textAlign: pw.TextAlign.right,
+                              style: pw.TextStyle(
+                                fontWeight: pw.FontWeight.bold,
+                                color: PdfColors.white,
+                              ),
+                            ),
                           ),
                         ],
                       ),
-                    ),
-                  ),
-                ],
-              ),
-              pw.SizedBox(height: 20),
-              pw.Row(
-                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-                children: [
-                  pw.Column(
-                    crossAxisAlignment: pw.CrossAxisAlignment.start,
-                    children: [
-                      pw.Container(
-                        width: 200,
-                        height: 40,
-                        decoration: pw.BoxDecoration(
-                          border: pw.Border(
-                              bottom: pw.BorderSide(color: borderColor)),
+                      ...List.generate(
+                        items.length,
+                        (index) => pw.TableRow(
+                          decoration: index % 2 == 0
+                              ? null
+                              : pw.BoxDecoration(color: accentColor),
+                          children: [
+                            pw.Padding(
+                              padding: const pw.EdgeInsets.all(8),
+                              child: pw.Column(
+                                crossAxisAlignment: pw.CrossAxisAlignment.start,
+                                children: [
+                                  pw.Text(
+                                    items[index].product.name,
+                                    style: pw.TextStyle(
+                                      fontWeight: pw.FontWeight.bold,
+                                    ),
+                                  ),
+                                  if (items[index].product.defaultCode !=
+                                          null &&
+                                      items[index]
+                                          .product
+                                          .defaultCode!
+                                          .isNotEmpty)
+                                    pw.Text(
+                                      'SKU: ${items[index].product.defaultCode}',
+                                      style: const pw.TextStyle(fontSize: 10),
+                                    ),
+                                  if (items[index].selectedAttributes != null &&
+                                      items[index]
+                                          .selectedAttributes!
+                                          .isNotEmpty)
+                                    pw.Text(
+                                      'Options: ${items[index].selectedAttributes!.entries.map((e) => '${e.key}: ${e.value}').join(', ')}',
+                                      style: pw.TextStyle(
+                                        fontSize: 10,
+                                        fontStyle: pw.FontStyle.italic,
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                            pw.Padding(
+                              padding: const pw.EdgeInsets.all(8),
+                              child: pw.Text(
+                                items[index].quantity.toString(),
+                                style: const pw.TextStyle(fontSize: 12),
+                              ),
+                            ),
+                            pw.Padding(
+                              padding: const pw.EdgeInsets.all(8),
+                              child: pw.Text(
+                                currencyFormat
+                                    .format(items[index].product.price),
+                                style: const pw.TextStyle(fontSize: 12),
+                              ),
+                            ),
+                            pw.Padding(
+                              padding: const pw.EdgeInsets.all(8),
+                              child: pw.Text(
+                                currencyFormat.format(items[index].subtotal),
+                                textAlign: pw.TextAlign.right,
+                                style: const pw.TextStyle(fontSize: 12),
+                              ),
+                            ),
+                          ],
                         ),
-                      ),
-                      pw.SizedBox(height: 4),
-                      pw.Text(
-                        'Customer Signature',
-                        style: const pw.TextStyle(fontSize: 10),
                       ),
                     ],
                   ),
+                ),
+                pw.SizedBox(height: 20),
+                if (orderNotes != null && orderNotes!.isNotEmpty)
                   pw.Container(
                     padding: const pw.EdgeInsets.all(12),
                     decoration: pw.BoxDecoration(
-                      color: primaryColor,
+                      color: accentColor,
                       borderRadius:
                           const pw.BorderRadius.all(pw.Radius.circular(6)),
+                      border: pw.Border.all(color: borderColor),
                     ),
-                    child: pw.Text(
-                      'Thank you for your business!',
-                      style: pw.TextStyle(
-                        color: PdfColors.white,
-                        fontSize: 12,
-                        fontWeight: pw.FontWeight.bold,
-                      ),
+                    child: pw.Column(
+                      crossAxisAlignment: pw.CrossAxisAlignment.start,
+                      children: [
+                        pw.Text(
+                          'ORDER NOTES',
+                          style: pw.TextStyle(
+                            fontSize: 14,
+                            fontWeight: pw.FontWeight.bold,
+                            color: primaryColor,
+                          ),
+                        ),
+                        pw.Divider(color: borderColor),
+                        pw.Text(
+                          orderNotes!,
+                          style: pw.TextStyle(
+                            fontSize: 12,
+                            fontStyle: pw.FontStyle.italic,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                ],
-              ),
-            ],
-          );
-        },
-      ),
-    );
+                if (orderNotes != null && orderNotes!.isNotEmpty)
+                  pw.SizedBox(height: 20),
+                pw.Row(
+                  children: [
+                    pw.Spacer(),
+                    pw.Expanded(
+                      child: pw.Container(
+                        padding: const pw.EdgeInsets.all(12),
+                        decoration: pw.BoxDecoration(
+                          border: pw.Border.all(color: borderColor),
+                          borderRadius:
+                              const pw.BorderRadius.all(pw.Radius.circular(6)),
+                        ),
+                        child: pw.Column(
+                          children: [
+                            pw.Row(
+                              mainAxisAlignment:
+                                  pw.MainAxisAlignment.spaceBetween,
+                              children: [
+                                pw.Text(
+                                  'Subtotal',
+                                  style: const pw.TextStyle(fontSize: 12),
+                                ),
+                                pw.Text(
+                                  currencyFormat
+                                      .format(subtotal - tax - discountAmount),
+                                  style: const pw.TextStyle(fontSize: 12),
+                                ),
+                              ],
+                            ),
+                            if (discountAmount > 0)
+                              pw.Row(
+                                mainAxisAlignment:
+                                    pw.MainAxisAlignment.spaceBetween,
+                                children: [
+                                  pw.Text(
+                                    'Discount (${discountPercentage.toStringAsFixed(1)}%)',
+                                    style: const pw.TextStyle(fontSize: 12),
+                                  ),
+                                  pw.Text(
+                                    '-${currencyFormat.format(discountAmount)}',
+                                    style: const pw.TextStyle(fontSize: 12),
+                                  ),
+                                ],
+                              ),
+                            if (shippingCost > 0)
+                              pw.Row(
+                                mainAxisAlignment:
+                                    pw.MainAxisAlignment.spaceBetween,
+                                children: [
+                                  pw.Text(
+                                    'Shipping Cost',
+                                    style: const pw.TextStyle(fontSize: 12),
+                                  ),
+                                  pw.Text(
+                                    currencyFormat.format(shippingCost),
+                                    style: const pw.TextStyle(fontSize: 12),
+                                  ),
+                                ],
+                              ),
+                            pw.SizedBox(height: 8),
+                            if (tax > 0)
+                              pw.Row(
+                                mainAxisAlignment:
+                                    pw.MainAxisAlignment.spaceBetween,
+                                children: [
+                                  pw.Text(
+                                    'Tax',
+                                    style: const pw.TextStyle(fontSize: 12),
+                                  ),
+                                  pw.Text(
+                                    currencyFormat.format(tax),
+                                    style: const pw.TextStyle(fontSize: 12),
+                                  ),
+                                ],
+                              ),
+                            pw.Divider(color: borderColor),
+                            pw.Row(
+                              mainAxisAlignment:
+                                  pw.MainAxisAlignment.spaceBetween,
+                              children: [
+                                pw.Text(
+                                  'TOTAL',
+                                  style: pw.TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: pw.FontWeight.bold,
+                                    color: primaryColor,
+                                  ),
+                                ),
+                                pw.Text(
+                                  currencyFormat.format(totalAmount),
+                                  style: pw.TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: pw.FontWeight.bold,
+                                    color: primaryColor,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                pw.SizedBox(height: 20),
+                pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  children: [
+                    pw.Column(
+                      crossAxisAlignment: pw.CrossAxisAlignment.start,
+                      children: [
+                        pw.Container(
+                          width: 200,
+                          height: 40,
+                          decoration: pw.BoxDecoration(
+                            border: pw.Border(
+                                bottom: pw.BorderSide(color: borderColor)),
+                          ),
+                        ),
+                        pw.SizedBox(height: 4),
+                        pw.Text(
+                          'Customer Signature',
+                          style: const pw.TextStyle(fontSize: 10),
+                        ),
+                      ],
+                    ),
+                    pw.Container(
+                      padding: const pw.EdgeInsets.all(12),
+                      decoration: pw.BoxDecoration(
+                        color: primaryColor,
+                        borderRadius:
+                            const pw.BorderRadius.all(pw.Radius.circular(6)),
+                      ),
+                      child: pw.Text(
+                        'Thank you for your business!',
+                        style: pw.TextStyle(
+                          color: PdfColors.white,
+                          fontSize: 12,
+                          fontWeight: pw.FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            );
+          },
+        ),
+      );
 
-    try {
       await Printing.layoutPdf(
         onLayout: (PdfPageFormat format) async => pdf.save(),
         name: 'receipt_$orderId.pdf',
       );
-    } catch (e) {
+
+      // Show success SnackBar
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Failed to print receipt: $e'),
-          backgroundColor: Colors.red,
+          content: Row(
+            children: const [
+              Icon(Icons.check_circle, color: Colors.white),
+              SizedBox(width: 8),
+              Text('Receipt sent to printer'),
+            ],
+          ),
+          backgroundColor: Colors.green.shade600,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
           duration: const Duration(seconds: 3),
+          margin: const EdgeInsets.all(16),
         ),
       );
+    } catch (e, s) {
+      debugPrint('Error while printing receipt: $e\nStack trace:\n$s');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.error_outline, color: Colors.white),
+              const SizedBox(width: 8),
+              Expanded(child: Text('Failed to print receipt: $e')),
+            ],
+          ),
+          backgroundColor: Colors.red.shade600,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          duration: const Duration(seconds: 4),
+          margin: const EdgeInsets.all(16),
+        ),
+      );
+    } finally {
+      // Close loading dialog
+      Navigator.of(context).pop();
     }
   }
 }

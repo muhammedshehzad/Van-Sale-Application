@@ -57,6 +57,8 @@ dependencies:
   confetti: ^0.8.0
   location: ^8.0.0
   animate_do: ^4.2.0
+  dropdown_search: ^6.0.2
+  html: ^0.15.6
 
 dev_dependencies:
   flutter_test:

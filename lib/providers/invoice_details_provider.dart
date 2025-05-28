@@ -4,6 +4,7 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import '../authentication/cyllo_session_model.dart';
+import 'order_picking_provider.dart';
 
 class InvoiceDetailsProvider extends ChangeNotifier {
   Map<String, dynamic> _invoiceData = {};
@@ -399,6 +400,52 @@ class InvoiceDetailsProvider extends ChangeNotifier {
   }
 
   Future<void> generateAndSharePdf(BuildContext context) async {
+    // Show loading dialog
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        backgroundColor: Colors.white,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 28.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.download_rounded, color: primaryColor, size: 32),
+                  const SizedBox(width: 16),
+                  const Text(
+                    'Generating Invoice',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              CircularProgressIndicator(
+                strokeWidth: 3,
+                color: primaryColor,
+                backgroundColor: Colors.grey.shade200,
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'Please wait while we generate your invoice.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 14,
+                  color: Colors.grey.shade600,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
     final pdf = pw.Document(
       theme: pw.ThemeData.withFont(
         base: pw.Font.helvetica(),
@@ -1060,7 +1107,6 @@ class InvoiceDetailsProvider extends ChangeNotifier {
                         ),
                       ),
                       pw.SizedBox(height: 15),
-
                       // Terms & Conditions
                     ],
                   ),
@@ -1077,9 +1123,49 @@ class InvoiceDetailsProvider extends ChangeNotifier {
       final safeFilename = '$invoiceCode.pdf';
 
       await Printing.sharePdf(bytes: await pdf.save(), filename: safeFilename);
+
+// Show success message
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: const [
+              Icon(Icons.check_circle, color: Colors.white),
+              SizedBox(width: 8),
+              Text('Invoice generated successfully'),
+            ],
+          ),
+          backgroundColor: Colors.green.shade600,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          duration: const Duration(seconds: 3),
+          margin: const EdgeInsets.all(16),
+        ),
+      );
     } catch (e) {
+      print('Failed to generate invoice: $e');
+
+      // Show error message
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.error_outline, color: Colors.white),
+              const SizedBox(width: 8),
+              Expanded(child: Text('Failed to generate invoice: $e')),
+            ],
+          ),
+          backgroundColor: Colors.red.shade600,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          duration: const Duration(seconds: 4),
+          margin: const EdgeInsets.all(16),
+        ),
+      );
+
       _errorMessage = 'Failed to generate PDF: $e';
       notifyListeners();
+    } finally {
+      Navigator.of(context).pop(); // Close loading dialog
     }
   }
 }

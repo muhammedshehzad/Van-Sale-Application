@@ -895,12 +895,11 @@ class _SaleOrderPageState extends State<SaleOrderPage> {
                                     }
                                   },
                                   items: <double>[
-                                    0.05,
-                                    0.06,
+
                                     0.07,
-                                    0.08,
-                                    0.09,
-                                    0.10
+                                    0.10,
+                                    0.15,
+                                    0.20
                                   ].map<DropdownMenuItem<double>>(
                                       (double value) {
                                     return DropdownMenuItem<double>(
