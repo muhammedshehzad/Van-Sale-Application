@@ -189,14 +189,16 @@ class _ProductsPageState extends State<ProductsPage> {
   }
 
   Future<void> _refreshProducts() async {
+    if (!mounted) return;
     setState(() {
       _isLoading = true; // Start loading
     });
     try {
       final saleorderProvider =
-          Provider.of<SalesOrderProvider>(context, listen: false);
+      Provider.of<SalesOrderProvider>(context, listen: false);
       developer.log('refreshProducts: Starting product refresh');
       await saleorderProvider.loadProducts();
+      if (!mounted) return;
       setState(() {
         widget.availableProducts.clear();
         widget.availableProducts.addAll(saleorderProvider.products);
@@ -214,6 +216,7 @@ class _ProductsPageState extends State<ProductsPage> {
         _restoreDraftState();
         _isLoading = false; // Stop loading
       });
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Products refreshed successfully'),
@@ -222,6 +225,7 @@ class _ProductsPageState extends State<ProductsPage> {
         ),
       );
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _isLoading = false; // Stop loading on error
       });
@@ -235,7 +239,6 @@ class _ProductsPageState extends State<ProductsPage> {
       );
     }
   }
-
   void _updateProductList(SalesOrderProvider salesProvider,
       OrderPickingProvider orderPickingProvider) {
     if (orderPickingProvider.needsProductRefresh) {

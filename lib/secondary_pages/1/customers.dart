@@ -132,6 +132,8 @@ class _CustomersListState extends State<CustomersList> {
   }
 
   Future<void> _loadProducts() async {
+    if (!mounted) return;
+
     setState(() {
       _isLoading = true;
     });
@@ -159,6 +161,8 @@ class _CustomersListState extends State<CustomersList> {
         },
       });
 
+      if (!mounted) return;
+
       final Map<int, dynamic> mainVariants = {};
       for (var productData in result as List) {
         final templateId = productData['product_tmpl_id'] is List
@@ -170,7 +174,7 @@ class _CustomersListState extends State<CustomersList> {
       }
 
       final List<Product> fetchedProducts =
-          mainVariants.values.map((productData) {
+      mainVariants.values.map((productData) {
         List<ProductAttribute> attributes = [];
         if (productData['attribute_line_ids'] != false &&
             productData['attribute_line_ids'] != null) {
@@ -195,12 +199,16 @@ class _CustomersListState extends State<CustomersList> {
         );
       }).toList();
 
+      if (!mounted) return;
+
       setState(() {
         _isLoading = false;
       });
 
       log("Successfully fetched ${fetchedProducts.length} main variant products");
     } catch (e) {
+      if (!mounted) return;
+
       log('Failed to fetch products: $e');
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -210,12 +218,13 @@ class _CustomersListState extends State<CustomersList> {
         ),
       );
     } finally {
+      if (!mounted) return;
+
       setState(() {
         _isLoading = false;
       });
     }
   }
-
   List<ProductAttribute> _parseAttributes(dynamic attributeLineIds) {
     return [
       ProductAttribute(
