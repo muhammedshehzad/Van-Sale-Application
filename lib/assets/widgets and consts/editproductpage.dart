@@ -426,9 +426,9 @@ class _EditProductPageState extends State<EditProductPage> {
           _isLoading = false;
         });
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Product not found')),
-        );
+        // ScaffoldMessenger.of(context).showSnackBar(
+        //   const SnackBar(content: Text('Product not found')),
+        // );
         Navigator.pop(context);
       }
     } catch (e) {
@@ -691,16 +691,16 @@ class _EditProductPageState extends State<EditProductPage> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Remove Attribute'),
-        content: Text(
-            'Are you sure you want to remove the attribute "${attribute['name']}" from this product?'),
+        content:
+            Text('Are you sure you want to remove "${attribute['name']}"?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('CANCEL'),
+            child: const Text('Cancel'),
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('REMOVE', style: TextStyle(color: Colors.red)),
+            child: const Text('Remove', style: TextStyle(color: Colors.red)),
           ),
         ],
       ),
@@ -709,46 +709,36 @@ class _EditProductPageState extends State<EditProductPage> {
     if (confirm != true) return;
 
     try {
-      // Delete the attribute line
       await _odooClient.callKw({
         'model': 'product.template.attribute.line',
         'method': 'unlink',
-        'args': [
-          [attribute['attribute_line_id']]
-        ],
+        'args': [attribute['attribute_line_id']],
         'kwargs': {},
       });
 
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-            content:
-            Text('Attribute "${attribute['name']}" removed from product')),
+        SnackBar(content: Text('Attribute "${attribute['name']}" removed')),
       );
 
       await _loadProductData();
-    } catch (e) {
-      String errorMessage = 'Error removing attribute';
-      if (e.toString().contains('odoo.exceptions.UserError')) {
-        try {
-          final String fullError = e.toString();
-          final int messageStart = fullError.indexOf('message: ') + 9;
-          final int messageEnd = fullError.indexOf(', arguments:');
-          if (messageStart > 9 && messageEnd > messageStart) {
-            errorMessage = fullError.substring(messageStart, messageEnd);
-          }
-        } catch (_) {
-          errorMessage = 'Error removing attribute: $e';
-        }
-      } else {
-        errorMessage = 'Error removing attribute: $e';
-      }
 
-      developer.log("Error deleting attribute: $e");
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(errorMessage)),
-      );
+      // Close the current page and one additional level in the navigation stack
+      if (context.mounted) {
+        Navigator.pop(context); // Close current page
+      }
+    } catch (e) {
+      final errorMessage = e.toString().contains('odoo.exceptions.UserError')
+          ? e.toString().split('message: ')[1].split(', arguments:')[0]
+          : 'Failed to remove attribute: $e';
+
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(errorMessage)),
+        );
+      }
     }
   }
+
   void _showAttributeDialog([Map<String, dynamic>? attribute]) {
     showDialog(
       context: context,
@@ -760,18 +750,6 @@ class _EditProductPageState extends State<EditProductPage> {
         isEditing: attribute != null,
       ),
     );
-  }
-
-  Future<List<String>> _fetchAttributeValueNames(List<dynamic> valueIds) async {
-    final valueResult = await _odooClient.callKw({
-      'model': 'product.attribute.value',
-      'method': 'read',
-      'args': [valueIds],
-      'kwargs': {
-        'fields': ['name'],
-      },
-    });
-    return valueResult.map<String>((v) => v['name'] as String).toList();
   }
 
   @override
@@ -1159,50 +1137,55 @@ class _EditProductPageState extends State<EditProductPage> {
                           ],
                         ),
                       ),
-                      ..._attributes.map((attr) {
-                        return Card(
-                          margin: const EdgeInsets.symmetric(vertical: 4.0),
-                          elevation: 0,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8),
-                            side: BorderSide(color: Colors.grey.shade200),
-                          ),
-                          child: ListTile(
-                            dense: true,
-                            contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 12, vertical: 4),
-                            title: Text(
-                              attr['name'],
-                              style: const TextStyle(
-                                  fontSize: 16, fontWeight: FontWeight.w600),
-                            ),
-                            subtitle: Text(
-                              attr['values'].map((v) => v['name']).join(', '),
-                              style: TextStyle(
-                                  fontSize: 14, color: Colors.grey.shade600),
-                            ),
-                            trailing: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                IconButton(
-                                  icon: const Icon(Icons.edit,
-                                      size: 20, color: Colors.blueGrey),
-                                  onPressed: () => _showAttributeDialog(attr),
-                                  padding: EdgeInsets.zero,
-                                  constraints: const BoxConstraints(),
+                      ..._attributes
+                          .map((attr) => Card(
+                                margin:
+                                    const EdgeInsets.symmetric(vertical: 4.0),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(8),
+                                  side: BorderSide(color: Colors.grey.shade200),
                                 ),
-                                IconButton(
-                                  icon: const Icon(Icons.delete,
-                                      size: 20, color: primaryLightColor),
-                                  onPressed: () => _deleteAttribute(attr),
-                                  padding: EdgeInsets.zero,
-                                  constraints: const BoxConstraints(),
+                                child: ListTile(
+                                  dense: true,
+                                  contentPadding: const EdgeInsets.symmetric(
+                                      horizontal: 12, vertical: 4),
+                                  title: Text(
+                                    attr['name'],
+                                    style: const TextStyle(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.w600),
+                                  ),
+                                  subtitle: Text(
+                                    attr['values']
+                                        .map((v) => v['name'])
+                                        .join(', '),
+                                    style: TextStyle(
+                                        fontSize: 14,
+                                        color: Colors.grey.shade600),
+                                  ),
+                                  trailing: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      IconButton(
+                                        icon: const Icon(Icons.edit,
+                                            size: 20, color: Colors.blueGrey),
+                                        onPressed: () =>
+                                            _showAttributeDialog(attr),
+                                        padding: EdgeInsets.zero,
+                                        constraints: const BoxConstraints(),
+                                      ),
+                                      IconButton(
+                                        icon: const Icon(Icons.delete,
+                                            size: 20, color: Colors.red),
+                                        onPressed: () => _deleteAttribute(attr),
+                                        padding: EdgeInsets.zero,
+                                        constraints: const BoxConstraints(),
+                                      ),
+                                    ],
+                                  ),
                                 ),
-                              ],
-                            ),
-                          ),
-                        );
-                      }).toList(),
+                              ))
+                          .toList(),
                       const SizedBox(height: 8),
                     ],
                     const SizedBox(height: 16),
@@ -1579,9 +1562,7 @@ class _AttributeDialogState extends State<_AttributeDialog> {
     } finally {
       setState(() => _isSaving = false);
       Navigator.pop(context);
-
     }
-
   }
 
   Future<void> _updateExistingAttribute() async {
@@ -1939,7 +1920,7 @@ Widget buildEditProductPageShimmer(BuildContext context) {
           Wrap(
             spacing: 8,
             children: List.generate(
-              3,
+              4,
               (index) => Container(
                 width: 80,
                 height: 32,
@@ -1948,6 +1929,50 @@ Widget buildEditProductPageShimmer(BuildContext context) {
                   borderRadius: BorderRadius.circular(16),
                 ),
               ),
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // Income Account Dropdown Placeholder
+          Container(
+            width: double.infinity,
+            height: 56,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(4),
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // Expense Account Dropdown Placeholder
+          Container(
+            width: double.infinity,
+            height: 56,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(4),
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // Description TextField Placeholder
+          Container(
+            width: double.infinity,
+            height: 100,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(4),
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // Attributes Section Placeholder
+          Container(
+            width: 150,
+            height: 20,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(4),
             ),
           ),
           const SizedBox(height: 16),

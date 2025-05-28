@@ -30,15 +30,14 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
   int _currentQuantity = 1;
-
   Map<String, String> _selectedVariants = {};
+
   bool _isLoading = true;
   bool _isAddingToOrder = false;
   final ScrollController _scrollController = ScrollController();
   List<String> _imageGallery = [];
   int _currentImageIndex = 0;
   Map<String, dynamic> _productData = {};
-  late OdooClient _odooClient;
 
   @override
   void initState() {
@@ -54,10 +53,25 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
       _selectedVariants = {};
       developer.log('initState: _selectedVariants initialized as empty');
     }
+    _initializeOdooClient();
   }
-  Future<void> _loadProductData() async {
-    if (!mounted) return;
 
+  Future<void> _initializeOdooClient() async {
+    try {
+      final client = await SessionManager.getActiveClient();
+      if (client == null) {
+        throw Exception('No active Odoo session found. Please log in again.');
+      }
+      await _loadProductData();
+    } catch (e) {
+      developer.log("Error initializing Odoo client: $e");
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error initializing Odoo client: $e')),
+      );
+    }
+  }
+
+  Future<void> _loadProductData() async {
     setState(() => _isLoading = true);
 
     try {
@@ -99,13 +113,12 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
         },
       });
 
-      if (productResult.isNotEmpty && mounted) {
+      if (productResult.isNotEmpty) {
         final productData = productResult[0];
         final templateId = productData['product_tmpl_id'][0] as int;
         List<Map<String, dynamic>> attributes = [];
 
-        // developer.log('loadProductData: Fetched product data = $productData');
-
+        // Fetch attribute lines for the product template
         final attributeLineResult = await client.callKw({
           'model': 'product.template.attribute.line',
           'method': 'search_read',
@@ -118,8 +131,6 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
             'fields': ['product_tmpl_id', 'attribute_id', 'value_ids'],
           },
         });
-
-        developer.log('loadProductData: Attribute lines = $attributeLineResult');
 
         if (attributeLineResult.isNotEmpty) {
           final attributeIds = attributeLineResult
@@ -182,7 +193,7 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
           };
 
           final templateAttributeValueMap =
-          <int, Map<int, Map<int, Map<String, dynamic>>>>{};
+              <int, Map<int, Map<int, Map<String, dynamic>>>>{};
           for (var attrVal in templateAttributeValueResult) {
             final attributeId = attrVal['attribute_id'][0] as int;
             final valueId = attrVal['product_attribute_value_id'][0] as int;
@@ -208,9 +219,9 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
             final extraCosts = <String, double>{
               for (var id in valueIds)
                 attributeValueMap[id as int]!:
-                templateAttributeValueMap[templateId]?[attributeId]
-                ?[id as int]?['price_extra'] as double? ??
-                    0.0
+                    templateAttributeValueMap[templateId]?[attributeId]
+                            ?[id as int]?['price_extra'] as double? ??
+                        0.0
             };
 
             attributes.add({
@@ -220,8 +231,6 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
             });
           }
         }
-
-        developer.log('loadProductData: Processed attributes = $attributes');
 
         String? imageUrl;
         final imageData = productData['image_1920'];
@@ -251,20 +260,20 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
                   ? productData['description_sale']
                   : '',
               'qty_available':
-              (productData['qty_available'] as num?)?.toInt() ?? 0,
+                  (productData['qty_available'] as num?)?.toInt() ?? 0,
             };
 
             _imageGallery = imageUrl != null
                 ? [
-              imageUrl,
-              'https://placeholder.com/product_alt_1',
-              'https://placeholder.com/product_alt_2',
-            ]
+                    imageUrl,
+                    'https://placeholder.com/product_alt_1',
+                    'https://placeholder.com/product_alt_2',
+                  ]
                 : [
-              'https://placeholder.com/product1',
-              'https://placeholder.com/product_alt_1',
-              'https://placeholder.com/product_alt_2',
-            ];
+                    'https://placeholder.com/product1',
+                    'https://placeholder.com/product_alt_1',
+                    'https://placeholder.com/product_alt_2',
+                  ];
 
             if (widget.selectedAttributes == null && attributes.isNotEmpty) {
               _selectedVariants.clear();
@@ -285,42 +294,39 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
         developer.log("Fetched product: ${productData['name']}");
         developer.log(
             "Attributes: ${attributes.isNotEmpty ? attributes.map((a) => '${a['name']}: ${a['values'].join(', ')}').join('; ') : 'None'}");
-      } else if (mounted) {
-        setState(() {
-          _productData = {
-            'name': 'Not Found',
-            'list_price': 0.0,
-            'qty_available': 0,
-          };
-          _imageGallery = [
-            'https://placeholder.com/product1',
-            'https://placeholder.com/product_alt_1',
-            'https://placeholder.com/product_alt_2',
-          ];
-        });
+      } else {
+        if (mounted)
+          setState(() {
+            _productData = {
+              'name': 'Not Found',
+              'list_price': 0.0,
+              'qty_available': 0,
+            };
+            _imageGallery = [
+              'https://placeholder.com/product1',
+              'https://placeholder.com/product_alt_1',
+              'https://placeholder.com/product_alt_2',
+            ];
+          });
         developer.log("No product found for ID: ${widget.productId}");
       }
     } catch (e) {
       developer.log("Error loading product data: $e");
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error loading product: $e')),
-        );
-      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error loading product: $e')),
+      );
     } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
+      if (mounted) setState(() => _isLoading = false);
     }
   }
+
   @override
   void dispose() {
     _tabController.dispose();
     _scrollController.dispose();
-    _odooClient.close();
+    // _odooClient.close();
     super.dispose();
   }
-
 
   double _calculateFinalPrice() {
     double finalPrice = _productData['list_price']?.toDouble() ?? 0.0;
@@ -336,7 +342,6 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
         }
       }
     }
-    // Debug: Log final price calculation
     developer.log(
         'calculateFinalPrice: _selectedVariants = $_selectedVariants, finalPrice = $finalPrice');
     return finalPrice;
@@ -425,59 +430,12 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
     );
   }
 
-  void _showDeletingDialog() {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => Dialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        backgroundColor: Colors.white,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 28.0),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Row(
-                children: [
-                  Icon(Icons.delete_rounded, color: primaryColor, size: 32),
-                  const SizedBox(width: 16),
-                  const Text(
-                    'Deleting Product',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              CircularProgressIndicator(
-                strokeWidth: 3,
-                color: primaryColor,
-                backgroundColor: Colors.grey.shade200,
-              ),
-              const SizedBox(height: 16),
-              Text(
-                'Please wait while we delete the product.',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 14,
-                  color: Colors.grey.shade600,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
   Future<void> deleteProduct() async {
     try {
       _showDeletingDialog();
-
+      final client = await SessionManager.getActiveClient();
       // Attempt to delete the product
-      final result = await _odooClient.callKw({
+      final result = await client?.callKw({
         'model': 'product.product',
         'method': 'unlink',
         'args': [
@@ -519,8 +477,8 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
         if (e is OdooException &&
             e.toString().contains('ForeignKeyViolation')) {
           try {
-            // Attempt to archive the product instead
-            final archiveResult = await _odooClient.callKw({
+            final client = await SessionManager.getActiveClient();
+            final archiveResult = await client?.callKw({
               'model': 'product.product',
               'method': 'write',
               'args': [
@@ -597,7 +555,6 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
     }
   }
 
-// Add this method in the _ProductDetailsPageState class
   void _showErrorDetailsDialog(BuildContext context, String errorDetails) {
     showDialog(
       context: context,
@@ -634,8 +591,54 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
     );
   }
 
+  void _showDeletingDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        backgroundColor: Colors.white,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 28.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.delete_rounded, color: primaryColor, size: 32),
+                  const SizedBox(width: 16),
+                  const Text(
+                    'Deleting Product',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              CircularProgressIndicator(
+                strokeWidth: 3,
+                color: primaryColor,
+                backgroundColor: Colors.grey.shade200,
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'Please wait while we delete the product.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 14,
+                  color: Colors.grey.shade600,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   String _getSelectedVariantDefaultCode() {
-    // Debug: Log default code
     developer.log(
         'getSelectedVariantDefaultCode: default_code = ${_productData['default_code']}');
     return _productData['default_code'] is String
@@ -645,8 +648,6 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
 
   @override
   Widget build(BuildContext context) {
-    developer.log(
-        'build: _isLoading = $_isLoading, _productData = ${_productData.isNotEmpty}, _selectedVariants = $_selectedVariants');
     if (_isLoading) {
       return Scaffold(
         appBar: AppBar(
@@ -702,7 +703,7 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
           IconButton(
             icon: const Icon(Icons.archive),
             onPressed: _showDeleteConfirmationDialog,
-            tooltip: 'Delete Product',
+            tooltip: 'Archive Product',
           ),
         ],
       ),
@@ -812,175 +813,174 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
                     const SizedBox(width: 16),
                     Expanded(
                       child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              _productData['name'],
-                              style: const TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
-                              ),
-                              overflow: TextOverflow.ellipsis,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _productData['name'],
+                            style: const TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          const SizedBox(height: 4),
+                          if (_productData['barcode'] is String &&
+                              _productData['barcode'].isNotEmpty) ...[
+                            Row(
+                              children: [
+                                const Icon(Icons.barcode_reader,
+                                    size: 16, color: Colors.grey),
+                                const SizedBox(width: 4),
+                                Text(
+                                  _productData['barcode'] as String,
+                                  style: const TextStyle(color: Colors.grey),
+                                ),
+                                const SizedBox(width: 8),
+                                InkWell(
+                                  onTap: () {
+                                    final barcode =
+                                        _productData['barcode'] as String?;
+                                    if (barcode != null &&
+                                        barcode.trim().isNotEmpty &&
+                                        barcode.trim().toLowerCase() != 'n/a') {
+                                      Clipboard.setData(
+                                          ClipboardData(text: barcode));
+                                      ScaffoldMessenger.of(context)
+                                          .showSnackBar(
+                                        const SnackBar(
+                                            content: Text(
+                                                'Barcode copied to clipboard')),
+                                      );
+                                    }
+                                  },
+                                  child: const Icon(Icons.copy,
+                                      size: 16, color: primaryColor),
+                                ),
+                              ],
                             ),
                             const SizedBox(height: 4),
-                            if (_productData['barcode'] is String &&
-                                _productData['barcode'].isNotEmpty) ...[
-                              Row(
+                          ],
+                          Row(
+                            children: [
+                              const Icon(Icons.category,
+                                  size: 16, color: Colors.grey),
+                              const SizedBox(width: 4),
+                              Expanded(
+                                child: Text(
+                                  _productData['categ_id'] is List
+                                      ? _productData['categ_id'][1]
+                                      : 'Uncategorized',
+                                  style: const TextStyle(color: Colors.grey),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 4),
+                          Row(
+                            children: [
+                              const Icon(Icons.qr_code,
+                                  size: 16, color: Colors.grey),
+                              const SizedBox(width: 4),
+                              Expanded(
+                                child: Text(
+                                  _getSelectedVariantDefaultCode(),
+                                  style: const TextStyle(color: Colors.grey),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 4),
+                          Row(
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 8, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color:
+                                      (_productData['qty_available'] ?? 0) > 0
+                                          ? Colors.green
+                                          : Colors.red,
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: Text(
+                                  (_productData['qty_available'] ?? 0) > 0
+                                      ? 'In Stock (${_productData['qty_available']})'
+                                      : 'Out of Stock',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ),
+                              const Spacer(),
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.end,
                                 children: [
-                                  const Icon(Icons.barcode_reader,
-                                      size: 16, color: Colors.grey),
-                                  const SizedBox(width: 4),
                                   Text(
-                                    _productData['barcode'] as String,
-                                    style: const TextStyle(color: Colors.grey),
+                                    '\$${_calculateFinalPrice().toStringAsFixed(2)}',
+                                    style: const TextStyle(
+                                      fontSize: 20,
+                                      fontWeight: FontWeight.bold,
+                                      color: primaryColor,
+                                    ),
+                                  ),
+                                  if (_productData['list_price'] !=
+                                      _calculateFinalPrice())
+                                    Text(
+                                      'Base: \$${(_productData['list_price'] ?? 0.0).toStringAsFixed(2)}',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: Colors.grey[600],
+                                        decoration: TextDecoration.lineThrough,
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ],
+                          ),
+                          if (_selectedVariants.isNotEmpty) ...[
+                            const SizedBox(height: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: Colors.grey[100],
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Selected Variant:',
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      color: Colors.grey[900],
+                                      fontWeight: FontWeight.bold,
+                                    ),
                                   ),
                                   const SizedBox(width: 8),
-                                  InkWell(
-                                    onTap: () {
-                                      final barcode =
-                                          _productData['barcode'] as String?;
-                                      if (barcode != null &&
-                                          barcode.trim().isNotEmpty &&
-                                          barcode.trim().toLowerCase() !=
-                                              'n/a') {
-                                        Clipboard.setData(
-                                            ClipboardData(text: barcode));
-                                        ScaffoldMessenger.of(context)
-                                            .showSnackBar(
-                                          const SnackBar(
-                                              content: Text(
-                                                  'Barcode copied to clipboard')),
-                                        );
-                                      }
-                                    },
-                                    child: const Icon(Icons.copy,
-                                        size: 16, color: primaryColor),
+                                  Expanded(
+                                    child: Text(
+                                      _selectedVariants.entries
+                                          .map((e) => '${e.key}: ${e.value}')
+                                          .join(', '),
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: Colors.grey[700],
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                      overflow: TextOverflow.ellipsis,
+                                      maxLines: 2,
+                                    ),
                                   ),
                                 ],
                               ),
-                              const SizedBox(height: 4),
-                            ],
-                            Row(
-                              children: [
-                                const Icon(Icons.category,
-                                    size: 16, color: Colors.grey),
-                                const SizedBox(width: 4),
-                                Expanded(
-                                  child: Text(
-                                    _productData['categ_id'] is List
-                                        ? _productData['categ_id'][1]
-                                        : 'Uncategorized',
-                                    style: const TextStyle(color: Colors.grey),
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                              ],
                             ),
-                            const SizedBox(height: 4),
-                            Row(
-                              children: [
-                                const Icon(Icons.qr_code,
-                                    size: 16, color: Colors.grey),
-                                const SizedBox(width: 4),
-                                Expanded(
-                                  child: Text(
-                                    _getSelectedVariantDefaultCode(),
-                                    style: const TextStyle(color: Colors.grey),
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 4),
-                            Row(
-                              children: [
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 8, vertical: 2),
-                                  decoration: BoxDecoration(
-                                    color:
-                                        (_productData['qty_available'] ?? 0) > 0
-                                            ? Colors.green
-                                            : Colors.red,
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                  child: Text(
-                                    (_productData['qty_available'] ?? 0) > 0
-                                        ? 'In Stock (${_productData['qty_available']})'
-                                        : 'Out of Stock',
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 12,
-                                    ),
-                                  ),
-                                ),
-                                const Spacer(),
-                                Column(
-                                  crossAxisAlignment: CrossAxisAlignment.end,
-                                  children: [
-                                    Text(
-                                      '\$${_calculateFinalPrice().toStringAsFixed(2)}',
-                                      style: const TextStyle(
-                                        fontSize: 20,
-                                        fontWeight: FontWeight.bold,
-                                        color: primaryColor,
-                                      ),
-                                    ),
-                                    if (_productData['list_price'] !=
-                                        _calculateFinalPrice())
-                                      Text(
-                                        'Base: \$${(_productData['list_price'] ?? 0.0).toStringAsFixed(2)}',
-                                        style: TextStyle(
-                                          fontSize: 12,
-                                          color: Colors.grey[600],
-                                          decoration:
-                                              TextDecoration.lineThrough,
-                                        ),
-                                      ),
-                                  ],
-                                ),
-                              ],
-                            ),
-                            if (_selectedVariants.isNotEmpty) ...[
-                              const SizedBox(height: 8),
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 8, vertical: 4),
-                                decoration: BoxDecoration(
-                                  color: Colors.grey[100],
-                                  borderRadius: BorderRadius.circular(6),
-                                ),
-                                child: Row(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      'Selected Variant:',
-                                      style: TextStyle(
-                                        fontSize: 13,
-                                        color: Colors.grey[900],
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Expanded(
-                                      child: Text(
-                                        _selectedVariants.entries
-                                            .map((e) => '${e.key}: ${e.value}')
-                                            .join(', '),
-                                        style: TextStyle(
-                                          fontSize: 12,
-                                          color: Colors.grey[700],
-                                          fontWeight: FontWeight.w500,
-                                        ),
-                                        overflow: TextOverflow.ellipsis,
-                                        maxLines: 2,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ],
-                          ]),
+                          ],
+                        ],
+                      ),
                     ),
                   ],
                 ),
@@ -1075,27 +1075,35 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
                         _buildSectionCard(
                           title: 'Recent Sales',
                           content: FutureBuilder(
-                            future: _odooClient.callKw({
-                              'model': 'sale.order.line',
-                              'method': 'search_read',
-                              'args': [
-                                [
-                                  [
-                                    'product_id',
-                                    '=',
-                                    int.parse(widget.productId)
-                                  ]
-                                ]
-                              ],
-                              'kwargs': {
-                                'fields': [
-                                  'order_id',
-                                  'product_uom_qty',
-                                  'price_unit',
-                                  'create_date'
-                                ],
-                                'limit': 5,
-                              },
+                            future:
+                                SessionManager.getActiveClient().then((client) {
+                              if (client == null)
+                                throw Exception(
+                                    'No active Odoo session found.');
+                              return client.callKw(
+                                {
+                                  'model': 'sale.order.line',
+                                  'method': 'search_read',
+                                  'args': [
+                                    [
+                                      [
+                                        'product_id',
+                                        '=',
+                                        int.parse(widget.productId)
+                                      ]
+                                    ]
+                                  ],
+                                  'kwargs': {
+                                    'fields': [
+                                      'order_id',
+                                      'product_uom_qty',
+                                      'price_unit',
+                                      'create_date'
+                                    ],
+                                    'limit': 5,
+                                  },
+                                },
+                              );
                             }),
                             builder: (context, snapshot) {
                               if (snapshot.hasData &&
@@ -1175,21 +1183,28 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
                           content: Column(
                             children: [
                               FutureBuilder(
-                                future: _odooClient.callKw({
-                                  'model': 'stock.quant',
-                                  'method': 'search_read',
-                                  'args': [
-                                    [
+                                future: SessionManager.getActiveClient()
+                                    .then((client) {
+                                  if (client == null)
+                                    throw Exception(
+                                        'No active Odoo session found.');
+                                  return client.callKw({
+                                    'model': 'stock.quant',
+                                    'model': 'stock.quant',
+                                    'method': 'search_read',
+                                    'args': [
                                       [
-                                        'product_id',
-                                        '=',
-                                        int.parse(widget.productId)
+                                        [
+                                          'product_id',
+                                          '=',
+                                          int.parse(widget.productId)
+                                        ]
                                       ]
-                                    ]
-                                  ],
-                                  'kwargs': {
-                                    'fields': ['location_id', 'quantity'],
-                                  },
+                                    ],
+                                    'kwargs': {
+                                      'fields': ['location_id', 'quantity'],
+                                    },
+                                  });
                                 }),
                                 builder: (context, snapshot) {
                                   if (snapshot.hasData &&
@@ -1224,27 +1239,33 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
                         _buildSectionCard(
                           title: 'Recent Inventory Movements',
                           content: FutureBuilder(
-                            future: _odooClient.callKw({
-                              'model': 'stock.move',
-                              'method': 'search_read',
-                              'args': [
-                                [
+                            future:
+                                SessionManager.getActiveClient().then((client) {
+                              if (client == null)
+                                throw Exception(
+                                    'No active Odoo session found.');
+                              return client.callKw({
+                                'model': 'stock.move',
+                                'method': 'search_read',
+                                'args': [
                                   [
-                                    'product_id',
-                                    '=',
-                                    int.parse(widget.productId)
+                                    [
+                                      'product_id',
+                                      '=',
+                                      int.parse(widget.productId)
+                                    ]
                                   ]
-                                ]
-                              ],
-                              'kwargs': {
-                                'fields': [
-                                  'date',
-                                  'reference',
-                                  'product_uom_qty',
-                                  'state'
                                 ],
-                                'limit': 3,
-                              },
+                                'kwargs': {
+                                  'fields': [
+                                    'date',
+                                    'reference',
+                                    'product_uom_qty',
+                                    'state'
+                                  ],
+                                  'limit': 3,
+                                },
+                              });
                             }),
                             builder: (context, snapshot) {
                               if (snapshot.hasData &&
@@ -1305,33 +1326,42 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
           width: double.maxFinite,
           height: 300,
           child: FutureBuilder(
-            future: _odooClient.callKw({
-              'model': 'stock.move',
-              'method': 'search_read',
-              'args': [
-                [
-                  ['product_id', '=', int.parse(widget.productId)]
-                ]
-              ],
-              'kwargs': {
-                'fields': ['date', 'product_uom_qty', 'state', 'create_uid'],
-                'limit': 10,
-              },
+            future: SessionManager.getActiveClient().then((client) {
+              if (client == null)
+                throw Exception('No active Odoo session found.');
+              return client.callKw({
+                'model': 'stock.move',
+                'method': 'search_read',
+                'args': [
+                  [
+                    ['product_id', '=', int.parse(widget.productId)]
+                  ]
+                ],
+                'kwargs': {
+                  'fields': ['date', 'product_uom_qty', 'state', 'create_uid'],
+                  'limit': 10,
+                },
+              });
             }),
             builder: (context, snapshot) {
               if (snapshot.hasData && snapshot.data.isNotEmpty) {
                 return ListView(
                   children: snapshot.data.map<Widget>((move) {
                     return FutureBuilder(
-                      future: _odooClient.callKw({
-                        'model': 'res.users',
-                        'method': 'read',
-                        'args': [
-                          [move['create_uid'][0]]
-                        ],
-                        'kwargs': {
-                          'fields': ['name']
-                        },
+                      future: SessionManager.getActiveClient().then((client) {
+                        if (client == null) {
+                          throw Exception('No active Odoo session found.');
+                        }
+                        return client.callKw({
+                          'model': 'res.users',
+                          'method': 'read',
+                          'args': [
+                            [move['create_uid'][0]]
+                          ],
+                          'kwargs': {
+                            'fields': ['name']
+                          },
+                        });
                       }),
                       builder: (context, userSnapshot) {
                         if (userSnapshot.hasData) {
@@ -1361,14 +1391,14 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
             onPressed: () => Navigator.pop(context),
             child: const Text('CLOSE'),
           ),
-          // TextButton(
-          //   onPressed: () {
-          //     Navigator.pop(context);
-          //     Navigator.pushNamed(context, '/inventory-movements',
-          //         arguments: widget.productId);
-          //   },
-          //   child: const Text('VIEW FULL HISTORY'),
-          // ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              Navigator.pushNamed(context, '/inventory-movements',
+                  arguments: widget.productId);
+            },
+            child: const Text('VIEW FULL HISTORY'),
+          ),
         ],
       ),
     );
@@ -1982,7 +2012,8 @@ class StockUpdateButton extends StatelessWidget {
               onPressed: isLoading
                   ? null
                   : () async {
-                      if (formKey.currentState!.validate()) {
+                      if (formKey.currentState!.validate() ||
+                          (context.mounted)) {
                         setState(() {
                           isLoading = true;
                         });
