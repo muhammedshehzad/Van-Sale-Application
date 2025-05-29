@@ -94,6 +94,7 @@ class _MainPageState extends State<MainPage> with TickerProviderStateMixin {
       }
     }
   }
+
   @override
   void dispose() {
     _animationController.dispose();
@@ -499,16 +500,15 @@ class _MainPageState extends State<MainPage> with TickerProviderStateMixin {
   }
 
   Widget _buildFloatingActionButton() {
+    if (selectedIndex == 0) {
+      return const SizedBox.shrink();
+    }
+
     IconData fabIcon;
     String fabLabel;
     String fabTooltip;
 
     switch (selectedIndex) {
-      case 0:
-        fabIcon = Icons.post_add;
-        fabLabel = 'New Order';
-        fabTooltip = 'Create a New Sale Order';
-        break;
       case 1:
         fabIcon = Icons.add_box;
         fabLabel = 'Add Product';

@@ -82,7 +82,7 @@ class _CustomerHistoryPageState extends State<CustomerHistoryPage> {
 
   void _onSearchChanged() {
     if (_debounce?.isActive ?? false) _debounce!.cancel();
-    _debounce = Timer(const Duration(milliseconds: 650), () {
+    _debounce = Timer(const Duration(milliseconds: 500), () {
       setState(() {
         _searchQuery = _searchController.text.toLowerCase();
         _currentPage = 0;

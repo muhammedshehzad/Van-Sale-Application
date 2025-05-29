@@ -308,6 +308,23 @@ class OrderPickingProvider with ChangeNotifier {
     notifyListeners();
   }
 
+  // New method to set customers
+  void setCustomers(List<Customer> customers) {
+    final seenIds = <String>{};
+    final uniqueCustomers = <Customer>[];
+
+    for (var customer in customers) {
+      if (!seenIds.contains(customer.id)) {
+        seenIds.add(customer.id);
+        uniqueCustomers.add(customer);
+      }
+    }
+
+    _customers = uniqueCustomers;
+    _customers.sort((a, b) => a.name.compareTo(b.name));
+    _isLoadingCustomers = false;
+    notifyListeners();
+  }
   void navigateToCreateCustomerPage(BuildContext context) {
     Navigator.push<Customer>(
       context,
@@ -315,22 +332,20 @@ class OrderPickingProvider with ChangeNotifier {
         builder: (context) => CreateCustomerPage(
           onCustomerCreated: (Customer newCustomer) {
             addCustomer(newCustomer);
-
             shopNameController.text = newCustomer.name;
-            shopLocationController.text = newCustomer.city!;
+            shopLocationController.text = newCustomer.city ?? '';
             contactPersonController.text = newCustomer.name;
-            contactNumberController.text = newCustomer.phone!;
+            contactNumberController.text = newCustomer.phone ?? '';
           },
         ),
       ),
     ).then((Customer? newCustomer) {
       if (newCustomer != null) {
         addCustomer(newCustomer);
-
         shopNameController.text = newCustomer.name;
-        shopLocationController.text = newCustomer.city!;
+        shopLocationController.text = newCustomer.city ?? '';
         contactPersonController.text = newCustomer.name;
-        contactNumberController.text = newCustomer.phone!;
+        contactNumberController.text = newCustomer.phone ?? '';
       }
     });
   }
@@ -415,7 +430,7 @@ class OrderPickingProvider with ChangeNotifier {
           'Odoo search_count result for $orderId: $result (type: ${result.runtimeType})');
 
       final count =
-          (result is int) ? result : int.tryParse(result.toString()) ?? 0;
+      (result is int) ? result : int.tryParse(result.toString()) ?? 0;
       return count > 0;
     } catch (e) {
       developer.log('Error with search_count for $orderId: $e', error: e);
@@ -447,7 +462,7 @@ class OrderPickingProvider with ChangeNotifier {
   void showProductSelectionPage(
       BuildContext context, DataSyncManager syncManager) {
     final salesProvider =
-        Provider.of<SalesOrderProvider>(context, listen: false);
+    Provider.of<SalesOrderProvider>(context, listen: false);
     salesProvider.loadProducts().then((_) {
       var availableProducts = salesProvider.products;
       print('Available products count: ${availableProducts.length}');
@@ -458,7 +473,7 @@ class OrderPickingProvider with ChangeNotifier {
       Navigator.pushAndRemoveUntil(
         context,
         SlidingPageTransitionRL(page: MainPage(syncManager: syncManager)),
-        (Route route) => false,
+            (Route route) => false,
       );
     }).catchError((e) {
       print('Error loading products for page: $e');
@@ -524,25 +539,24 @@ class OrderPickingProvider with ChangeNotifier {
 
       final List<Customer> fetchedCustomers = result
           .map((customerData) {
-            if (customerData is! Map) {
-              developer.log(
-                  "Warning: Skipping invalid customer data: $customerData");
-              return null;
-            }
+        if (customerData is! Map) {
+          developer.log(
+              "Warning: Skipping invalid customer data: $customerData");
+          return null;
+        }
 
-            try {
-              final Map<String, dynamic> typedCustomerData =
-                  customerData.cast<String, dynamic>();
-              return Customer.fromJson(typedCustomerData);
-            } catch (e) {
-              developer.log("Error mapping customer: $e, Data: $customerData");
-              return null;
-            }
-          })
+        try {
+          final Map<String, dynamic> typedCustomerData =
+          customerData.cast<String, dynamic>();
+          return Customer.fromJson(typedCustomerData);
+        } catch (e) {
+          developer.log("Error mapping customer: $e, Data: $customerData");
+          return null;
+        }
+      })
           .where((customer) => customer != null)
           .cast<Customer>()
           .toList();
-      ;
 
       fetchedCustomers.sort((a, b) => a.name.compareTo(b.name));
       _customers = fetchedCustomers;
@@ -562,7 +576,6 @@ class OrderPickingProvider with ChangeNotifier {
         developer.log("Company ID: ${firstCustomer.companyId}");
         developer.log("Latitude: ${firstCustomer.latitude ?? 'N/A'}");
         developer.log("Longitude: ${firstCustomer.longitude ?? 'N/A'}");
-        // developer.log("Image URL: ${firstCustomer.imageUrl ?? 'N/A'}");
       }
     } catch (e) {
       developer.log("Error fetching customers: $e");
@@ -578,9 +591,9 @@ class OrderPickingProvider with ChangeNotifier {
     newProduct.nameController.text = product.name;
     newProduct.quantityController.text = quantity.toString();
     newProduct.selectedCategory =
-        product.categId is List && product.categId.length == 2
-            ? product.categId[1].toString()
-            : 'General';
+    product.categId is List && product.categId.length == 2
+        ? product.categId[1].toString()
+        : 'General';
     newProduct.stockQuantity = product.vanInventory;
     newProduct.imageUrl = product.imageUrl;
     _products.add(newProduct);
@@ -642,7 +655,6 @@ class OrderPickingProvider with ChangeNotifier {
     notifyListeners();
   }
 }
-
 extension OrderPickingProviderCache on OrderPickingProvider {
   Future<void> setCustomersFromCache(dynamic cachedCustomers) async {
     try {

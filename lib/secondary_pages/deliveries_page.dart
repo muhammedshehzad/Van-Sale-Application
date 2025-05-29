@@ -42,6 +42,7 @@ class _PendingDeliveriesPageState extends State<PendingDeliveriesPage> {
   final ScrollController _scrollController = ScrollController();
   Timer? _debounce;
   int _totalDeliveries = 0;
+
   @override
   void initState() {
     super.initState();
@@ -128,10 +129,12 @@ class _PendingDeliveriesPageState extends State<PendingDeliveriesPage> {
 
       // Add date range filters
       if (_startDate != null) {
-        domain.add(['date_order', '>=', DateFormat('yyyy-MM-dd').format(_startDate!)]);
+        domain.add(
+            ['date_order', '>=', DateFormat('yyyy-MM-dd').format(_startDate!)]);
       }
       if (_endDate != null) {
-        domain.add(['date_order', '<=', DateFormat('yyyy-MM-dd').format(_endDate!)]);
+        domain.add(
+            ['date_order', '<=', DateFormat('yyyy-MM-dd').format(_endDate!)]);
       }
 
       // Add amount range filters
@@ -205,7 +208,8 @@ class _PendingDeliveriesPageState extends State<PendingDeliveriesPage> {
         final result = results[1];
 
         if (result is List) {
-          final newOrders = result.where((item) => item is Map<String, dynamic>).map((json) {
+          final newOrders =
+              result.where((item) => item is Map<String, dynamic>).map((json) {
             final map = json as Map<String, dynamic>;
             map['date'] = map['date_order'];
             return SaleOrder.fromJson(map);
@@ -242,7 +246,8 @@ class _PendingDeliveriesPageState extends State<PendingDeliveriesPage> {
         );
 
         if (result is List) {
-          final newOrders = result.where((item) => item is Map<String, dynamic>).map((json) {
+          final newOrders =
+              result.where((item) => item is Map<String, dynamic>).map((json) {
             final map = json as Map<String, dynamic>;
             map['date'] = map['date_order'];
             return SaleOrder.fromJson(map);
@@ -275,9 +280,10 @@ class _PendingDeliveriesPageState extends State<PendingDeliveriesPage> {
       _showErrorSnackBar(errorMessage);
     }
   }
+
   Widget _buildAllDeliveriesFetched() {
     return Padding(
-      padding: const EdgeInsets.all(_smallPadding*.5),
+      padding: const EdgeInsets.all(_smallPadding * .5),
       child: Center(
         child: Text(
           'All deliveries are fetched.',
@@ -290,6 +296,7 @@ class _PendingDeliveriesPageState extends State<PendingDeliveriesPage> {
       ),
     );
   }
+
   Future<void> _handleRefresh() async {
     setState(() {
       _isLoading = true;
@@ -871,7 +878,8 @@ class _PendingDeliveriesPageState extends State<PendingDeliveriesPage> {
                 ),
               ),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                 decoration: BoxDecoration(
                   color: primaryColor.withOpacity(0.1),
                   borderRadius: BorderRadius.circular(20),
@@ -927,7 +935,7 @@ class _PendingDeliveriesPageState extends State<PendingDeliveriesPage> {
                                 color: _getStatusColor(order.invoiceStatus)
                                     .withOpacity(0.1),
                                 borderRadius:
-                                BorderRadius.circular(_cardBorderRadius),
+                                    BorderRadius.circular(_cardBorderRadius),
                               ),
                               child: Text(
                                 _formatState(order.state),
@@ -943,7 +951,8 @@ class _PendingDeliveriesPageState extends State<PendingDeliveriesPage> {
                         SizedBox(height: _smallPadding),
                         Row(
                           children: [
-                            Icon(Icons.store, size: 16, color: Colors.grey[600]),
+                            Icon(Icons.store,
+                                size: 16, color: Colors.grey[600]),
                             SizedBox(width: _tinyPadding),
                             Expanded(
                               child: Text(
@@ -1012,8 +1021,8 @@ class _PendingDeliveriesPageState extends State<PendingDeliveriesPage> {
                                     ),
                                     child: const Text(
                                       'Order Details',
-                                      style:
-                                      TextStyle(fontWeight: FontWeight.bold),
+                                      style: TextStyle(
+                                          fontWeight: FontWeight.bold),
                                     ),
                                   ),
                                 ),
@@ -1041,6 +1050,7 @@ class _PendingDeliveriesPageState extends State<PendingDeliveriesPage> {
       ],
     );
   }
+
   Widget _buildShimmer() {
     return ListView.builder(
       padding: const EdgeInsets.all(_standardPadding),
