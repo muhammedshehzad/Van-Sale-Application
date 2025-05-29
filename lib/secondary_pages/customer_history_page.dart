@@ -4,6 +4,7 @@ import 'package:latest_van_sale_application/assets/widgets%20and%20consts/page_t
 import 'package:latest_van_sale_application/secondary_pages/sale_order_details_page.dart';
 import 'package:provider/provider.dart';
 import 'package:shimmer/shimmer.dart';
+import 'dart:async';
 import '../../authentication/cyllo_session_model.dart';
 import '../../providers/sale_order_provider.dart';
 import '../assets/widgets and consts/create_order_directly_page.dart';
@@ -20,6 +21,31 @@ class CustomerHistoryPage extends StatefulWidget {
 }
 
 class _CustomerHistoryPageState extends State<CustomerHistoryPage> {
+// Constants
+  static const double _smallPadding = 8.0;
+  static const double _standardPadding = 16.0;
+  static const double _cardBorderRadius = 12.0;
+  static const int _pageSize = 10;
+
+// Pagination
+  int _currentPage = 0;
+  bool _hasMoreData = true;
+  bool _isLoadingMore = false;
+  final ScrollController _scrollController = ScrollController();
+  int _totalOrders = 0;
+
+// Filters
+  String _filterInvoiceStatus = 'all';
+  String _filterDeliveryStatus = 'all';
+  DateTime? _startDate;
+  DateTime? _endDate;
+  double? _minAmount;
+  double? _maxAmount;
+  String _sortBy = 'date_desc';
+
+// Search
+  Timer? _debounce;
+
   List<Map<String, dynamic>> _orderHistory = [];
   bool _isLoading = true;
   bool _hasError = false;
@@ -31,61 +57,132 @@ class _CustomerHistoryPageState extends State<CustomerHistoryPage> {
   @override
   void initState() {
     super.initState();
+    _scrollController.addListener(_onScroll);
     _searchController.addListener(_onSearchChanged);
     _loadCustomerOrderHistory();
   }
 
+  void _onScroll() {
+    if (_scrollController.position.pixels >=
+        _scrollController.position.maxScrollExtent - 200) {
+      if (!_isLoadingMore && _hasMoreData) {
+        _loadMoreData();
+      }
+    }
+  }
+
   @override
   void dispose() {
+    _debounce?.cancel();
+    _scrollController.dispose();
     _searchController.removeListener(_onSearchChanged);
     _searchController.dispose();
     super.dispose();
   }
 
   void _onSearchChanged() {
-    setState(() {
-      _searchQuery = _searchController.text.toLowerCase();
+    if (_debounce?.isActive ?? false) _debounce!.cancel();
+    _debounce = Timer(const Duration(milliseconds: 650), () {
+      setState(() {
+        _searchQuery = _searchController.text.toLowerCase();
+        _currentPage = 0;
+        _hasMoreData = true;
+      });
+      _loadCustomerOrderHistory();
     });
   }
 
-  List<Map<String, dynamic>> _getFilteredOrders() {
-    if (_searchQuery.isEmpty) {
-      return _orderHistory;
-    }
-
-    return _orderHistory.where((order) {
-      final orderNumber = order['name']?.toString().toLowerCase() ?? '';
-      final status = order['state']?.toString().toLowerCase() ?? '';
-      final deliveryStatus =
-          order['delivery_status']?.toString().toLowerCase() ?? '';
-      final invoiceStatus =
-          order['invoice_status']?.toString().toLowerCase() ?? '';
-      return orderNumber.contains(_searchQuery) ||
-          status.contains(_searchQuery) ||
-          deliveryStatus.contains(_searchQuery) ||
-          invoiceStatus.contains(_searchQuery);
-    }).toList();
-  }
-
-  Future<void> _loadCustomerOrderHistory() async {
+  Future<void> _loadCustomerOrderHistory({bool isLoadMore = false}) async {
     try {
-      setState(() {
-        _isLoading = true;
-        _hasError = false;
-      });
+      if (isLoadMore && (!_hasMoreData || _isLoadingMore)) return;
+      if (isLoadMore) {
+        setState(() {
+          _isLoadingMore = true;
+        });
+      } else {
+        setState(() {
+          _isLoading = true;
+          _hasError = false;
+          _currentPage = 0;
+          _hasMoreData = true;
+          _orderHistory.clear();
+        });
+      }
 
       final client = await SessionManager.getActiveClient();
       if (client == null) {
         throw Exception('No active Odoo session found. Please log in again.');
       }
 
-      final result = await client.callKw({
+// Build domain
+      List<dynamic> domain = [
+        ['partner_id', '=', int.parse(widget.customer.id)],
+      ];
+
+// Add search query
+      if (_searchQuery.isNotEmpty) {
+        domain.add('|');
+        domain.add('|');
+        domain.add('|');
+        domain.add(['name', 'ilike', _searchQuery]);
+        domain.add(['state', 'ilike', _searchQuery]);
+        domain.add(['delivery_status', 'ilike', _searchQuery]);
+        domain.add(['invoice_status', 'ilike', _searchQuery]);
+      }
+
+// Add filters
+      if (_filterInvoiceStatus != 'all') {
+        domain.add(['invoice_status', '=', _filterInvoiceStatus]);
+      }
+      if (_filterDeliveryStatus != 'all') {
+        domain.add(['delivery_status', '=', _filterDeliveryStatus]);
+      }
+      if (_startDate != null) {
+        domain.add(
+            ['date_order', '>=', DateFormat('yyyy-MM-dd').format(_startDate!)]);
+      }
+      if (_endDate != null) {
+        domain.add(
+            ['date_order', '<=', DateFormat('yyyy-MM-dd').format(_endDate!)]);
+      }
+      if (_minAmount != null) {
+        domain.add(['amount_total', '>=', _minAmount]);
+      }
+      if (_maxAmount != null) {
+        domain.add(['amount_total', '<=', _maxAmount]);
+      }
+
+// Sort order
+      String order;
+      switch (_sortBy) {
+        case 'date_asc':
+          order = 'date_order asc';
+          break;
+        case 'amount_desc':
+          order = 'amount_total desc';
+          break;
+        case 'amount_asc':
+          order = 'amount_total asc';
+          break;
+        case 'date_desc':
+        default:
+          order = 'date_order desc';
+          break;
+      }
+
+// Fetch count and orders concurrently
+      final countFuture = client.callKw({
+        'model': 'sale.order',
+        'method': 'search_count',
+        'args': [domain],
+        'kwargs': {},
+      });
+
+      final ordersFuture = client.callKw({
         'model': 'sale.order',
         'method': 'search_read',
         'args': [
-          [
-            ['partner_id', '=', int.parse(widget.customer.id)]
-          ],
+          domain,
           [
             'id',
             'name',
@@ -99,13 +196,19 @@ class _CustomerHistoryPageState extends State<CustomerHistoryPage> {
           ],
         ],
         'kwargs': {
-          'order': 'date_order desc',
+          'order': order,
+          'limit': _pageSize,
+          'offset': _currentPage * _pageSize,
         },
       });
 
+      final results = await Future.wait([countFuture, ordersFuture]);
+      final totalCount = results[0] as int;
+      final orders = List.from(results[1]);
+
       final List<Map<String, dynamic>> history = [];
 
-      for (var order in result) {
+      for (var order in orders) {
         final orderLines = order['order_line'] as List;
         List<Map<String, dynamic>> lineItems = [];
 
@@ -152,12 +255,21 @@ class _CustomerHistoryPageState extends State<CustomerHistoryPage> {
       }
 
       setState(() {
-        _orderHistory = history;
+        _totalOrders = totalCount;
+        if (isLoadMore) {
+          _orderHistory.addAll(history);
+        } else {
+          _orderHistory = history;
+        }
+        _hasMoreData = history.length == _pageSize;
+        _currentPage = isLoadMore ? _currentPage : 0;
         _isLoading = false;
+        _isLoadingMore = false;
       });
     } catch (e) {
       setState(() {
         _isLoading = false;
+        _isLoadingMore = false;
         _hasError = true;
         _errorMessage = e.toString();
       });
@@ -169,6 +281,12 @@ class _CustomerHistoryPageState extends State<CustomerHistoryPage> {
         ),
       );
     }
+  }
+
+  Future<void> _loadMoreData() async {
+    if (!_hasMoreData || _isLoadingMore) return;
+    _currentPage++;
+    await _loadCustomerOrderHistory(isLoadMore: true);
   }
 
   String _getStatusLabel(String status) {
@@ -210,137 +328,126 @@ class _CustomerHistoryPageState extends State<CustomerHistoryPage> {
     return Scaffold(
       backgroundColor: Colors.grey[100],
       appBar: AppBar(
-        title: Text('${widget.customer.name}\'s Order History',),
+        title: Text('${widget.customer.name}\'s Orders'),
         backgroundColor: primaryColor,
         foregroundColor: Colors.white,
         elevation: 0,
-        actions: [
-          // IconButton(
-          //   icon: const Icon(Icons.refresh),
-          //   onPressed: _loadCustomerOrderHistory,
-          // ),
-        ],
+        // actions: [
+        //   IconButton(
+        //     icon: const Icon(Icons.refresh),
+        //     onPressed: _loadCustomerOrderHistory,
+        //   ),
+        // ],
       ),
-      body: Column(
+      body: _buildContentArea(),
+    );
+  }
+
+  Widget _buildSearchBar() {
+    return Padding(
+      padding: const EdgeInsets.only(
+          top: _standardPadding,
+          left: _standardPadding,
+          right: _standardPadding,
+          bottom: 10),
+      child: Row(
         children: [
-          Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Container(
-              decoration: BoxDecoration(
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.grey.withOpacity(0.2),
-                    spreadRadius: 1,
-                    blurRadius: 4,
-                    offset: const Offset(0, 1),
-                  ),
-                ],
-              ),
-              child: TextField(
-                controller: _searchController,
-                decoration: InputDecoration(
-                  hintText: 'Search orders...',
-                  hintStyle: TextStyle(color: Colors.grey[400]),
-                  prefixIcon: Icon(Icons.search, color: Colors.grey[500]),
-                  suffixIcon: _searchController.text.isNotEmpty
-                      ? IconButton(
-                          icon: Icon(Icons.clear, color: Colors.grey[500]),
-                          onPressed: () {
-                            _searchController.clear();
-                          },
-                        )
-                      : null,
-                  filled: true,
-                  fillColor: Colors.white,
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                    borderSide: BorderSide.none,
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                    borderSide: BorderSide(color: Colors.grey[300]!),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                    borderSide: BorderSide(color: primaryColor),
-                  ),
+          Expanded(
+            child: TextField(
+              controller: _searchController,
+              decoration: InputDecoration(
+                hintText: 'Search orders...',
+                hintStyle: TextStyle(color: Colors.grey[600]),
+                prefixIcon: const Icon(Icons.search, color: Colors.grey),
+                suffixIcon: _searchController.text.isNotEmpty
+                    ? IconButton(
+                        icon: Icon(Icons.clear, color: Colors.grey[500]),
+                        onPressed: () {
+                          _searchController.clear();
+                        },
+                      )
+                    : null,
+                filled: true,
+                fillColor: Colors.white,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: BorderSide.none,
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: BorderSide(color: Colors.grey[300]!),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: const BorderSide(color: primaryColor),
                 ),
               ),
             ),
           ),
-          Expanded(
-            child: _isLoading
-                ? _buildShimmerOrderHistoryList()
-                : _hasError
-                    ? _buildErrorState()
-                    : _buildContentArea(),
-          ),
         ],
-      ),
-    );
-  }
-
-  Widget _buildShimmerOrderHistoryList() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16.0),
-      child: Shimmer.fromColors(
-        baseColor: Colors.grey[300]!,
-        highlightColor: Colors.grey[100]!,
-        child: ListView.builder(
-          itemCount: 5,
-          itemBuilder: (_, __) => Padding(
-            padding: const EdgeInsets.only(bottom: 16.0),
-            child: Container(
-              height: 150,
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(12),
-              ),
-            ),
-          ),
-        ),
       ),
     );
   }
 
   Widget _buildErrorState() {
     return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.error_outline, size: 48, color: Colors.red[300]),
-            const SizedBox(height: 16),
-            Text(
-              'Failed to load order history',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: Colors.grey[800],
+        child: Padding(
+      padding: const EdgeInsets.all(_standardPadding),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.error_outline, size: 48, color: Colors.red[300]),
+          const SizedBox(height: _standardPadding),
+          Text(
+            'Failed to load order history',
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+              color: Colors.grey[800],
+            ),
+          ),
+          const SizedBox(height: _smallPadding),
+          Text(
+            _errorMessage,
+            style: TextStyle(color: Colors.grey[600]),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: _standardPadding * 0.5),
+          ElevatedButton(
+            onPressed: _loadCustomerOrderHistory,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: primaryColor,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
               ),
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
             ),
-            const SizedBox(height: 8),
-            Text(
-              _errorMessage,
-              style: TextStyle(color: Colors.grey[600]),
-              textAlign: TextAlign.center,
+            child: const Text('Retry'),
+          ),
+        ],
+      ),
+    ));
+  }
+
+  Widget _buildShimmerContent() {
+    return Shimmer.fromColors(
+      baseColor: Colors.grey[300]!,
+      highlightColor: Colors.grey[100]!,
+      child: ListView.builder(
+        padding: const EdgeInsets.symmetric(horizontal: _standardPadding),
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        itemCount: 5,
+        itemBuilder: (_, __) => Padding(
+          padding: const EdgeInsets.only(bottom: 16.0),
+          child: Container(
+            height: 150,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(_cardBorderRadius),
             ),
-            const SizedBox(height: 24),
-            ElevatedButton(
-              onPressed: _loadCustomerOrderHistory,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: primaryColor,
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-              ),
-              child: const Text('Retry'),
-            ),
-          ],
+          ),
         ),
       ),
     );
@@ -350,130 +457,157 @@ class _CustomerHistoryPageState extends State<CustomerHistoryPage> {
     return RefreshIndicator(
       onRefresh: () async {
         await _loadCustomerOrderHistory();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Order history refreshed')),
+        );
       },
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(horizontal: 16.0),
-        physics: const AlwaysScrollableScrollPhysics(),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
+      color: primaryColor,
+      backgroundColor: Colors.white,
+      child: Column(
+        children: [
+          _buildSearchBar(),
+          Padding(
+            padding: const EdgeInsets.symmetric(
+                horizontal: _standardPadding, vertical: _smallPadding),
+            child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text(
                   '${widget.customer.name}\'s Orders',
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 18,
                     fontWeight: FontWeight.bold,
-                    color: Colors.grey,
+                    color: Colors.grey[800],
                   ),
                 ),
-                if (_orderHistory.isNotEmpty)
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: primaryColor.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Text(
-                      '${_getFilteredOrders().length} order(s)',
-                      style: TextStyle(
-                        color: primaryColor,
-                        fontWeight: FontWeight.w500,
-                      ),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: primaryColor.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Text(
+                    '$_totalOrders order${_totalOrders == 1 ? '' : 's'}',
+                    style: TextStyle(
+                      color: primaryColor,
+                      fontWeight: FontWeight.w500,
                     ),
                   ),
+                ),
               ],
             ),
-            const SizedBox(height: 12),
-            _orderHistory.isEmpty ? _buildEmptyState() : _buildOrderList(),
-          ],
-        ),
+          ),
+          Expanded(
+            child: _isLoading
+                ? _buildShimmerContent()
+                : _hasError
+                    ? _buildErrorState()
+                    : _orderHistory.isEmpty
+                        ? _buildEmptyState()
+                        : _buildOrderList(),
+          ),
+        ],
       ),
     );
   }
 
   Widget _buildEmptyState() {
     return Card(
-      elevation: 2,
-      margin: const EdgeInsets.only(bottom: 16.0),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: Padding(
-        padding: const EdgeInsets.all(24.0),
-        child: Center(
-          child: Column(
-            children: [
-              Icon(Icons.receipt_long, size: 64, color: Colors.grey[400]),
-              const SizedBox(height: 20),
-              Text(
-                'No order history found',
-                style: TextStyle(
-                  color: Colors.grey[700],
-                  fontWeight: FontWeight.w500,
-                  fontSize: 18,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'This customer has not placed any orders yet',
-                style: TextStyle(
-                  color: Colors.grey[600],
-                  fontSize: 14,
-                ),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 24),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  icon: const Icon(Icons.refresh, color: Colors.white),
-                  label: const Text(
-                    'Refresh',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w600,
-                      fontSize: 15,
-                    ),
-                  ),
-                  onPressed: _loadCustomerOrderHistory,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: primaryColor,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    elevation: 2,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextButton(
-                onPressed: () {
-                  final orderPickingProvider =
-                      Provider.of<OrderPickingProvider>(context, listen: false);
-                  _filteredCustomers =
-                      List.from(orderPickingProvider.customers);
-
-                  final customer = _filteredCustomers
-                      .firstWhere((c) => c.id == widget.customer.id);
-
-                  showCreateOrderSheet(context, customer);
-                },
-                child: Text(
-                  'Create New Order',
+        elevation: 2,
+        margin: const EdgeInsets.only(bottom: 16.0),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        child: Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Center(
+            child: Column(
+              children: [
+                Icon(Icons.receipt_long, size: 64, color: Colors.grey[400]),
+                const SizedBox(height: 20),
+                Text(
+                  _searchQuery.isNotEmpty ||
+                          _filterInvoiceStatus != 'all' ||
+                          _filterDeliveryStatus != 'all' ||
+                          _startDate != null ||
+                          _endDate != null ||
+                          _minAmount != null ||
+                          _maxAmount != null
+                      ? 'No matching orders found'
+                      : 'No order history found',
                   style: TextStyle(
-                    color: primaryColor,
+                    color: Colors.grey[700],
                     fontWeight: FontWeight.w500,
+                    fontSize: 18,
                   ),
                 ),
-              ),
-            ],
+                const SizedBox(height: 8),
+                Text(
+                  _searchQuery.isNotEmpty ||
+                          _filterInvoiceStatus != 'all' ||
+                          _filterDeliveryStatus != 'all' ||
+                          _startDate != null ||
+                          _endDate != null ||
+                          _minAmount != null ||
+                          _maxAmount != null
+                      ? 'Try adjusting your search or filters'
+                      : 'This customer has not placed any orders yet',
+                  style: TextStyle(
+                    color: Colors.grey[600],
+                    fontSize: 14,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 24),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    icon: const Icon(Icons.refresh, color: Colors.white),
+                    label: const Text(
+                      'Refresh',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 15,
+                      ),
+                    ),
+                    onPressed: _loadCustomerOrderHistory,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: primaryColor,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      elevation: 2,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextButton(
+                  onPressed: () {
+                    final orderPickingProvider =
+                        Provider.of<OrderPickingProvider>(context,
+                            listen: false);
+                    _filteredCustomers =
+                        List.from(orderPickingProvider.customers);
+
+                    final customer = _filteredCustomers
+                        .firstWhere((c) => c.id == widget.customer.id);
+
+                    showCreateOrderSheet(context, customer);
+                  },
+                  child: Text(
+                    'Create New Order',
+                    style: TextStyle(
+                      color: primaryColor,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                )
+              ],
+            ),
           ),
-        ),
-      ),
-    );
+        ));
   }
 
   void showCreateOrderSheet(BuildContext context, Customer customer) {
@@ -487,9 +621,7 @@ class _CustomerHistoryPageState extends State<CustomerHistoryPage> {
   }
 
   Widget _buildOrderList() {
-    final filteredOrders = _getFilteredOrders();
-
-    if (filteredOrders.isEmpty) {
+    if (_orderHistory.isEmpty && _searchQuery.isNotEmpty) {
       return Card(
         elevation: 1,
         margin: const EdgeInsets.only(bottom: 12.0),
@@ -511,7 +643,7 @@ class _CustomerHistoryPageState extends State<CustomerHistoryPage> {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'Try a different search term',
+                  'Try a different search term or filter',
                   style: TextStyle(
                     color: Colors.grey[500],
                     fontSize: 14,
@@ -525,13 +657,52 @@ class _CustomerHistoryPageState extends State<CustomerHistoryPage> {
     }
 
     return ListView.builder(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      itemCount: filteredOrders.length,
+      controller: _scrollController,
+      padding: const EdgeInsets.only(
+          left: _standardPadding,
+          right: _standardPadding,
+          bottom: _standardPadding),
+      itemCount: _orderHistory.length + 1,
       itemBuilder: (context, index) {
-        final order = filteredOrders[index];
-        return _buildOrderCard(order);
+        if (index < _orderHistory.length) {
+          final order = _orderHistory[index];
+          return _buildOrderCard(order);
+        } else {
+          if (_isLoadingMore) {
+            return _buildLoadingMoreIndicator();
+          } else if (!_hasMoreData) {
+            return _buildAllOrdersFetched();
+          }
+          return const SizedBox.shrink();
+        }
       },
+    );
+  }
+
+  Widget _buildLoadingMoreIndicator() {
+    return Container(
+      padding: const EdgeInsets.all(_standardPadding),
+      child: Center(
+        child: CircularProgressIndicator(
+          valueColor: AlwaysStoppedAnimation<Color>(primaryColor),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAllOrdersFetched() {
+    return Padding(
+      padding: const EdgeInsets.all(_smallPadding * 0.5),
+      child: Center(
+        child: Text(
+          'All orders fetched.',
+          style: TextStyle(
+            color: Colors.grey[600],
+            fontSize: 14,
+            fontStyle: FontStyle.italic,
+          ),
+        ),
+      ),
     );
   }
 
@@ -554,7 +725,7 @@ class _CustomerHistoryPageState extends State<CustomerHistoryPage> {
           ),
         ),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -580,14 +751,9 @@ class _CustomerHistoryPageState extends State<CustomerHistoryPage> {
               const SizedBox(height: 10),
               _buildInfoRow(
                 Icons.calendar_today_outlined,
-                'Order Date',
+                'Order Date: ',
                 DateFormat('yyyy-MM-dd')
                     .format(DateTime.parse(order['date_order'])),
-              ),
-              _buildInfoRow(
-                Icons.person_outline,
-                'Customer',
-                widget.customer.name,
               ),
               Row(
                 crossAxisAlignment: CrossAxisAlignment.center,
@@ -604,8 +770,9 @@ class _CustomerHistoryPageState extends State<CustomerHistoryPage> {
                   ),
                   _buildStatusBadge(
                     _formatStatus(order['delivery_status'] ?? 'none'),
-                    _getDeliveryStatusColor(order['delivery_status']?.toString() ?? 'none'),
-                                    ),
+                    _getDeliveryStatusColor(
+                        order['delivery_status']?.toString() ?? 'none'),
+                  ),
                 ],
               ),
               const SizedBox(height: 8),
@@ -712,7 +879,7 @@ class _CustomerHistoryPageState extends State<CustomerHistoryPage> {
           Icon(icon, size: 18, color: Colors.grey[600]),
           const SizedBox(width: 8),
           Text(
-            '$label: ',
+            label,
             style: TextStyle(
               fontSize: 13,
               color: Colors.grey[700],
@@ -744,14 +911,14 @@ class _CustomerHistoryPageState extends State<CustomerHistoryPage> {
           Text(
             label,
             style: const TextStyle(
-              fontSize: 13,
+              fontSize: 14,
               fontWeight: FontWeight.w500,
             ),
           ),
           Text(
             value,
             style: TextStyle(
-              fontSize: 13,
+              fontSize: 14,
               fontWeight: FontWeight.bold,
               color: Colors.grey[800],
             ),
@@ -794,8 +961,8 @@ class _CustomerHistoryPageState extends State<CustomerHistoryPage> {
     }
   }
 
-  String _formatStatus(dynamic status) {
-    final statusString = status is String ? status.toLowerCase() : 'none';
+  String _formatStatus(String status) {
+    final statusString = status.toLowerCase();
     switch (statusString) {
       case 'full':
         return 'Delivered';
@@ -820,7 +987,6 @@ class _CustomerHistoryPageState extends State<CustomerHistoryPage> {
     }
   }
 }
-
 
 extension StringExtension on String {
   String capitalize() {

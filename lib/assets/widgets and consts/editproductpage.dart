@@ -1524,8 +1524,11 @@ class _AttributeDialogState extends State<_AttributeDialog> {
       } else {
         await _createNewAttribute();
       }
-      Navigator.pop(context);
-      Navigator.pop(context);
+
+      // Only pop twice on success
+      Navigator.pop(context); // Pop current screen
+      Navigator.pop(context); // Pop previous screen
+
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
             content: Text(widget.isEditing
@@ -1559,9 +1562,12 @@ class _AttributeDialogState extends State<_AttributeDialog> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(errorMessage)),
       );
+
+      // Only pop once on error (stay on current screen to show error)
+      // Navigator.pop(context); // Remove this or keep it based on your UX needs
     } finally {
       setState(() => _isSaving = false);
-      Navigator.pop(context);
+      // Remove Navigator.pop from finally block
     }
   }
 

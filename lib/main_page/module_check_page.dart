@@ -86,7 +86,8 @@ class _ModuleCheckScreenState extends State<ModuleCheckScreen> {
           userTimezone: session.userTimezone,
           serverUrl: session.serverUrl,
           database: session.database,
-          hasCheckedModules: true, email: session.email,
+          hasCheckedModules: true,
+          email: session.email,
         );
         await updatedSession.saveToPrefs();
       }
@@ -116,8 +117,10 @@ class _ModuleCheckScreenState extends State<ModuleCheckScreen> {
         // Show success SnackBar only if all required modules are installed
         if (_moduleProvider.missingModules.isEmpty) {
           _showSuccessSnackBar();
+        } else {
+          // Show missing modules dialog instead of continuing
+          await _showMissingModulesDialog();
         }
-        // No error SnackBar here; missing modules are handled in _handleContinue
       } else {
         if (mounted) {
           _showErrorSnackBar(
@@ -252,9 +255,8 @@ class _ModuleCheckScreenState extends State<ModuleCheckScreen> {
             ],
           ),
           content: Text(
-            'Some required modules are missing. The app may not function properly without them. '
-            'Please install the following modules in your Odoo backend: ${_moduleProvider.getMissingModulesMessage()}.'
-            '\nDo you still want to continue?',
+            'Some required modules are missing. The app cannot proceed without them. '
+            ' ${_moduleProvider.getMissingModulesMessage()}.',
             style: TextStyle(
               color: Colors.grey[800],
               fontSize: 14,
@@ -264,23 +266,10 @@ class _ModuleCheckScreenState extends State<ModuleCheckScreen> {
             TextButton(
               onPressed: () {
                 Navigator.of(context).pop();
-              },
-              child: Text(
-                'Cancel',
-                style: TextStyle(
-                  color: Theme.of(context).primaryColor,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
-            TextButton(
-              onPressed: () async {
-                Navigator.of(context).pop(); // Close dialog
-                _showLoadingDialog();
-                await _proceedToContinue();
+                LogoutService.logout(context);
               },
               child: const Text(
-                'Continue Anyway',
+                'Logout',
                 style: TextStyle(
                   color: Colors.red,
                   fontWeight: FontWeight.w600,
@@ -428,16 +417,15 @@ class _ModuleCheckScreenState extends State<ModuleCheckScreen> {
                         child: Container(
                           padding: const EdgeInsets.all(16),
                           decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(16),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.grey.withOpacity(0.1),
-                                blurRadius: 12,
-                                offset: const Offset(0, 4),
-                              ),
-                            ],
-                          ),
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(16),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.grey.withOpacity(0.1),
+                                  blurRadius: 12,
+                                  offset: const Offset(0, 4),
+                                ),
+                              ]),
                           child: SingleChildScrollView(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
@@ -659,7 +647,9 @@ class _ModuleCheckScreenState extends State<ModuleCheckScreen> {
                         const SizedBox(width: 12),
                         Expanded(
                           child: ElevatedButton(
-                            onPressed: (provider.isLoading || _isNavigating)
+                            onPressed: (provider.isLoading ||
+                                    _isNavigating ||
+                                    provider.missingModules.isNotEmpty)
                                 ? null
                                 : _handleContinue,
                             style: ElevatedButton.styleFrom(

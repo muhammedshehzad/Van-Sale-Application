@@ -45,14 +45,44 @@ class SaleOrder {
   });
 
   factory SaleOrder.fromJson(Map<String, dynamic> json) {
+    String? deliveryStatus;
+    try {
+      final rawDeliveryStatus = json['delivery_status'];
+      if (rawDeliveryStatus is String) {
+        deliveryStatus = rawDeliveryStatus;
+      } else if (rawDeliveryStatus is bool) {
+        deliveryStatus = rawDeliveryStatus ? 'delivered' : 'not_delivered';
+      } else {
+        deliveryStatus = null;
+      }
+    } catch (e) {
+      debugPrint('Error parsing delivery_status: $e');
+      deliveryStatus = null;
+    }
+
+    String invoiceStatus;
+    try {
+      final rawInvoiceStatus = json['invoice_status'];
+      if (rawInvoiceStatus is String) {
+        invoiceStatus = rawInvoiceStatus;
+      } else if (rawInvoiceStatus is bool) {
+        invoiceStatus = rawInvoiceStatus ? 'invoiced' : 'no';
+      } else {
+        invoiceStatus = 'no';
+      }
+    } catch (e) {
+      debugPrint('Error parsing invoice_status: $e');
+      invoiceStatus = 'no';
+    }
+
     return SaleOrder(
       id: json['id'],
       name: json['name'],
-      date: DateTime.parse(json['date']),
+      date: DateTime.parse(json['date_order']),
       total: json['amount_total'].toDouble(),
       state: json['state'],
-      invoiceStatus: json['invoice_status'] ?? 'Not Invoiced',
-      deliveryStatus: json['delivery_status'],
+      invoiceStatus: invoiceStatus,
+      deliveryStatus: deliveryStatus,
       partnerId: json['partner_id'] ?? [0, 'Unknown'],
     );
   }
@@ -78,7 +108,6 @@ class SaleOrder {
     return partnerId.length > 1 ? partnerId[1].toString() : 'Unknown';
   }
 }
-
 class DashboardStats {
   final int todaySales;
   final int pendingDeliveries;
@@ -1563,9 +1592,6 @@ class _DashboardPageState extends State<DashboardPage>
                                   SlidingPageTransitionLR(
                                       page: InvoiceListPage(
                                     orderData: {},
-                                    provider: Provider.of<InvoiceProvider>(
-                                        context,
-                                        listen: false),
                                     showUnpaidOnly: true,
                                   )),
                                 );

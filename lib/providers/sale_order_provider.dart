@@ -633,6 +633,8 @@ class ShippingMethod {
 
 class SalesOrderProvider with ChangeNotifier {
   int _currentStep = 0;
+  int _totalOrders = 0;
+  int get totalOrders => _totalOrders;
   List<Product> _products = [];
   List<OrderItem> _orderItems = [];
   String? _customerId;
@@ -646,7 +648,14 @@ class SalesOrderProvider with ChangeNotifier {
   Map<String, List<Map<String, dynamic>>> _draftProductAttributes = {};
   List<DeliveryAddress> _deliveryAddresses = [];
   List<ShippingMethod> _shippingMethods = [];
+  int _currentPage = 0;
+  bool _hasMoreData = true;
+  bool _isLoadingMore = false;
+  static const int _pageSize = 10;
 
+  int get currentPage => _currentPage;
+  bool get hasMoreData => _hasMoreData;
+  bool get isLoadingMore => _isLoadingMore;
   List<Map<String, dynamic>> _orders = [];
   List<Map<String, dynamic>> _todaysOrders = [];
   String? _error;
@@ -690,24 +699,27 @@ class SalesOrderProvider with ChangeNotifier {
 
   String? get error => _error;
 
-  void setCurrentStep(int step) {
-    if (step <= _currentStep) {
-      _currentStep = step;
-      notifyListeners();
+  Future<void> fetchTodaysOrders({
+    bool isLoadMore = false,
+    String searchQuery = '',
+    List<String> selectedStatuses = const [],
+    double? minAmount,
+    double? maxAmount,
+    DateTime? startDate,
+    DateTime? endDate,
+    String sortBy = 'date_desc',
+  }) async {
+    if (isLoadMore && (!_hasMoreData || _isLoadingMore)) return;
+    developer.log('SalesOrderProvider: Starting fetchTodaysOrders, isLoadMore=$isLoadMore');
+    if (!isLoadMore) {
+      _isLoading = true;
+      _todaysOrders.clear();
+      _currentPage = 0;
+      _hasMoreData = true;
+    } else {
+      _isLoadingMore = true;
     }
-  }
-
-  double getTotalSalesAmount() {
-    return todaysOrders.fold(0.0, (sum, order) {
-      return sum + (order['amount_total'] as num?)!.toDouble() ?? 0.0;
-    });
-  }
-
-  Future<void> fetchTodaysOrders() async {
-    developer.log('SalesOrderProvider: Starting fetchTodaysOrders');
-    _isLoading = true;
     _error = null;
-    _todaysOrders.clear();
     notifyListeners();
 
     try {
@@ -730,54 +742,114 @@ class SalesOrderProvider with ChangeNotifier {
       final startOfDay = DateTime(today.year, today.month, today.day);
       final endOfDay = startOfDay.add(Duration(days: 1));
 
-      final orders = await client.callKw({
+      List<dynamic> domain = [
+        ['date_order', '>=', startDate?.toIso8601String() ?? startOfDay.toIso8601String()],
+        ['date_order', '<', endDate?.toIso8601String() ?? endOfDay.toIso8601String()],
+        ['name', 'not like', 'TCK%'],
+      ];
+
+      if (selectedStatuses.isNotEmpty) {
+        domain.add(['state', 'in', selectedStatuses]);
+      } else {
+        domain.add(['state', 'in', ['sale', 'done']]);
+      }
+
+      if (searchQuery.isNotEmpty) {
+        domain.add('|');
+        domain.add(['name', 'ilike', searchQuery]);
+        domain.add(['partner_id.name', 'ilike', searchQuery]);
+      }
+
+      if (minAmount != null) {
+        domain.add(['amount_total', '>=', minAmount]);
+      }
+      if (maxAmount != null) {
+        domain.add(['amount_total', '<=', maxAmount]);
+      }
+
+      String order;
+      switch (sortBy) {
+        case 'date_asc':
+          order = 'date_order asc';
+          break;
+        case 'amount_desc':
+          order = 'amount_total desc';
+          break;
+        case 'amount_asc':
+          order = 'amount_total asc';
+          break;
+        case 'date_desc':
+        default:
+          order = 'date_order desc';
+          break;
+      }
+
+      final countFuture = client.callKw({
         'model': 'sale.order',
-        'method': 'search_read',
-        'args': [
-          [
-            ['date_order', '>=', startOfDay.toIso8601String()],
-            ['date_order', '<', endOfDay.toIso8601String()],
-            [
-              'state',
-              'in',
-              ['sale', 'done']
-            ],
-            ['name', 'not like', 'TCK%'],
-          ],
-          orderFields
-        ],
-        'kwargs': {'order': 'date_order desc'},
-      }).timeout(Duration(seconds: 5), onTimeout: () {
-        throw Exception('Today\'s orders fetch timed out');
+        'method': 'search_count',
+        'args': [domain],
+        'kwargs': {},
       });
 
-      _todaysOrders = List<Map<String, dynamic>>.from(orders);
-      developer.log(
-          'SalesOrderProvider: Raw Odoo response length=${orders.length}, orders=$orders');
+      final ordersFuture = client.callKw({
+        'model': 'sale.order',
+        'method': 'search_read',
+        'args': [domain, orderFields],
+        'kwargs': {
+          'order': order,
+          'limit': _pageSize,
+          'offset': _currentPage * _pageSize,
+        },
+      });
 
-      final orderIds = _todaysOrders.map((o) => o['id']).toSet();
-      if (orderIds.length != _todaysOrders.length) {
-        developer.log(
-            'SalesOrderProvider: WARNING: Found duplicate orders, unique IDs=${orderIds.length}');
-        _todaysOrders =
-            _todaysOrders.fold<List<Map<String, dynamic>>>([], (list, order) {
-          if (!list.any((o) => o['id'] == order['id'])) {
-            list.add(order);
-          }
-          return list;
-        });
+      final results = await Future.wait([countFuture, ordersFuture]);
+      _totalOrders = results[0] as int;
+      final orders = List<Map<String, dynamic>>.from(results[1]);
+
+      if (!isLoadMore) {
+        _todaysOrders = orders;
+      } else {
+        _todaysOrders.addAll(orders);
+      }
+
+      _hasMoreData = orders.length == _pageSize;
+      if (!isLoadMore) {
+        _currentPage = 1;
+      } else {
+        _currentPage++;
       }
 
       developer.log(
-          'SalesOrderProvider: Fetch completed, todaysOrders=${_todaysOrders.length}, unique IDs=${orderIds.length}');
+          'SalesOrderProvider: Fetch completed, todaysOrders=${_todaysOrders.length}, page=$_currentPage, hasMoreData=$_hasMoreData');
     } catch (e, stackTrace) {
       _error = 'Failed to fetch today\'s orders: $e';
-      developer.log(
-          'SalesOrderProvider: Error in fetchTodaysOrders: $e\n$stackTrace');
+      developer.log('SalesOrderProvider: Error in fetchTodaysOrders: $e\n$stackTrace');
+    } finally {
+      _isLoading = false;
+      _isLoadingMore = false;
+      notifyListeners();
     }
-    _isLoading = false;
+  }
+  void resetPagination() {
+    _currentPage = 0;
+    _hasMoreData = true;
+    _todaysOrders.clear();
     notifyListeners();
   }
+
+  void setCurrentStep(int step) {
+    if (step <= _currentStep) {
+      _currentStep = step;
+      notifyListeners();
+    }
+  }
+
+  double getTotalSalesAmount() {
+    return todaysOrders.fold(0.0, (sum, order) {
+      return sum + (order['amount_total'] as num?)!.toDouble() ?? 0.0;
+    });
+  }
+
 
   static final Map<String, List<String>> _cachedFields = {};
 

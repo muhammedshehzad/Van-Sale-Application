@@ -1987,6 +1987,16 @@ class _ProductDetailsShimmerState extends State<ProductDetailsShimmer>
                   _buildShimmerBox(width: 150, height: 16),
                   const SizedBox(height: 12),
                   _buildInfoRowShimmer(),
+                  _buildInfoRowShimmer(), const SizedBox(height: 16),
+                  // Pricing section
+                  _buildShimmerBox(width: 150, height: 16),
+                  const SizedBox(height: 12),
+                  _buildInfoRowShimmer(),
+                  _buildInfoRowShimmer(), const SizedBox(height: 16),
+                  // Pricing section
+                  _buildShimmerBox(width: 150, height: 16),
+                  const SizedBox(height: 12),
+                  _buildInfoRowShimmer(),
                   _buildInfoRowShimmer(),
                 ],
               ),
