@@ -174,7 +174,7 @@ class _CustomersListState extends State<CustomersList> {
       }
 
       final List<Product> fetchedProducts =
-      mainVariants.values.map((productData) {
+          mainVariants.values.map((productData) {
         List<ProductAttribute> attributes = [];
         if (productData['attribute_line_ids'] != false &&
             productData['attribute_line_ids'] != null) {
@@ -225,6 +225,7 @@ class _CustomersListState extends State<CustomersList> {
       });
     }
   }
+
   List<ProductAttribute> _parseAttributes(dynamic attributeLineIds) {
     return [
       ProductAttribute(
