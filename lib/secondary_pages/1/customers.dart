@@ -1,15 +1,16 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:developer';
 import 'dart:io' show Platform;
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
-import 'package:latest_van_sale_application/secondary_pages/create_customer_page.dart';
-import 'package:latest_van_sale_application/assets/widgets%20and%20consts/page_transition.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
 import 'package:shimmer/shimmer.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:url_launcher/url_launcher_string.dart';
+import '../../secondary_pages/create_customer_page.dart';
+import '../../assets/widgets and consts/page_transition.dart';
 import '../../assets/widgets and consts/create_order_directly_page.dart';
 import '../../authentication/cyllo_session_model.dart';
 import '../../providers/order_picking_provider.dart';
@@ -25,110 +26,227 @@ class CustomersList extends StatefulWidget {
 }
 
 class _CustomersListState extends State<CustomersList> {
-  final TextEditingController _notesController = TextEditingController();
   final TextEditingController _searchController = TextEditingController();
+  final TextEditingController _notesController = TextEditingController();
+  List<Customer> _allCustomers = [];
   List<Customer> _filteredCustomers = [];
   List<Product> _selectedProducts = [];
   Map<String, int> _quantities = {};
   bool _isLoading = false;
+  bool _isLoadingMore = false;
+  bool _hasMoreData = true;
+  bool _isActivePage = true;
+  String _searchQuery = '';
+  int _currentPage = 0;
+  int _totalCustomers = 0;
+  static List<Customer> _cachedCustomers = [];
+  static DateTime? _lastFetchTime;
+  final ScrollController _scrollController = ScrollController();
+  static const int _pageSize = 10;
+  final double _standardPadding = 16.0;
+  final double _smallPadding = 8.0;
+  final double _tinyPadding = 4.0;
+  final double _cardBorderRadius = 10.0;
+  Timer? _debounce;
 
   @override
   void initState() {
     super.initState();
-    _searchController.addListener(_filterCustomers);
-    setState(() {
-      _isLoading = true;
-    });
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      final orderPickingProvider =
-          Provider.of<OrderPickingProvider>(context, listen: false);
-      if (orderPickingProvider.customers.isEmpty) {
-        orderPickingProvider.loadCustomers().then((_) {
-          setState(() {
-            _isLoading = false;
-            _filteredCustomers = List.from(orderPickingProvider.customers);
-          });
-        });
-      } else {
+    _isLoading = true;
+    _loadCustomers();
+    _searchController.addListener(() {
+      if (_debounce?.isActive ?? false) _debounce!.cancel();
+      _debounce = Timer(const Duration(milliseconds: 500), () {
         setState(() {
-          _isLoading = false;
-          _filteredCustomers = List.from(orderPickingProvider.customers);
+          _searchQuery = _searchController.text.trim();
+          _currentPage = 0;
+          _hasMoreData = true;
+          _cachedCustomers.clear();
+          _lastFetchTime = null;
+          _allCustomers.clear();
+          _filteredCustomers.clear();
+          _isLoading = true;
         });
-      }
-      _loadProducts();
+        _loadCustomers();
+      });
     });
+    _scrollController.addListener(_onScroll);
+    _loadProducts();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_isActivePage && _allCustomers.isEmpty && !_isLoading) {
+      setState(() {
+        _currentPage = 0;
+        _hasMoreData = true;
+        _cachedCustomers.clear();
+        _lastFetchTime = null;
+        _allCustomers.clear();
+        _filteredCustomers.clear();
+        _isLoading = true;
+      });
+      _loadCustomers();
+    }
   }
 
   @override
   void dispose() {
     _searchController.dispose();
     _notesController.dispose();
+    _scrollController.dispose();
+    _debounce?.cancel();
     super.dispose();
   }
 
-  Future<void> _makePhoneCall(String? phoneNumber) async {
-    if (phoneNumber == null || phoneNumber.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('No phone number available for this customer'),
-          backgroundColor: Colors.red,
-          duration: Duration(seconds: 3),
-        ),
-      );
+  void _onScroll() {
+    if (_scrollController.position.pixels >=
+        _scrollController.position.maxScrollExtent - 200) {
+      if (!_isLoadingMore && _hasMoreData) {
+        _loadMoreData();
+      }
+    }
+  }
+
+  Future<void> _loadMoreData() async {
+    if (!_hasMoreData || _isLoadingMore) return;
+    setState(() {
+      _isLoadingMore = true;
+      _currentPage++;
+    });
+    await _loadCustomers(isLoadMore: true);
+    setState(() {
+      _isLoadingMore = false;
+    });
+  }
+
+  Future<void> _loadCustomers({bool isLoadMore = false}) async {
+    const cacheDuration = Duration(seconds: 30);
+    if (!isLoadMore &&
+        _cachedCustomers.isNotEmpty &&
+        _lastFetchTime != null &&
+        DateTime.now().difference(_lastFetchTime!) < cacheDuration) {
+      setState(() {
+        _allCustomers = List.from(_cachedCustomers);
+        _filteredCustomers = List.from(_allCustomers);
+        _isLoading = false;
+      });
       return;
     }
 
-    final Uri phoneUri = Uri(scheme: 'tel', path: phoneNumber);
     try {
-      if (await Permission.phone.request().isGranted) {
-        if (await canLaunchUrl(phoneUri)) {
-          await launchUrl(phoneUri);
-        } else {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Could not launch phone app to call $phoneNumber'),
-              backgroundColor: Colors.red,
-              duration: const Duration(seconds: 3),
-            ),
-          );
-        }
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Phone call permission denied'),
-            backgroundColor: Colors.red,
-            duration: Duration(seconds: 3),
-          ),
-        );
+      final orderPickingProvider =
+          Provider.of<OrderPickingProvider>(context, listen: false);
+      final client = await SessionManager.getActiveClient();
+      if (client == null) {
+        throw Exception('No active Odoo session found. Please log in again.');
       }
+
+      List<dynamic> domain = [];
+      if (_searchQuery.isNotEmpty) {
+        domain.addAll([
+          '|',
+          '|',
+          '|',
+          ['name', 'ilike', _searchQuery],
+          ['phone', 'ilike', _searchQuery],
+          ['email', 'ilike', _searchQuery],
+          ['city', 'ilike', _searchQuery],
+        ]);
+      }
+
+      final countFuture = client.callKw({
+        'model': 'res.partner',
+        'method': 'search_count',
+        'args': [domain],
+        'kwargs': {},
+      });
+
+      final listFuture = client.callKw({
+        'model': 'res.partner',
+        'method': 'search_read',
+        'args': [domain],
+        'kwargs': {
+          'fields': [
+            'id',
+            'name',
+            'phone',
+            'email',
+            'city',
+            'image_1920',
+            'partner_latitude',
+            'partner_longitude',
+          ],
+          'limit': _pageSize,
+          'offset': _currentPage * _pageSize,
+          'order': 'name ASC', // Sort by name in ascending order on the server
+        },
+      });
+
+      final results = await Future.wait([countFuture, listFuture]);
+
+      final totalCount = results[0] as int;
+      final result = results[1];
+
+      if (result is! List) {
+        throw Exception('Unexpected response format from server');
+      }
+
+      final customers = List<Map<String, dynamic>>.from(result).map((data) {
+        return Customer(
+          id: (data['id'] ?? 0).toString(),
+          name: data['name'] as String? ?? 'Unnamed Customer',
+          phone: data['phone'] as String?,
+          email: data['email'] as String?,
+          city: data['city'] as String?,
+          imageUrl: data['image_1920'] as String?,
+          latitude: data['partner_latitude']?.toDouble(),
+          longitude: data['partner_longitude']?.toDouble(),
+        );
+      }).toList();
+
+      // Deduplicate customers based on id
+      final uniqueCustomers = <Customer>[];
+      final seenIds =
+          isLoadMore ? _allCustomers.map((c) => c.id).toSet() : <String>{};
+
+      for (var customer in customers) {
+        if (!seenIds.contains(customer.id)) {
+          seenIds.add(customer.id);
+          uniqueCustomers.add(customer);
+        }
+      }
+
+      setState(() {
+        _totalCustomers = totalCount;
+        if (!isLoadMore) {
+          _allCustomers = uniqueCustomers;
+        } else {
+          _allCustomers.addAll(uniqueCustomers);
+        }
+        _cachedCustomers = List.from(_allCustomers);
+        _hasMoreData = uniqueCustomers.length == _pageSize &&
+            _allCustomers.length < totalCount;
+        _filteredCustomers = List.from(_allCustomers);
+        _isLoading = false;
+      });
+
+      _lastFetchTime = DateTime.now();
+      orderPickingProvider.setCustomers(_allCustomers);
     } catch (e) {
-      print('Error launching phone app: $e');
+      debugPrint('Error fetching customers: $e');
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Error launching phone app: $e'),
+          content: Text('Failed to fetch customers: $e'),
           backgroundColor: Colors.red,
           duration: const Duration(seconds: 3),
         ),
       );
+      setState(() {
+        _isLoading = false;
+      });
     }
-  }
-
-  void _filterCustomers() {
-    final query = _searchController.text.trim().toLowerCase();
-    final orderPickingProvider =
-        Provider.of<OrderPickingProvider>(context, listen: false);
-    setState(() {
-      if (query.isEmpty) {
-        _filteredCustomers = List.from(orderPickingProvider.customers);
-      } else {
-        _filteredCustomers = orderPickingProvider.customers.where((customer) {
-          return customer.name.toLowerCase().contains(query) ||
-              (customer.phone?.toLowerCase().contains(query) ?? false) ||
-              (customer.email?.toLowerCase().contains(query) ?? false) ||
-              (customer.city?.toLowerCase().contains(query) ?? false);
-        }).toList();
-      }
-    });
   }
 
   Future<void> _loadProducts() async {
@@ -241,126 +359,48 @@ class _CustomersListState extends State<CustomersList> {
     ];
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return buildCustomersList();
-  }
+  Future<void> _makePhoneCall(String? phoneNumber) async {
+    if (phoneNumber == null || phoneNumber.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No phone number available for this customer'),
+          backgroundColor: Colors.red,
+          duration: Duration(seconds: 3),
+        ),
+      );
+      return;
+    }
 
-  Widget _buildCustomersListShimmer() {
-    return Shimmer.fromColors(
-      baseColor: Colors.grey[300]!,
-      highlightColor: Colors.grey[100]!,
-      child: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Container(
-              height: 56,
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: Colors.grey[300]!),
-              ),
+    final Uri phoneUri = Uri(scheme: 'tel', path: phoneNumber);
+    try {
+      if (await Permission.phone.request().isGranted) {
+        if (await canLaunchUrl(phoneUri)) {
+          await launchUrl(phoneUri);
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Could not launch phone app to call $phoneNumber'),
+              backgroundColor: Colors.red,
+              duration: const Duration(seconds: 3),
             ),
+          );
+        }
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Phone call permission denied'),
+            backgroundColor: Colors.red,
+            duration: Duration(seconds: 3),
           ),
-          Expanded(
-            child: ListView.builder(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              itemCount: 5,
-              itemBuilder: (context, index) {
-                return Card(
-                  margin: const EdgeInsets.only(bottom: 16),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10)),
-                  child: Padding(
-                    padding: const EdgeInsets.all(16.0),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Container(
-                          width: 60,
-                          height: 60,
-                          decoration: const BoxDecoration(
-                              shape: BoxShape.circle, color: Colors.white),
-                        ),
-                        const SizedBox(width: 16),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Container(
-                                  width: 150, height: 16, color: Colors.white),
-                              const SizedBox(height: 8),
-                              Container(
-                                  width: 100, height: 12, color: Colors.white),
-                              const SizedBox(height: 8),
-                              Container(
-                                  width: 120, height: 12, color: Colors.white),
-                              const SizedBox(height: 12),
-                              Row(
-                                mainAxisAlignment:
-                                    MainAxisAlignment.spaceEvenly,
-                                children: List.generate(
-                                  4,
-                                  (index) => Column(
-                                    children: [
-                                      Container(
-                                        width: 32,
-                                        height: 32,
-                                        decoration: const BoxDecoration(
-                                            shape: BoxShape.circle,
-                                            color: Colors.white),
-                                      ),
-                                      const SizedBox(height: 4),
-                                      Container(
-                                          width: 40,
-                                          height: 10,
-                                          color: Colors.white),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                );
-              },
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _openCustomerLocation(Customer customer) {
-    final double? lat = customer.latitude;
-    final double? lng = customer.longitude;
-
-    if (lat != null && lng != null && lat != 0.0 && lng != 0.0) {
-      _launchMaps(context, lat, lng, customer.name);
-    } else {
-      showDialog(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Geolocalize Customer'),
-          content: const Text(
-              'No location data available. Would you like to geolocalize this customer?'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel'),
-            ),
-            TextButton(
-              onPressed: () {
-                Navigator.pop(context);
-                _geoLocalizeCustomer(customer);
-              },
-              child: const Text('Geolocalize'),
-            ),
-          ],
+        );
+      }
+    } catch (e) {
+      print('Error launching phone app: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error launching phone app: $e'),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 3),
         ),
       );
     }
@@ -522,328 +562,46 @@ class _CustomersListState extends State<CustomersList> {
     }
   }
 
-  Widget buildCustomersList() {
-    return Consumer<OrderPickingProvider>(
-      builder: (context, orderPickingProvider, child) {
-        final bool showShimmer = _isLoading ||
-            (orderPickingProvider.isLoadingCustomers &&
-                orderPickingProvider.customers.isEmpty);
+  void _openCustomerLocation(Customer customer) {
+    final double? lat = customer.latitude;
+    final double? lng = customer.longitude;
 
-        if (!showShimmer &&
-            _searchController.text.isEmpty &&
-            orderPickingProvider.customers.isNotEmpty &&
-            _filteredCustomers.isEmpty) {
-          _filteredCustomers = List.from(orderPickingProvider.customers);
-        }
+    if (lat != null && lng != null && lat != 0.0 && lng != 0.0) {
+      _launchMaps(context, lat, lng, customer.name);
+    } else {
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Geolocalize Customer'),
+          content: const Text(
+              'No location data available. Would you like to geolocalize this customer?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context);
+                _geoLocalizeCustomer(customer);
+              },
+              child: const Text('Geolocalize'),
+            ),
+          ],
+        ),
+      );
+    }
+  }
 
-        if (showShimmer) {
-          return _buildCustomersListShimmer();
-        }
-
-        return RefreshIndicator(
-          onRefresh: () async {
-            setState(() {
-              _isLoading = true;
-            });
-            await orderPickingProvider.loadCustomers();
-            setState(() {
-              _isLoading = false;
-              _filteredCustomers = List.from(orderPickingProvider.customers);
-            });
-            _searchController.clear();
-          },
-          child: Column(
-            children: [
-              Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: TextField(
-                  controller: _searchController,
-                  decoration: InputDecoration(
-                    hintText: 'Search customers...',
-                    hintStyle: const TextStyle(color: Colors.grey),
-                    prefixIcon: const Icon(Icons.search, color: Colors.grey),
-                    suffixIcon: _searchController.text.isNotEmpty
-                        ? IconButton(
-                            icon: const Icon(Icons.clear, color: Colors.grey),
-                            onPressed: () {
-                              _searchController.clear();
-                            },
-                          )
-                        : null,
-                    filled: true,
-                    fillColor: Colors.white,
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(10),
-                      borderSide: BorderSide.none,
-                    ),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(10),
-                      borderSide: BorderSide(color: Colors.grey[300]!),
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(10),
-                      borderSide: BorderSide(color: primaryColor),
-                    ),
-                  ),
-                ),
-              ),
-              Expanded(
-                child: _filteredCustomers.isEmpty &&
-                        !orderPickingProvider.isLoadingCustomers &&
-                        !_isLoading
-                    ? Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(Icons.person_off,
-                                size: 48, color: Colors.grey[400]),
-                            const SizedBox(height: 8),
-                            Text(
-                              _searchController.text.isNotEmpty
-                                  ? 'No customers found for "${_searchController.text}"'
-                                  : 'No customers found',
-                              style: TextStyle(
-                                  color: Colors.grey[600],
-                                  fontStyle: FontStyle.italic),
-                              textAlign: TextAlign.center,
-                            ),
-                          ],
-                        ),
-                      )
-                    : ListView.builder(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        itemCount: _filteredCustomers.length,
-                        itemBuilder: (context, index) {
-                          final customer = _filteredCustomers[index];
-                          return Card(
-                            margin: const EdgeInsets.only(bottom: 16),
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(10)),
-                            child: InkWell(
-                              onTap: () {
-                                Navigator.push(
-                                  context,
-                                  SlidingPageTransitionRL(
-                                    page:
-                                        CustomerDetailsPage(customer: customer),
-                                  ),
-                                ).then((_) {
-                                  final orderPickingProvider =
-                                      Provider.of<OrderPickingProvider>(context,
-                                          listen: false);
-                                  orderPickingProvider
-                                      .loadCustomers()
-                                      .then((_) {
-                                    setState(() {
-                                      _filteredCustomers = List.from(
-                                          orderPickingProvider.customers);
-                                    });
-                                  });
-                                });
-                              },
-                              borderRadius: BorderRadius.circular(10),
-                              child: Padding(
-                                padding: const EdgeInsets.all(16.0),
-                                child: Row(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    CircleAvatar(
-                                      radius: 30,
-                                      backgroundColor:
-                                          Colors.blueGrey.withOpacity(.2),
-                                      child: customer.imageUrl != null &&
-                                              customer.imageUrl!.isNotEmpty
-                                          ? ClipOval(
-                                              child: customer.imageUrl!
-                                                      .startsWith('http')
-                                                  ? CachedNetworkImage(
-                                                      imageUrl:
-                                                          customer.imageUrl!,
-                                                      width: 60,
-                                                      height: 60,
-                                                      fit: BoxFit.cover,
-                                                      placeholder:
-                                                          (context, url) =>
-                                                              const Center(
-                                                        child:
-                                                            CircularProgressIndicator(
-                                                          strokeWidth: 2,
-                                                          color: primaryColor,
-                                                        ),
-                                                      ),
-                                                      errorWidget: (context,
-                                                              url, error) =>
-                                                          Text(
-                                                        customer.name
-                                                            .substring(0, 2)
-                                                            .toUpperCase(),
-                                                        style: const TextStyle(
-                                                          fontSize: 22,
-                                                          fontWeight:
-                                                              FontWeight.bold,
-                                                          color: primaryColor,
-                                                        ),
-                                                      ),
-                                                    )
-                                                  : Image.memory(
-                                                      base64Decode(customer
-                                                          .imageUrl!
-                                                          .split(',')
-                                                          .last),
-                                                      width: 60,
-                                                      height: 60,
-                                                      fit: BoxFit.cover,
-                                                      errorBuilder: (context,
-                                                              error,
-                                                              stackTrace) =>
-                                                          Text(
-                                                        customer.name
-                                                            .substring(0, 2)
-                                                            .toUpperCase(),
-                                                        style: const TextStyle(
-                                                          fontSize: 22,
-                                                          fontWeight:
-                                                              FontWeight.bold,
-                                                          color: primaryColor,
-                                                        ),
-                                                      ),
-                                                    ),
-                                            )
-                                          : Text(
-                                              customer.name
-                                                  .substring(0, 2)
-                                                  .toUpperCase(),
-                                              style: const TextStyle(
-                                                fontSize: 22,
-                                                fontWeight: FontWeight.bold,
-                                                color: primaryColor,
-                                              ),
-                                            ),
-                                    ),
-                                    const SizedBox(width: 16),
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          Row(
-                                            mainAxisAlignment:
-                                                MainAxisAlignment.spaceBetween,
-                                            children: [
-                                              Expanded(
-                                                child: Text(
-                                                  customer.name,
-                                                  style: const TextStyle(
-                                                      fontWeight:
-                                                          FontWeight.bold,
-                                                      fontSize: 16),
-                                                ),
-                                              ),
-                                              Container(
-                                                padding:
-                                                    const EdgeInsets.symmetric(
-                                                        horizontal: 8,
-                                                        vertical: 4),
-                                                decoration: BoxDecoration(
-                                                  color: Colors.green[50],
-                                                  borderRadius:
-                                                      BorderRadius.circular(12),
-                                                ),
-                                                child: Text(
-                                                  'Customer',
-                                                  style: TextStyle(
-                                                    color: Colors.green[800],
-                                                    fontSize: 12,
-                                                    fontWeight: FontWeight.bold,
-                                                  ),
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                          const SizedBox(height: 4),
-                                          Text(customer.city ?? 'No city',
-                                              style: TextStyle(
-                                                  color: Colors.grey[600])),
-                                          const SizedBox(height: 4),
-                                          Text(
-                                              'Contact: ${customer.phone ?? 'No phone'}',
-                                              style: TextStyle(
-                                                  color: Colors.grey[600])),
-                                          const SizedBox(height: 8),
-                                          Row(
-                                            mainAxisAlignment:
-                                                MainAxisAlignment.spaceBetween,
-                                            children: [
-                                              Expanded(
-                                                child: Text(
-                                                  'Email: ${customer.email ?? 'No email'}',
-                                                  style: TextStyle(
-                                                      color: Colors.grey[600],
-                                                      fontSize: 12),
-                                                  overflow:
-                                                      TextOverflow.ellipsis,
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                          const SizedBox(height: 12),
-                                          Row(
-                                            mainAxisAlignment:
-                                                MainAxisAlignment.spaceEvenly,
-                                            children: [
-                                              _buildCustomerActionButton(
-                                                Icons.shopping_cart,
-                                                'New Order',
-                                                primaryColor,
-                                                () => showCreateOrderSheet(
-                                                    context, customer),
-                                              ),
-                                              _buildCustomerActionButton(
-                                                Icons.call,
-                                                'Call',
-                                                Colors.blue,
-                                                () => _makePhoneCall(
-                                                    customer.phone),
-                                              ),
-                                              _buildCustomerActionButton(
-                                                Icons.location_on,
-                                                'Map',
-                                                Colors.green,
-                                                () => _openCustomerLocation(
-                                                    customer),
-                                              ),
-                                              _buildCustomerActionButton(
-                                                Icons.receipt,
-                                                'History',
-                                                Colors.purple,
-                                                () {
-                                                  Navigator.push(
-                                                    context,
-                                                    SlidingPageTransitionRL(
-                                                        page:
-                                                            CustomerHistoryPage(
-                                                                customer:
-                                                                    customer)),
-                                                  );
-                                                },
-                                              ),
-                                            ],
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          );
-                        },
-                      ),
-              ),
-            ],
-          ),
-        );
-      },
+  void showCreateOrderSheet(BuildContext context, Customer customer) {
+    _selectedProducts.clear();
+    _quantities.clear();
+    FocusScope.of(context).unfocus();
+    Navigator.push(
+      context,
+      SlidingPageTransitionRL(
+        page: CreateOrderDirectlyPage(customer: customer),
+      ),
     );
   }
 
@@ -871,16 +629,484 @@ class _CustomersListState extends State<CustomersList> {
     );
   }
 
-  void showCreateOrderSheet(BuildContext context, Customer customer) {
-    _selectedProducts.clear();
-    _quantities.clear();
-    FocusScope.of(context).unfocus();
-    Navigator.push(
-      context,
-      SlidingPageTransitionRL(
-        page: CreateOrderDirectlyPage(customer: customer),
+  Widget _buildCustomersListShimmer() {
+    return Shimmer.fromColors(
+      baseColor: Colors.grey[300]!,
+      highlightColor: Colors.grey[100]!,
+      child: ListView.builder(
+        padding: EdgeInsets.symmetric(horizontal: _standardPadding),
+        itemCount: 5,
+        itemBuilder: (context, index) {
+          return Card(
+            margin: EdgeInsets.only(bottom: _smallPadding),
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(_cardBorderRadius)),
+            child: Padding(
+              padding: EdgeInsets.all(_standardPadding),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    width: 60,
+                    height: 60,
+                    decoration: const BoxDecoration(
+                        shape: BoxShape.circle, color: Colors.white),
+                  ),
+                  SizedBox(width: _smallPadding),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Container(width: 150, height: 16, color: Colors.white),
+                        SizedBox(height: _tinyPadding),
+                        Container(width: 100, height: 12, color: Colors.white),
+                        SizedBox(height: _tinyPadding),
+                        Container(width: 120, height: 12, color: Colors.white),
+                        SizedBox(height: _smallPadding),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                          children: List.generate(
+                            4,
+                            (index) => Column(
+                              children: [
+                                Container(
+                                  width: 32,
+                                  height: 32,
+                                  decoration: const BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      color: Colors.white),
+                                ),
+                                SizedBox(height: _tinyPadding),
+                                Container(
+                                    width: 40, height: 10, color: Colors.white),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
       ),
     );
+  }
+
+  Widget _buildLoadingMoreIndicator() {
+    return Container(
+      padding: EdgeInsets.all(_standardPadding),
+      child: Center(
+        child: _isLoadingMore
+            ? CircularProgressIndicator(
+                valueColor: AlwaysStoppedAnimation<Color>(primaryColor),
+              )
+            : SizedBox.shrink(),
+      ),
+    );
+  }
+
+  Widget _CookiesAllCustomersFetched() {
+    return Padding(
+      padding: EdgeInsets.all(_smallPadding * 0.5),
+      child: Center(
+        child: Text(
+          'All customers are fetched.',
+          style: TextStyle(
+            color: Colors.grey[600],
+            fontSize: 14,
+            fontStyle: FontStyle.italic,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget buildCustomersList() {
+    return Column(
+      children: [
+        Padding(
+          padding: EdgeInsets.all(_standardPadding),
+          child: TextField(
+            controller: _searchController,
+            decoration: InputDecoration(
+              hintText: 'Search by name, phone, email, city...',
+              hintStyle: TextStyle(color: Colors.grey[600]),
+              prefixIcon: const Icon(Icons.search, color: Colors.grey),
+              suffixIcon: _searchController.text.isNotEmpty
+                  ? IconButton(
+                      icon: const Icon(Icons.clear, color: Colors.grey),
+                      onPressed: () {
+                        _searchController.clear();
+                        setState(() {
+                          _searchQuery = '';
+                          _currentPage = 0;
+                          _hasMoreData = true;
+                          _cachedCustomers.clear();
+                          _lastFetchTime = null;
+                          _allCustomers.clear();
+                          _filteredCustomers.clear();
+                          _isLoading = true;
+                        });
+                        _loadCustomers();
+                      },
+                    )
+                  : null,
+              filled: true,
+              fillColor: Colors.white,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(_cardBorderRadius),
+                borderSide: BorderSide.none,
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(_cardBorderRadius),
+                borderSide: BorderSide(color: Colors.grey[300]!),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(_cardBorderRadius),
+                borderSide: BorderSide(color: primaryColor),
+              ),
+              contentPadding: EdgeInsets.symmetric(
+                vertical: _standardPadding,
+                horizontal: _standardPadding,
+              ),
+            ),
+          ),
+        ),
+        Expanded(
+          child: _isLoading
+              ? _buildCustomersListShimmer()
+              : RefreshIndicator(
+                  onRefresh: () async {
+                    setState(() {
+                      _isLoading = true;
+                      _cachedCustomers.clear();
+                      _lastFetchTime = null;
+                      _currentPage = 0;
+                      _hasMoreData = true;
+                      _allCustomers.clear();
+                      _filteredCustomers.clear();
+                    });
+                    await _loadCustomers();
+                  },
+                  child: _filteredCustomers.isEmpty
+                      ? Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.person_off,
+                                  size: 48, color: Colors.grey[400]),
+                              SizedBox(height: _smallPadding),
+                              Text(
+                                _searchQuery.isNotEmpty
+                                    ? 'No customers found for "$_searchQuery"'
+                                    : 'No customers found',
+                                style: TextStyle(
+                                    color: Colors.grey[600],
+                                    fontStyle: FontStyle.italic),
+                                textAlign: TextAlign.center,
+                              ),
+                            ],
+                          ),
+                        )
+                      : ListView.builder(
+                          controller: _scrollController,
+                          padding: EdgeInsets.symmetric(
+                              horizontal: _standardPadding),
+                          itemCount: _filteredCustomers.length + 1,
+                          itemBuilder: (context, index) {
+                            if (index < _filteredCustomers.length) {
+                              final customer = _filteredCustomers[index];
+                              return Card(
+                                margin: EdgeInsets.only(bottom: _smallPadding),
+                                shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(
+                                        _cardBorderRadius)),
+                                child: InkWell(
+                                  onTap: () {
+                                    _isActivePage = false;
+                                    Navigator.push(
+                                      context,
+                                      SlidingPageTransitionRL(
+                                        page: CustomerDetailsPage(
+                                            customer: customer),
+                                      ),
+                                    ).then((_) {
+                                      _isActivePage = true;
+                                      if (_searchController.text !=
+                                          _searchQuery) {
+                                        setState(() {
+                                          _currentPage = 0;
+                                          _hasMoreData = true;
+                                          _cachedCustomers.clear();
+                                          _lastFetchTime = null;
+                                          _allCustomers.clear();
+                                          _filteredCustomers.clear();
+                                          _isLoading = true;
+                                        });
+                                        _loadCustomers();
+                                      }
+                                    });
+                                  },
+                                  borderRadius:
+                                      BorderRadius.circular(_cardBorderRadius),
+                                  child: Padding(
+                                    padding: EdgeInsets.all(_standardPadding),
+                                    child: Row(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        CircleAvatar(
+                                          radius: 30,
+                                          backgroundColor:
+                                              Colors.blueGrey.withOpacity(.2),
+                                          child: customer.imageUrl != null &&
+                                                  customer.imageUrl!.isNotEmpty
+                                              ? ClipOval(
+                                                  child: customer.imageUrl!
+                                                          .startsWith('http')
+                                                      ? CachedNetworkImage(
+                                                          imageUrl: customer
+                                                              .imageUrl!,
+                                                          width: 60,
+                                                          height: 60,
+                                                          fit: BoxFit.cover,
+                                                          placeholder:
+                                                              (context, url) =>
+                                                                  const Center(
+                                                            child:
+                                                                CircularProgressIndicator(
+                                                              strokeWidth: 2,
+                                                              color:
+                                                                  primaryColor,
+                                                            ),
+                                                          ),
+                                                          errorWidget: (context,
+                                                                  url, error) =>
+                                                              Text(
+                                                            customer.name
+                                                                .substring(0, 2)
+                                                                .toUpperCase(),
+                                                            style:
+                                                                const TextStyle(
+                                                              fontSize: 22,
+                                                              fontWeight:
+                                                                  FontWeight
+                                                                      .bold,
+                                                              color:
+                                                                  primaryColor,
+                                                            ),
+                                                          ),
+                                                        )
+                                                      : Image.memory(
+                                                          base64Decode(customer
+                                                              .imageUrl!
+                                                              .split(',')
+                                                              .last),
+                                                          width: 60,
+                                                          height: 60,
+                                                          fit: BoxFit.cover,
+                                                          errorBuilder: (context,
+                                                                  error,
+                                                                  stackTrace) =>
+                                                              Text(
+                                                            customer.name
+                                                                .substring(0, 2)
+                                                                .toUpperCase(),
+                                                            style:
+                                                                const TextStyle(
+                                                              fontSize: 22,
+                                                              fontWeight:
+                                                                  FontWeight
+                                                                      .bold,
+                                                              color:
+                                                                  primaryColor,
+                                                            ),
+                                                          ),
+                                                        ),
+                                                )
+                                              : Text(
+                                                  customer.name
+                                                      .substring(0, 2)
+                                                      .toUpperCase(),
+                                                  style: const TextStyle(
+                                                    fontSize: 22,
+                                                    fontWeight: FontWeight.bold,
+                                                    color: primaryColor,
+                                                  ),
+                                                ),
+                                        ),
+                                        SizedBox(width: _smallPadding),
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              Row(
+                                                mainAxisAlignment:
+                                                    MainAxisAlignment
+                                                        .spaceBetween,
+                                                children: [
+                                                  Expanded(
+                                                    child: Text(
+                                                      customer.name,
+                                                      style: const TextStyle(
+                                                          fontWeight:
+                                                              FontWeight.bold,
+                                                          fontSize: 16),
+                                                    ),
+                                                  ),
+                                                  Container(
+                                                    padding:
+                                                        EdgeInsets.symmetric(
+                                                            horizontal:
+                                                                _smallPadding,
+                                                            vertical:
+                                                                _tinyPadding),
+                                                    decoration: BoxDecoration(
+                                                      color: Colors.green[50],
+                                                      borderRadius:
+                                                          BorderRadius.circular(
+                                                              12),
+                                                    ),
+                                                    child: Text(
+                                                      'Customer',
+                                                      style: TextStyle(
+                                                        color:
+                                                            Colors.green[800],
+                                                        fontSize: 12,
+                                                        fontWeight:
+                                                            FontWeight.bold,
+                                                      ),
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                              SizedBox(height: _tinyPadding),
+                                              Text(customer.city ?? 'No city',
+                                                  style: TextStyle(
+                                                      color: Colors.grey[600])),
+                                              SizedBox(height: _tinyPadding),
+                                              Text(
+                                                  'Contact: ${customer.phone ?? 'No phone'}',
+                                                  style: TextStyle(
+                                                      color: Colors.grey[600])),
+                                              SizedBox(height: _smallPadding),
+                                              Row(
+                                                mainAxisAlignment:
+                                                    MainAxisAlignment
+                                                        .spaceBetween,
+                                                children: [
+                                                  Expanded(
+                                                    child: Text(
+                                                      'Email: ${customer.email ?? 'No email'}',
+                                                      style: TextStyle(
+                                                          color:
+                                                              Colors.grey[600],
+                                                          fontSize: 12),
+                                                      overflow:
+                                                          TextOverflow.ellipsis,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                              SizedBox(height: _smallPadding),
+                                              Row(
+                                                mainAxisAlignment:
+                                                    MainAxisAlignment
+                                                        .spaceEvenly,
+                                                children: [
+                                                  _buildCustomerActionButton(
+                                                    Icons.shopping_cart,
+                                                    'New Order',
+                                                    primaryColor,
+                                                    () => showCreateOrderSheet(
+                                                        context, customer),
+                                                  ),
+                                                  _buildCustomerActionButton(
+                                                    Icons.call,
+                                                    'Call',
+                                                    Colors.blue,
+                                                    () => _makePhoneCall(
+                                                        customer.phone),
+                                                  ),
+                                                  _buildCustomerActionButton(
+                                                    Icons.location_on,
+                                                    'Map',
+                                                    Colors.green,
+                                                    () => _openCustomerLocation(
+                                                        customer),
+                                                  ),
+                                                  _buildCustomerActionButton(
+                                                    Icons.receipt,
+                                                    'History',
+                                                    Colors.purple,
+                                                    () {
+                                                      _isActivePage = false;
+                                                      Navigator.push(
+                                                        context,
+                                                        SlidingPageTransitionRL(
+                                                          page:
+                                                              CustomerHistoryPage(
+                                                                  customer:
+                                                                      customer),
+                                                        ),
+                                                      ).then((_) {
+                                                        _isActivePage = true;
+                                                        if (_searchController
+                                                                .text !=
+                                                            _searchQuery) {
+                                                          setState(() {
+                                                            _currentPage = 0;
+                                                            _hasMoreData = true;
+                                                            _cachedCustomers
+                                                                .clear();
+                                                            _lastFetchTime =
+                                                                null;
+                                                            _allCustomers
+                                                                .clear();
+                                                            _filteredCustomers
+                                                                .clear();
+                                                            _isLoading = true;
+                                                          });
+                                                          _loadCustomers();
+                                                        }
+                                                      });
+                                                    },
+                                                  ),
+                                                ],
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              );
+                            } else if (index == _filteredCustomers.length) {
+                              if (_isLoadingMore) {
+                                return _buildLoadingMoreIndicator();
+                              } else if (!_hasMoreData) {
+                                return _CookiesAllCustomersFetched();
+                              } else {
+                                return SizedBox.shrink();
+                              }
+                            }
+                            return SizedBox.shrink();
+                          },
+                        ),
+                ),
+        ),
+      ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return buildCustomersList();
   }
 }
 
