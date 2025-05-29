@@ -5,14 +5,243 @@ import '../authentication/cyllo_session_model.dart';
 class InvoiceProvider extends ChangeNotifier {
   List<Map<String, dynamic>> _invoices = [];
   bool _isLoading = false;
+  bool _isLoadingMore = false;
   String? _error;
   bool _isCreatingInvoice = false;
   final currencyFormat = NumberFormat.currency(symbol: '\$');
+  int _totalInvoiceCount = 0;
+  int _currentPage = 0;
+  static const int _pageSize = 10;
+  bool _hasMoreData = true;
+  String? _lastOrderId;
+  bool? _lastShowUnpaidOnly;
 
   List<Map<String, dynamic>> get invoices => _invoices;
   bool get isLoading => _isLoading;
+  bool get isLoadingMore => _isLoadingMore;
   String? get error => _error;
   bool get isCreatingInvoice => _isCreatingInvoice;
+  bool get hasMoreData => _hasMoreData;
+  int get totalInvoiceCount => _totalInvoiceCount;
+
+  void resetPagination() {
+    _currentPage = 0;
+    _hasMoreData = true;
+    _invoices.clear();
+    _totalInvoiceCount = 0;
+    notifyListeners();
+  }
+  Future<void> fetchInvoices({
+    String? orderId,
+    bool showUnpaidOnly = false,
+    bool loadMore = false,
+    String searchQuery = '',
+    List<String> selectedStatuses = const [],
+    DateTime? startDate,
+    DateTime? endDate,
+    double? minAmount,
+    double? maxAmount,
+  }) async {
+    debugPrint(
+        'InvoiceProvider: Starting fetchInvoices with orderId=$orderId, '
+            'showUnpaidOnly=$showUnpaidOnly, loadMore=$loadMore, '
+            'searchQuery=$searchQuery, selectedStatuses=$selectedStatuses, '
+            'startDate=$startDate, endDate=$endDate, minAmount=$minAmount, maxAmount=$maxAmount');
+
+    if (!loadMore && (orderId != _lastOrderId || showUnpaidOnly != _lastShowUnpaidOnly)) {
+      resetPagination();
+      _lastOrderId = orderId;
+      _lastShowUnpaidOnly = showUnpaidOnly;
+    }
+
+    if (loadMore) {
+      if (!_hasMoreData || _isLoadingMore) {
+        debugPrint('InvoiceProvider: No more data to load or already loading more');
+        return;
+      }
+      _isLoadingMore = true;
+    } else {
+      _isLoading = true;
+      _error = null;
+      if (!loadMore) _invoices.clear();
+    }
+
+    notifyListeners();
+
+    try {
+      final client = await SessionManager.getActiveClient();
+      if (client == null) {
+        throw Exception('No active Odoo session found. Please log in again.');
+      }
+
+      final invoiceFields = await _getValidFields('account.move', [
+        'id',
+        'name',
+        'invoice_date',
+        'invoice_date_due',
+        'amount_total',
+        'amount_residual',
+        'state',
+        'invoice_line_ids',
+        'partner_id',
+        'amount_tax',
+        'amount_untaxed',
+        'user_id',
+        'currency_id',
+        'payment_state',
+        'company_id',
+        'narration',
+        'invoice_origin',
+        'ref',
+        'invoice_payment_term_id',
+      ]);
+
+      // Build the domain
+      List<dynamic> domain = [];
+      if (orderId != null && int.tryParse(orderId) != null) {
+        domain.add(['sale_order_ids', 'in', [int.parse(orderId)]]);
+      } else if (showUnpaidOnly) {
+        domain.addAll([
+          ['move_type', '=', 'out_invoice'],
+          ['state', '=', 'posted'],
+          ['payment_state', 'in', ['not_paid', 'partial']],
+        ]);
+      } else {
+        domain.addAll([
+          ['state', '!=', 'cancel'],
+          ['move_type', '=', 'out_invoice'],
+        ]);
+      }
+
+      // Add search query filter
+      if (searchQuery.isNotEmpty) {
+        domain.add('|');
+        domain.add(['name', 'ilike', searchQuery]);
+        domain.add(['partner_id.name', 'ilike', searchQuery]);
+      }
+
+      // Add status filter
+      if (selectedStatuses.isNotEmpty) {
+        domain.add(['state', 'in', selectedStatuses]);
+      }
+
+      // Add date range filters
+      if (startDate != null) {
+        domain.add(['invoice_date', '>=', DateFormat('yyyy-MM-dd').format(startDate)]);
+      }
+      if (endDate != null) {
+        domain.add(['invoice_date', '<=', DateFormat('yyyy-MM-dd').format(endDate)]);
+      }
+
+      // Add amount range filters
+      if (minAmount != null) {
+        domain.add(['amount_total', '>=', minAmount]);
+      }
+      if (maxAmount != null) {
+        domain.add(['amount_total', '<=', maxAmount]);
+      }
+
+      // Fetch total count
+      if (!loadMore || _totalInvoiceCount == 0) {
+        final count = await client.callKw({
+          'model': 'account.move',
+          'method': 'search_count',
+          'args': [domain],
+          'kwargs': {},
+        }).timeout(Duration(seconds: 3), onTimeout: () {
+          throw Exception('Count fetch timed out');
+        });
+        _totalInvoiceCount = count as int;
+      }
+
+      final offset = loadMore ? _currentPage * _pageSize : 0;
+
+      final invoices = await client.callKw({
+        'model': 'account.move',
+        'method': 'search_read',
+        'args': [domain, invoiceFields],
+        'kwargs': {
+          'limit': _pageSize,
+          'offset': offset,
+          'order': 'create_date desc, id desc',
+        },
+      }).timeout(Duration(seconds: 5), onTimeout: () {
+        throw Exception('Invoice fetch timed out');
+      });
+
+      final newInvoices = List<Map<String, dynamic>>.from(invoices);
+      debugPrint('InvoiceProvider: Fetched ${newInvoices.length} invoices for page $_currentPage');
+
+      final allLineIds = newInvoices
+          .expand((invoice) => List<int>.from(invoice['invoice_line_ids'] ?? []))
+          .toSet()
+          .toList();
+
+      if (allLineIds.isNotEmpty) {
+        final lines = await _fetchInvoiceLines(allLineIds);
+        final lineMap = {for (var line in lines) line['id']: line};
+
+        for (var invoice in newInvoices) {
+          final lineIds = List<int>.from(invoice['invoice_line_ids'] ?? []);
+          invoice['line_details'] = lineIds
+              .map((id) => lineMap[id])
+              .where((line) => line != null)
+              .toList();
+        }
+      } else {
+        for (var invoice in newInvoices) {
+          invoice['line_details'] = [];
+        }
+      }
+
+      for (var newInvoice in newInvoices) {
+        if (!_invoices.any((existing) => existing['id'] == newInvoice['id'])) {
+          _invoices.add(newInvoice);
+        }
+      }
+
+      if (loadMore) {
+        _currentPage++;
+      } else {
+        _currentPage = 1;
+      }
+
+      // Update _hasMoreData based on total count
+      _hasMoreData = _invoices.length < _totalInvoiceCount;
+
+      debugPrint('InvoiceProvider: Total invoices loaded: ${_invoices.length}, '
+          'totalInvoiceCount: $_totalInvoiceCount, hasMoreData: $_hasMoreData');
+    } catch (e, stackTrace) {
+      _error = 'Failed to fetch invoices: $e';
+      debugPrint('InvoiceProvider: Error in fetchInvoices: $e\n$stackTrace');
+    }
+
+    _isLoading = false;
+    _isLoadingMore = false;
+    notifyListeners();
+  }
+  Future<void> loadMoreInvoices({
+    String? orderId,
+    bool showUnpaidOnly = false,
+    String searchQuery = '',
+    List<String> selectedStatuses = const [],
+    DateTime? startDate,
+    DateTime? endDate,
+    double? minAmount,
+    double? maxAmount,
+  }) async {
+    await fetchInvoices(
+      orderId: orderId,
+      showUnpaidOnly: showUnpaidOnly,
+      loadMore: true,
+      searchQuery: searchQuery,
+      selectedStatuses: selectedStatuses,
+      startDate: startDate,
+      endDate: endDate,
+      minAmount: minAmount,
+      maxAmount: maxAmount,
+    );
+  }
 
   Future<List<Map<String, dynamic>>> _fetchInvoiceLines(List<int> lineIds) async {
     if (lineIds.isEmpty) return [];
@@ -48,106 +277,6 @@ class InvoiceProvider extends ChangeNotifier {
     });
 
     return List<Map<String, dynamic>>.from(lines);
-  }
-
-  Future<void> fetchInvoices({String? orderId, bool showUnpaidOnly = false}) async {
-    debugPrint('InvoiceProvider: Starting fetchInvoices with orderId=$orderId, showUnpaidOnly=$showUnpaidOnly');
-    _isLoading = true;
-    _error = null;
-    _invoices.clear();
-    notifyListeners();
-
-    try {
-      final client = await SessionManager.getActiveClient();
-      if (client == null) {
-        throw Exception('No active Odoo session found. Please log in again.');
-      }
-
-      final invoiceFields = await _getValidFields('account.move', [
-        'id',
-        'name',
-        'invoice_date',
-        'invoice_date_due',
-        'amount_total',
-        'amount_residual',
-        'state',
-        'invoice_line_ids',
-        'partner_id',
-        'amount_tax',
-        'amount_untaxed',
-        'user_id',
-        'currency_id',
-        'payment_state',
-        'company_id',
-        'narration',
-        'invoice_origin',
-        'ref',
-        'invoice_payment_term_id',
-      ]);
-
-      final domain = orderId != null && int.tryParse(orderId) != null
-          ? [['sale_order_ids', 'in', [int.parse(orderId)]]]
-          : showUnpaidOnly
-          ? [
-        ['move_type', '=', 'out_invoice'],
-        ['state', '=', 'posted'],
-        ['payment_state', 'in', ['not_paid', 'partial']],
-      ]
-          : [
-        ['state', '!=', 'cancel'],
-        ['move_type', '=', 'out_invoice'],
-      ];
-
-      final invoices = await client.callKw({
-        'model': 'account.move',
-        'method': 'search_read',
-        'args': [domain, invoiceFields],
-        'kwargs': {},
-      }).timeout(Duration(seconds: 5), onTimeout: () {
-        throw Exception('Invoice fetch timed out');
-      });
-
-      _invoices = List<Map<String, dynamic>>.from(invoices);
-      debugPrint('InvoiceProvider: Raw Odoo response length=${invoices.length}');
-      final allLineIds = _invoices
-          .expand((invoice) => List<int>.from(invoice['invoice_line_ids'] ?? []))
-          .toSet()
-          .toList();
-      if (allLineIds.isNotEmpty) {
-        final lines = await _fetchInvoiceLines(allLineIds);
-        final lineMap = {for (var line in lines) line['id']: line};
-
-        for (var invoice in _invoices) {
-          final lineIds = List<int>.from(invoice['invoice_line_ids'] ?? []);
-          invoice['line_details'] = lineIds
-              .map((id) => lineMap[id])
-              .where((line) => line != null)
-              .toList();
-        }
-      } else {
-        for (var invoice in _invoices) {
-          invoice['line_details'] = [];
-        }
-      }
-
-      final invoiceIds = _invoices.map((i) => i['id']).toSet();
-      if (invoiceIds.length != _invoices.length) {
-        debugPrint('InvoiceProvider: WARNING: Found duplicate invoices, unique IDs=${invoiceIds.length}');
-        _invoices = _invoices.fold<List<Map<String, dynamic>>>([], (list, invoice) {
-          if (!list.any((i) => i['id'] == invoice['id'])) {
-            list.add(invoice);
-          }
-          return list;
-        });
-      }
-
-      debugPrint('InvoiceProvider: Fetch completed, invoices=${_invoices.length}, unique IDs=${invoiceIds.length}');
-    } catch (e, stackTrace) {
-      _error = 'Failed to fetch invoices: $e';
-      debugPrint('InvoiceProvider: Error in fetchInvoices: $e\n$stackTrace');
-    }
-    _isLoading = false;
-    notifyListeners();
   }
 
   Future<List<Map<String, dynamic>>> fetchInvoiceLinesForInvoice(int invoiceId) async {
@@ -190,34 +319,6 @@ class InvoiceProvider extends ChangeNotifier {
     }
   }
 
-  Future<void> createDraftInvoice(String orderId) async {
-    debugPrint('InvoiceProvider: Creating draft invoice for orderId=$orderId');
-    _isCreatingInvoice = true;
-    notifyListeners();
-    try {
-      final client = await SessionManager.getActiveClient();
-      if (client == null) {
-        throw Exception('No active Odoo session found.');
-      }
-      await client.callKw({
-        'model': 'sale.order',
-        'method': 'action_invoice_create',
-        'args': [[int.parse(orderId)]],
-        'kwargs': {},
-      }).timeout(Duration(seconds: 5), onTimeout: () {
-        throw Exception('Draft invoice creation timed out');
-      });
-      debugPrint('InvoiceProvider: Draft invoice created, refetching invoices');
-      await fetchInvoices(orderId: orderId);
-    } catch (e) {
-      _error = 'Error creating invoice: $e';
-      debugPrint('InvoiceProvider: Error creating invoice: $e');
-    } finally {
-      _isCreatingInvoice = false;
-      notifyListeners();
-    }
-  }
-
   String formatInvoiceState(String state, bool isFullyPaid, double amountResidual, double invoiceAmount) {
     if (isFullyPaid) {
       return 'Paid';
@@ -232,7 +333,9 @@ class InvoiceProvider extends ChangeNotifier {
     } else {
       return state;
     }
-  }  Color getInvoiceStatusColor(String status) {
+  }
+
+  Color getInvoiceStatusColor(String status) {
     final lowerStatus = status.toLowerCase();
     if (lowerStatus.contains('paid') || lowerStatus.contains('fully invoiced')) {
       return Colors.green;
@@ -247,4 +350,5 @@ class InvoiceProvider extends ChangeNotifier {
     } else {
       return Colors.grey[700]!;
     }
-  }}
+  }
+}

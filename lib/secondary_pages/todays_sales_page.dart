@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:latest_van_sale_application/secondary_pages/sale_order_details_page.dart';
@@ -30,11 +32,25 @@ class _TodaysSalesPageState extends State<TodaysSalesPage> {
   double? _minAmount;
   double? _maxAmount;
   String _sortBy = 'date_desc';
+  final ScrollController _scrollController = ScrollController();
+  Timer? _debounce;
+  DateTime? _startDate;
+  DateTime? _endDate;
 
   @override
   void initState() {
     super.initState();
     _searchController.addListener(_onSearchChanged);
+    _scrollController.addListener(_onScroll);
+  }
+
+  void _onScroll() {
+    if (_scrollController.position.pixels >=
+        _scrollController.position.maxScrollExtent - 200) {
+      if (!widget.provider.isLoadingMore && widget.provider.hasMoreData) {
+        widget.provider.fetchTodaysOrders(isLoadMore: true);
+      }
+    }
   }
 
   @override
@@ -51,9 +67,20 @@ class _TodaysSalesPageState extends State<TodaysSalesPage> {
 
   @override
   void dispose() {
+    _debounce?.cancel();
+    _scrollController.dispose();
     _searchController.removeListener(_onSearchChanged);
     _searchController.dispose();
     super.dispose();
+  }
+
+  bool _isSearchOrFilterActive() {
+    return _searchQuery.isNotEmpty ||
+        _selectedStatuses.isNotEmpty ||
+        _minAmount != null ||
+        _maxAmount != null ||
+        _startDate != null ||
+        _endDate != null;
   }
 
   void _loadOrders() {
@@ -62,17 +89,25 @@ class _TodaysSalesPageState extends State<TodaysSalesPage> {
           'TodaysSalesPage: Skipping fetchTodaysOrders, already in progress');
       return;
     }
-
     _isFetching = true;
     debugPrint('TodaysSalesPage: Triggering fetchTodaysOrders');
-    widget.provider.fetchTodaysOrders().then((_) {
+    widget.provider
+        .fetchTodaysOrders(
+      searchQuery: _searchQuery,
+      selectedStatuses: _selectedStatuses,
+      minAmount: _minAmount,
+      maxAmount: _maxAmount,
+      startDate: _startDate,
+      endDate: _endDate,
+      sortBy: _sortBy,
+    )
+        .then((_) {
       if (mounted) {
         setState(() {
           _initialLoadComplete = true;
           _isFetching = false;
         });
       }
-      debugPrint('TodaysSalesPage: fetchTodaysOrders completed');
     }).catchError((e) {
       if (mounted) {
         setState(() {
@@ -80,90 +115,18 @@ class _TodaysSalesPageState extends State<TodaysSalesPage> {
           _isFetching = false;
         });
       }
-      debugPrint('TodaysSalesPage: fetchTodaysOrders failed: $e');
     });
   }
 
   void _onSearchChanged() {
-    setState(() {
-      _searchQuery = _searchController.text.toLowerCase();
+    if (_debounce?.isActive ?? false) _debounce!.cancel();
+    _debounce = Timer(const Duration(milliseconds: 500), () {
+      setState(() {
+        _searchQuery = _searchController.text.toLowerCase();
+      });
+      widget.provider.resetPagination();
+      _loadOrders();
     });
-  }
-
-  List<Map<String, dynamic>> _getFilteredOrders(
-      List<Map<String, dynamic>> orders) {
-    if (_searchQuery.isEmpty &&
-        _selectedStatuses.isEmpty &&
-        _minAmount == null &&
-        _maxAmount == null &&
-        _sortBy == 'date_desc') {
-      return orders;
-    }
-
-    final validStatuses = ['draft', 'sale', 'done', 'cancel'];
-
-    // Filter orders
-    var filteredOrders = orders.where((order) {
-      final orderNumber = order['name']?.toLowerCase() ?? '';
-      final customer =
-          order['partner_id'] is List && order['partner_id'].length > 1
-              ? order['partner_id'][1].toString().toLowerCase()
-              : '';
-      final state = order['state']?.toLowerCase() ?? '';
-      final amount = (order['amount_total'] as num?)?.toDouble() ?? 0.0;
-
-      // Search query filter
-      bool matchesSearch = true;
-      if (_searchQuery.isNotEmpty) {
-        matchesSearch = orderNumber.contains(_searchQuery) ||
-            customer.contains(_searchQuery) ||
-            state.contains(_searchQuery);
-      }
-
-      // Status filter
-      bool matchesStatus = true;
-      if (_selectedStatuses.isNotEmpty) {
-        matchesStatus = _selectedStatuses.contains(state);
-      }
-
-      // Amount range filter
-      bool matchesAmount = true;
-      if (_minAmount != null) {
-        matchesAmount = amount >= _minAmount!;
-      }
-      if (_maxAmount != null) {
-        matchesAmount = matchesAmount && amount <= _maxAmount!;
-      }
-
-      return matchesSearch && matchesStatus && matchesAmount;
-    }).toList();
-
-    // Sort orders
-    filteredOrders.sort((a, b) {
-      final aDate = a['date_order'] != null
-          ? DateTime.parse(a['date_order'] as String)
-          : DateTime.now();
-      final bDate = b['date_order'] != null
-          ? DateTime.parse(b['date_order'] as String)
-          : DateTime.now();
-      final aAmount = (a['amount_total'] as num?)?.toDouble() ?? 0.0;
-      final bAmount = (b['amount_total'] as num?)?.toDouble() ?? 0.0;
-
-      switch (_sortBy) {
-        case 'date_desc':
-          return bDate.compareTo(aDate);
-        case 'date_asc':
-          return aDate.compareTo(bDate);
-        case 'amount_desc':
-          return bAmount.compareTo(aAmount);
-        case 'amount_asc':
-          return aAmount.compareTo(bAmount);
-        default:
-          return 0;
-      }
-    });
-
-    return filteredOrders;
   }
 
   void _showFilterSortDialog(BuildContext context) {
@@ -174,6 +137,8 @@ class _TodaysSalesPageState extends State<TodaysSalesPage> {
     final TextEditingController maxAmountController = TextEditingController(
         text: _maxAmount != null ? _maxAmount.toString() : '');
     String tempSortBy = _sortBy;
+    DateTime? tempStartDate = _startDate;
+    DateTime? tempEndDate = _endDate;
 
     showDialog(
       context: context,
@@ -189,7 +154,6 @@ class _TodaysSalesPageState extends State<TodaysSalesPage> {
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Status Filter
                     const Text('Order Status',
                         style: TextStyle(fontWeight: FontWeight.bold)),
                     Wrap(
@@ -211,7 +175,68 @@ class _TodaysSalesPageState extends State<TodaysSalesPage> {
                       }).toList(),
                     ),
                     const SizedBox(height: 16),
-                    // Amount Range Filter
+                    const Text('Date Range',
+                        style: TextStyle(fontWeight: FontWeight.bold)),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextButton(
+                            onPressed: () async {
+                              final picked = await showDatePicker(
+                                context: context,
+                                initialDate: tempStartDate ?? DateTime.now(),
+                                firstDate: DateTime(2000),
+                                lastDate: DateTime.now(),
+                              );
+                              if (picked != null) {
+                                setDialogState(() {
+                                  tempStartDate = picked;
+                                });
+                              }
+                            },
+                            child: Text(
+                              tempStartDate != null
+                                  ? DateFormat('yyyy-MM-dd')
+                                      .format(tempStartDate!)
+                                  : 'Start Date',
+                              style: TextStyle(
+                                  color: tempStartDate != null
+                                      ? Colors.black
+                                      : Colors.grey),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: TextButton(
+                            onPressed: () async {
+                              final picked = await showDatePicker(
+                                context: context,
+                                initialDate: tempEndDate ?? DateTime.now(),
+                                firstDate: DateTime(2000),
+                                lastDate: DateTime.now(),
+                              );
+                              if (picked != null) {
+                                setDialogState(() {
+                                  tempEndDate = picked;
+                                });
+                              }
+                            },
+                            child: Text(
+                              tempEndDate != null
+                                  ? DateFormat('yyyy-MM-dd')
+                                      .format(tempEndDate!)
+                                  : 'End Date',
+                              style: TextStyle(
+                                  color: tempEndDate != null
+                                      ? Colors.black
+                                      : Colors.grey),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
                     const Text('Amount Range',
                         style: TextStyle(fontWeight: FontWeight.bold)),
                     Row(
@@ -240,7 +265,6 @@ class _TodaysSalesPageState extends State<TodaysSalesPage> {
                       ],
                     ),
                     const SizedBox(height: 16),
-                    // Sort Options
                     const Text('Sort By',
                         style: TextStyle(fontWeight: FontWeight.bold)),
                     Column(
@@ -297,15 +321,28 @@ class _TodaysSalesPageState extends State<TodaysSalesPage> {
                       _selectedStatuses.clear();
                       _minAmount = null;
                       _maxAmount = null;
+                      _startDate = null;
+                      _endDate = null;
                       _sortBy = 'date_desc';
+                      widget.provider.resetPagination();
                     });
+                    _loadOrders();
                     Navigator.pop(context);
                   },
                   child: const Text('Clear'),
                 ),
                 TextButton(
                   onPressed: () {
-                    // Validate amount range
+                    if (tempStartDate != null &&
+                        tempEndDate != null &&
+                        tempStartDate!.isAfter(tempEndDate!)) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                            content:
+                                Text('Start date cannot be after end date')),
+                      );
+                      return;
+                    }
                     final minAmount = minAmountController.text.isNotEmpty
                         ? double.tryParse(minAmountController.text)
                         : null;
@@ -322,13 +359,16 @@ class _TodaysSalesPageState extends State<TodaysSalesPage> {
                       );
                       return;
                     }
-                    // Apply filters and sort
                     setState(() {
                       _selectedStatuses = tempSelectedStatuses;
                       _minAmount = minAmount;
                       _maxAmount = maxAmount;
+                      _startDate = tempStartDate;
+                      _endDate = tempEndDate;
                       _sortBy = tempSortBy;
+                      widget.provider.resetPagination();
                     });
+                    _loadOrders();
                     Navigator.pop(context);
                   },
                   child: const Text('Apply'),
@@ -464,7 +504,8 @@ class _TodaysSalesPageState extends State<TodaysSalesPage> {
             builder: (context, provider, child) => Card(
               elevation: 2,
               margin:
-                  const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+                  const EdgeInsets.only(left: 16.0,right: 16,top: 8,bottom: 8
+                  ),
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12)),
               child: Padding(
@@ -502,7 +543,7 @@ class _TodaysSalesPageState extends State<TodaysSalesPage> {
                                     color: Colors.grey.shade300, width: 1),
                               ),
                               child: Text(
-                                '${_getFilteredOrders(provider.todaysOrders).length} order(s)',
+                                '${provider.totalOrders} order(s)',
                                 style: TextStyle(
                                   fontSize: 12,
                                   color: Colors.grey.shade600,
@@ -763,30 +804,6 @@ class _TodaysSalesPageState extends State<TodaysSalesPage> {
     );
   }
 
-  Widget _buildContentArea(SalesOrderProvider provider) {
-    return RefreshIndicator(
-      onRefresh: () async {
-        _loadOrders();
-      },
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-        physics: const AlwaysScrollableScrollPhysics(),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const SizedBox(height: 16),
-            if (_isFetching)
-              _buildLoadingIndicator()
-            else if (provider.todaysOrders.isEmpty)
-              _buildEmptyState(context, provider)
-            else
-              _buildOrderList(context, provider),
-          ],
-        ),
-      ),
-    );
-  }
-
   Widget _buildLoadingIndicator() {
     return Center(
       child: Padding(
@@ -813,8 +830,12 @@ class _TodaysSalesPageState extends State<TodaysSalesPage> {
       ),
     );
   }
+
   Widget _buildEmptyState(BuildContext context, SalesOrderProvider provider) {
-    debugPrint('TodaysSalesPage: Showing empty state');
+    debugPrint(
+        'TodaysSalesPage: Showing empty state, searchOrFilterActive=${_isSearchOrFilterActive()}');
+    final isSearchOrFilterActive = _isSearchOrFilterActive();
+
     return Card(
       elevation: 2,
       margin: const EdgeInsets.only(bottom: 16.0),
@@ -824,10 +845,16 @@ class _TodaysSalesPageState extends State<TodaysSalesPage> {
         child: Center(
           child: Column(
             children: [
-              Icon(Icons.assignment, size: 64, color: Colors.grey[400]),
+              Icon(
+                isSearchOrFilterActive ? Icons.search_off : Icons.assignment,
+                size: 64,
+                color: Colors.grey[400],
+              ),
               const SizedBox(height: 20),
               Text(
-                'No sales orders today',
+                isSearchOrFilterActive
+                    ? 'No matching orders found'
+                    : 'No sales orders today',
                 style: TextStyle(
                   color: Colors.grey[700],
                   fontWeight: FontWeight.w500,
@@ -836,7 +863,9 @@ class _TodaysSalesPageState extends State<TodaysSalesPage> {
               ),
               const SizedBox(height: 8),
               Text(
-                'There are no sales orders for today.',
+                isSearchOrFilterActive
+                    ? 'Try adjusting your search term or filters.'
+                    : 'There are no sales orders for today.',
                 style: TextStyle(
                   color: Colors.grey[600],
                   fontSize: 14,
@@ -844,34 +873,36 @@ class _TodaysSalesPageState extends State<TodaysSalesPage> {
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 24),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  icon: const Icon(Icons.assignment_outlined,
-                      color: Colors.white),
-                  label: const Text(
-                    'Create Sale Order',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w600,
-                      fontSize: 15,
+              if (!isSearchOrFilterActive) // Show button only when no search/filter
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    icon: const Icon(Icons.assignment_outlined,
+                        color: Colors.white),
+                    label: const Text(
+                      'Create Sale Order',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 15,
+                      ),
                     ),
-                  ),
-                  onPressed: () {
-                    debugPrint('TodaysSalesPage: Retry fetching orders');
-                    showCreateOrderSheetGeneral(context);
-                  },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: primaryColor,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
+                    onPressed: () {
+                      debugPrint(
+                          'TodaysSalesPage: Opening create order dialog');
+                      showCreateOrderSheetGeneral(context);
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: primaryColor,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      elevation: 2,
                     ),
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    elevation: 2,
                   ),
                 ),
-              ),
             ],
           ),
         ),
@@ -895,59 +926,88 @@ class _TodaysSalesPageState extends State<TodaysSalesPage> {
   }
 
   Widget _buildOrderList(BuildContext context, SalesOrderProvider provider) {
-    final filteredOrders = _getFilteredOrders(provider.todaysOrders);
+    final filteredOrders =
+        provider.todaysOrders; // Filtering is now server-side
 
-    debugPrint(
-        'TodaysSalesPage: Building order list with ${filteredOrders.length} orders');
-
-    if (filteredOrders.isEmpty) {
-      return Card(
-        elevation: 1,
-        margin: const EdgeInsets.only(bottom: 12.0),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        child: Padding(
-          padding: const EdgeInsets.all(20.0),
-          child: Center(
-            child: Column(
-              children: [
-                Icon(Icons.search_off, size: 48, color: Colors.grey[400]),
-                const SizedBox(height: 16),
-                Text(
-                  'No matching orders found',
-                  style: TextStyle(
-                    color: Colors.grey[600],
-                    fontWeight: FontWeight.w500,
-                    fontSize: 16,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'Try a different search term',
-                  style: TextStyle(
-                    color: Colors.grey[500],
-                    fontSize: 14,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      );
+    if (filteredOrders.isEmpty && !_isFetching) {
+      return _buildEmptyState(context, provider);
     }
 
     return ListView.builder(
+      controller: _scrollController,
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
-      itemCount: filteredOrders.length,
+      itemCount: filteredOrders.length + 1,
       itemBuilder: (context, index) {
-        final order = filteredOrders[index];
-        debugPrint(
-            'TodaysSalesPage: Rendering order ${order['id']} at index $index');
-        return _OrderCard(
-          order: order,
-          provider: provider,
-        );
+        if (index < filteredOrders.length) {
+          final order = filteredOrders[index];
+          debugPrint(
+              'TodaysSalesPage: Rendering order ${order['id']} at index $index');
+          return _OrderCard(
+            order: order,
+            provider: provider,
+          );
+        } else {
+          if (provider.isLoadingMore) {
+            return _buildLoadingMoreIndicator();
+          } else if (!provider.hasMoreData) {
+            return _buildAllOrdersFetched();
+          } else {
+            return const SizedBox.shrink();
+          }
+        }
       },
+    );
+  }
+
+  Widget _buildLoadingMoreIndicator() {
+    return const Padding(
+      padding: EdgeInsets.all(16.0),
+      child: Center(
+        child: CircularProgressIndicator(),
+      ),
+    );
+  }
+
+  Widget _buildAllOrdersFetched() {
+    return const Padding(
+      padding: EdgeInsets.all(8.0),
+      child: Center(
+        child: Text(
+          'All orders fetched.',
+          style: TextStyle(
+            color: Colors.grey,
+            fontSize: 14,
+            fontStyle: FontStyle.italic,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildContentArea(SalesOrderProvider provider) {
+    return RefreshIndicator(
+      onRefresh: () async {
+        widget.provider.resetPagination();
+        _loadOrders();
+      },
+      child: SingleChildScrollView(
+        controller: _scrollController,
+        padding: const EdgeInsets.only(left: 16.0, bottom: 16.0,right: 16),
+        physics: const AlwaysScrollableScrollPhysics(),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const SizedBox(height: 16),
+            if (_isFetching && provider.todaysOrders.isEmpty)
+              _buildLoadingIndicator()
+            else if (provider.todaysOrders.isEmpty)
+              _buildEmptyState(context, provider)
+            else
+              _buildOrderList(context, provider),
+          ],
+        ),
+      ),
     );
   }
 }

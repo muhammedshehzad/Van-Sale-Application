@@ -371,8 +371,8 @@ class _MainPageState extends State<MainPage> with TickerProviderStateMixin {
                     page: InvoiceListPage(
                       orderData: {'id': null},
                       showUnpaidOnly: false,
-                      provider:
-                          Provider.of<InvoiceProvider>(context, listen: false),
+                      // provider:
+                      //     Provider.of<InvoiceProvider>(context, listen: false),
                     ),
                   ),
                 );
@@ -759,7 +759,7 @@ class _MainPageState extends State<MainPage> with TickerProviderStateMixin {
             SlidingPageTransitionLR(
               page: InvoiceListPage(
                 orderData: {},
-                provider: Provider.of<InvoiceProvider>(context, listen: false),
+                // provider: Provider.of<InvoiceProvider>(context, listen: false),
               ),
             ),
           );

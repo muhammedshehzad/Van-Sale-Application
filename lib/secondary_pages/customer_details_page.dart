@@ -2109,14 +2109,14 @@ class _CustomerDetailsPageState extends State<CustomerDetailsPage>
                 'payment_state': invoice.paymentState,
               };
 
-              return InvoiceCard(
-                invoice: invoiceMap,
-                provider: Provider.of<InvoiceProvider>(context, listen: false),
-                onRefresh: () {
-
-                  _fetchCustomerDetails();
-                },
-              );
+              // return InvoiceCard(
+              //   invoice: invoiceMap,
+              //   provider: Provider.of<InvoiceProvider>(context, listen: false),
+              //   onRefresh: () {
+              //
+              //     _fetchCustomerDetails();
+              //   },
+              // );
             },
           );
   }
