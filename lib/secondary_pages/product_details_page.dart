@@ -430,129 +430,296 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
     );
   }
 
-  Future<void> deleteProduct() async {
-    try {
-      _showDeletingDialog();
-      final client = await SessionManager.getActiveClient();
-      // Attempt to delete the product
-      final result = await client?.callKw({
+  Future<void> _verifyAndCompleteArchive(
+      dynamic client, BuildContext context) async {
+    // Wait a bit for the transaction to commit
+    await Future.delayed(const Duration(milliseconds: 500));
+
+    // Step 5: Multiple verification attempts
+    for (int attempt = 1; attempt <= 3; attempt++) {
+      debugPrint(
+          'Verification attempt $attempt for product ID: ${widget.productId}');
+
+      final verifyStatus = await client.callKw({
         'model': 'product.product',
-        'method': 'unlink',
+        'method': 'read',
         'args': [
           [int.parse(widget.productId)],
+          ['active', 'name'],
         ],
         'kwargs': {},
       });
+      debugPrint(
+          'Verification attempt $attempt - Product status: $verifyStatus');
 
-      if (result == true && context.mounted) {
-        Navigator.of(context).pop(); // Close the deleting dialog
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Row(
-              children: const [
-                Icon(Icons.check_circle, color: Colors.white),
-                SizedBox(width: 8),
-                Text('Product deleted successfully'),
-              ],
+      if (verifyStatus is List &&
+          verifyStatus.isNotEmpty &&
+          verifyStatus[0]['active'] == false) {
+        // Success - product is archived
+        if (context.mounted) {
+          Navigator.of(context).pop(); // Close the deleting dialog
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Row(
+                children: [
+                  const Icon(Icons.check_circle, color: Colors.white),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Product "${verifyStatus[0]['name']}" archived successfully',
+                      overflow: TextOverflow.ellipsis,
+                      maxLines: 3,
+                    ),
+                  ),
+                ],
+              ),
+              backgroundColor: Colors.green,
+              behavior: SnackBarBehavior.floating,
+              duration: const Duration(seconds: 2),
             ),
-            backgroundColor: Colors.green,
-            behavior: SnackBarBehavior.floating,
-            duration: const Duration(seconds: 2),
-          ),
-        );
-        // Navigate back to the previous screen
-        Navigator.pop(context);
+          );
+          Navigator.pop(context); // Navigate back
+        }
+        return;
+      }
+
+      // If not archived yet, wait before next attempt
+      if (attempt < 3) {
+        await Future.delayed(Duration(milliseconds: 500 * attempt));
+      }
+    }
+
+    // If we get here, archiving may have failed
+    throw Exception('Product archiving verification failed after 3 attempts');
+  }
+
+  Future<void> deleteProduct() async {
+    try {
+      debugPrint('Starting deleteProduct for product ID: ${widget.productId}');
+      _showDeletingDialog();
+      final client = await SessionManager.getActiveClient();
+      if (client == null) {
+        throw Exception('No active Odoo client found');
+      }
+
+      // Step 1: Verify product exists
+      debugPrint('Verifying product ID: ${widget.productId} exists');
+      final productExists = await client.callKw({
+        'model': 'product.product',
+        'method': 'search_count',
+        'args': [
+          [
+            ['id', '=', int.parse(widget.productId)]
+          ],
+        ],
+        'kwargs': {},
+      });
+      debugPrint('Product exists result: $productExists');
+      if (productExists == 0) {
+        throw Exception('Product with ID ${widget.productId} does not exist');
+      }
+
+      // Step 2: Check for stock quants referencing the product
+      debugPrint('Checking stock quants for product ID: ${widget.productId}');
+      final quantResult = await client.callKw({
+        'model': 'stock.quant',
+        'method': 'search_count',
+        'args': [
+          [
+            ['product_id', '=', int.parse(widget.productId)]
+          ],
+        ],
+        'kwargs': {},
+      });
+      debugPrint('Stock quant count result: $quantResult');
+
+      if (quantResult is int && quantResult > 0) {
+        // Step 3: Check if product is already archived
+        debugPrint(
+            'Checking if product ${widget.productId} is already archived');
+        final productStatus = await client.callKw({
+          'model': 'product.product',
+          'method': 'read',
+          'args': [
+            [int.parse(widget.productId)],
+            ['active', 'name'],
+          ],
+          'kwargs': {},
+        });
+        debugPrint('Product status: $productStatus');
+
+        if (productStatus is List &&
+            productStatus.isNotEmpty &&
+            productStatus[0]['active'] == false) {
+          if (context.mounted) {
+            Navigator.of(context).pop(); // Close the deleting dialog
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Row(
+                  children: [
+                    const Icon(Icons.info, color: Colors.white),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Product "${productStatus[0]['name']}" is already archived',
+                        overflow: TextOverflow.ellipsis,
+                        maxLines: 2,
+                      ),
+                    ),
+                  ],
+                ),
+                backgroundColor: Colors.orange,
+                behavior: SnackBarBehavior.floating,
+                duration: const Duration(seconds: 2),
+              ),
+            );
+            Navigator.pop(context); // Navigate back
+          }
+          return;
+        }
+
+        // Step 4: Enhanced archive attempt with better error handling
+        debugPrint('Attempting to archive product ID: ${widget.productId}');
+
+        // Option 1: Try using action_archive method if available
+        try {
+          final archiveActionResult = await client.callKw({
+            'model': 'product.product',
+            'method': 'action_archive',
+            'args': [
+              [int.parse(widget.productId)],
+            ],
+            'kwargs': {},
+          });
+          debugPrint('Archive action result: $archiveActionResult');
+
+          // If action_archive succeeded, verify the result
+          await _verifyAndCompleteArchive(client, context);
+          return;
+        } catch (actionArchiveError) {
+          debugPrint('action_archive method failed: $actionArchiveError');
+          // Fall back to write method
+        }
+
+        // Option 2: Enhanced write method with context and commit
+        final archiveResult = await client.callKw({
+          'model': 'product.product',
+          'method': 'write',
+          'args': [
+            [int.parse(widget.productId)],
+            {'active': false},
+          ],
+          'kwargs': {
+            'context': {
+              'tracking_disable': false, // Enable tracking
+              'mail_auto_subscribe_no_notify': true,
+            }
+          },
+        });
+        debugPrint('Archive result: $archiveResult');
+
+        // Option 3: Force commit transaction (if your Odoo client supports it)
+        try {
+          await client.callKw({
+            'model': 'ir.model',
+            'method': 'flush',
+            'args': [],
+            'kwargs': {},
+          });
+          debugPrint('Transaction flush attempted');
+        } catch (flushError) {
+          debugPrint('Flush failed (may not be supported): $flushError');
+        }
+
+        // Step 5: Multiple verification attempts with delay
+        await _verifyAndCompleteArchive(client, context);
       } else {
-        throw Exception('Failed to delete product');
+        // Step 6: If no stock quants, attempt to delete the product
+        debugPrint(
+            'No stock quants found, attempting to delete product ID: ${widget.productId}');
+        final deleteResult = await client.callKw({
+          'model': 'product.product',
+          'method': 'unlink',
+          'args': [
+            [int.parse(widget.productId)],
+          ],
+          'kwargs': {},
+        });
+        debugPrint('Delete result: $deleteResult');
+
+        if (deleteResult == true && context.mounted) {
+          Navigator.of(context).pop(); // Close the deleting dialog
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Row(
+                children: const [
+                  Icon(Icons.check_circle, color: Colors.white),
+                  SizedBox(width: 8),
+                  Text('Product deleted successfully'),
+                ],
+              ),
+              backgroundColor: Colors.green,
+              behavior: SnackBarBehavior.floating,
+              duration: const Duration(seconds: 2),
+            ),
+          );
+          Navigator.pop(context); // Navigate back
+        } else {
+          throw Exception(
+              'Failed to delete product. Delete result: $deleteResult');
+        }
       }
     } catch (e, stackTrace) {
-      developer.log('Error deleting product ID: ${widget.productId}',
+      debugPrint(
+          'Error handling product ID: ${widget.productId}, error: $e, stackTrace: $stackTrace');
+      developer.log('Error handling product ID: ${widget.productId}',
           error: e, stackTrace: stackTrace);
 
       if (context.mounted) {
         Navigator.of(context).pop(); // Close the deleting dialog
-        String errorMessage = 'Failed to delete product';
+        String errorMessage = 'Failed to process product deletion';
 
-        // Check if the error is a foreign key violation
         if (e is OdooException &&
             e.toString().contains('ForeignKeyViolation')) {
-          try {
-            final client = await SessionManager.getActiveClient();
-            final archiveResult = await client?.callKw({
-              'model': 'product.product',
-              'method': 'write',
-              'args': [
-                [int.parse(widget.productId)],
-                {'active': false},
-              ],
-              'kwargs': {},
-            });
-
-            if (archiveResult == true && context.mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Row(
-                    children: const [
-                      Icon(Icons.check_circle, color: Colors.white),
-                      SizedBox(width: 8),
-                      Text('Product archived successfully'),
-                    ],
-                  ),
-                  backgroundColor: Colors.green,
-                  behavior: SnackBarBehavior.floating,
-                  duration: const Duration(seconds: 2),
-                ),
-              );
-              // Navigate back to the previous screen
-              Navigator.pop(context);
-              return;
-            } else {
-              errorMessage =
-                  'Cannot delete product due to existing inventory records. Failed to archive product.';
-            }
-          } catch (archiveError, archiveStackTrace) {
-            developer.log('Error archiving product ID: ${widget.productId}',
-                error: archiveError, stackTrace: archiveStackTrace);
-            errorMessage =
-                'Cannot delete product due to existing inventory records. Archiving also failed: $archiveError';
-          }
+          errorMessage =
+              'Cannot delete product due to existing inventory records. Archiving failed.';
         } else if (e is OdooException) {
           errorMessage = e.message ?? 'Odoo server error';
         } else {
           errorMessage = e.toString();
         }
 
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Row(
-                children: [
-                  const Icon(Icons.error_outline, color: Colors.white),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      errorMessage,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(Icons.error_outline, color: Colors.white),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    errorMessage,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
                   ),
-                ],
-              ),
-              backgroundColor: Colors.red,
-              behavior: SnackBarBehavior.floating,
-              duration: const Duration(seconds: 4),
-              action: SnackBarAction(
-                label: 'DETAILS',
-                textColor: Colors.white,
-                onPressed: () {
-                  _showErrorDetailsDialog(context, '$e\n\n$stackTrace');
-                },
-              ),
+                ),
+              ],
             ),
-          );
-        }
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 4),
+            action: SnackBarAction(
+              label: 'DETAILS',
+              textColor: Colors.white,
+              onPressed: () {
+                _showErrorDetailsDialog(context, '$e\n\n$stackTrace');
+              },
+            ),
+          ),
+        );
       }
     }
+
+// Helper method for verification
   }
 
   void _showErrorDetailsDialog(BuildContext context, String errorDetails) {
@@ -671,6 +838,8 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
 
     return Scaffold(
       appBar: AppBar(
+        automaticallyImplyLeading: true,
+        // Ensure this is true or omitted
         title: Row(
           children: [
             Expanded(
