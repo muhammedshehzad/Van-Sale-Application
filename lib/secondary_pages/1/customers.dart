@@ -9,7 +9,6 @@ import 'package:provider/provider.dart';
 import 'package:shimmer/shimmer.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:url_launcher/url_launcher_string.dart';
-import '../../secondary_pages/create_customer_page.dart';
 import '../../assets/widgets and consts/page_transition.dart';
 import '../../assets/widgets and consts/create_order_directly_page.dart';
 import '../../authentication/cyllo_session_model.dart';

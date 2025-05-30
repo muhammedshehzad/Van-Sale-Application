@@ -634,13 +634,24 @@ class ShippingMethod {
 class SalesOrderProvider with ChangeNotifier {
   int _currentStep = 0;
   int _totalOrders = 0;
+  Map<String, List<Product>> _categoryProducts = {};
+  Map<String, int> _categoryCurrentPage = {};
+  Map<String, bool> _categoryHasMoreData = {};
+  Map<String, bool> _categoryIsLoadingMore = {};
+  Map<String, int> _categoryTotalProducts = {};
+  String _searchQuery = '';
+  bool _isLoading = false;
+
+  // Getters
+  Map<String, List<Product>> get categoryProducts => _categoryProducts;
+  String get searchQuery => _searchQuery;
+  bool get isLoading => _isLoading;
   int get totalOrders => _totalOrders;
   List<Product> _products = [];
   List<OrderItem> _orderItems = [];
   String? _customerId;
   String? _customerName;
   SalesOrder? _salesOrder;
-  bool _isLoading = false;
   final Set<String> _confirmedOrderIds = {};
   String? _draftOrderId;
   List<Product> _draftSelectedProducts = [];
@@ -652,16 +663,18 @@ class SalesOrderProvider with ChangeNotifier {
   bool _hasMoreData = true;
   bool _isLoadingMore = false;
   static const int _pageSize = 10;
-
+  int _totalProducts = 0;
   int get currentPage => _currentPage;
+
   bool get hasMoreData => _hasMoreData;
+
   bool get isLoadingMore => _isLoadingMore;
   List<Map<String, dynamic>> _orders = [];
   List<Map<String, dynamic>> _todaysOrders = [];
   String? _error;
   final currencyFormat = NumberFormat.currency(symbol: '\$');
   final Map<String, int> _temporaryInventory = {};
-
+  int get totalProducts => _totalProducts;
   bool isOrderIdConfirmed(String orderId) {
     return _confirmedOrderIds.contains(orderId);
   }
@@ -678,7 +691,6 @@ class SalesOrderProvider with ChangeNotifier {
 
   SalesOrder? get salesOrder => _salesOrder;
 
-  bool get isLoading => _isLoading;
 
   String? get draftOrderId => _draftOrderId;
 
@@ -699,6 +711,381 @@ class SalesOrderProvider with ChangeNotifier {
 
   String? get error => _error;
 
+  Future<void> fetchProducts({
+    bool isLoadMore = false,
+    String searchQuery = '',
+    required String category, // Make category required
+  }) async {
+    if (isLoadMore && (!_categoryHasMoreData[category]! || _categoryIsLoadingMore[category]!)) return;
+    developer.log('SalesOrderProvider: Starting fetchProducts, category=$category, isLoadMore=$isLoadMore, searchQuery=$searchQuery');
+
+    if (!isLoadMore) {
+      _isLoading = true;
+      _categoryProducts[category] = _categoryProducts[category] ?? [];
+      _categoryCurrentPage[category] = 0;
+      _categoryHasMoreData[category] = true;
+      _categoryIsLoadingMore[category] = false;
+      _categoryTotalProducts[category] = 0;
+      _searchQuery = searchQuery;
+    } else {
+      _categoryIsLoadingMore[category] = true;
+    }
+    notifyListeners();
+
+    try {
+      final client = await SessionManager.getActiveClient();
+      if (client == null) {
+        throw Exception('No active Odoo session found.');
+      }
+
+      List<dynamic> domain = [
+        ['product_tmpl_id.detailed_type', '=', 'product']
+      ];
+
+      if (category != 'All Products') {
+        domain.add(['categ_id.name', '=', category]);
+      }
+
+      if (searchQuery.isNotEmpty) {
+        domain.add('|');
+        domain.add(['name', 'ilike', searchQuery]);
+        domain.add(['default_code', 'ilike', searchQuery]);
+      }
+
+      final countFuture = client.callKw({
+        'model': 'product.product',
+        'method': 'search_count',
+        'args': [domain],
+        'kwargs': {},
+      });
+
+      final productResultFuture = client.callKw({
+        'model': 'product.product',
+        'method': 'search_read',
+        'args': [domain],
+        'kwargs': {
+          'fields': [
+            'id',
+            'name',
+            'list_price',
+            'qty_available',
+            'image_1920',
+            'default_code',
+            'seller_ids',
+            'taxes_id',
+            'categ_id',
+            'product_tmpl_id',
+            'attribute_line_ids',
+            'product_template_attribute_value_ids',
+          ],
+          'order': 'name asc',
+          'limit': _pageSize,
+          'offset': (_categoryCurrentPage[category] ?? 0) * _pageSize,
+        },
+      });
+
+      final results = await Future.wait([countFuture, productResultFuture]);
+      _categoryTotalProducts[category] = results[0] as int;
+      final productResult = results[1] as List;
+
+      // Process products (same as before, but store in category-specific list)
+      final templateIds = productResult
+          .map((productData) => productData['product_tmpl_id'][0] as int)
+          .toSet()
+          .toList();
+
+      final attributeLineResult = await client.callKw({
+        'model': 'product.template.attribute.line',
+        'method': 'search_read',
+        'args': [
+          [
+            ['product_tmpl_id', 'in', templateIds]
+          ]
+        ],
+        'kwargs': {
+          'fields': [
+            'product_tmpl_id',
+            'attribute_id',
+            'value_ids',
+          ],
+        },
+      });
+
+      final attributeIds = attributeLineResult
+          .map((attr) => attr['attribute_id'][0] as int)
+          .toSet()
+          .toList();
+      final attributeNames = await client.callKw({
+        'model': 'product.attribute',
+        'method': 'search_read',
+        'args': [
+          [
+            ['id', 'in', attributeIds]
+          ]
+        ],
+        'kwargs': {
+          'fields': ['id', 'name'],
+        },
+      });
+
+      final templateAttributeValueResult = await client.callKw({
+        'model': 'product.template.attribute.value',
+        'method': 'search_read',
+        'args': [
+          [
+            ['product_tmpl_id', 'in', templateIds]
+          ]
+        ],
+        'kwargs': {
+          'fields': [
+            'product_tmpl_id',
+            'attribute_id',
+            'product_attribute_value_id',
+            'price_extra',
+          ],
+        },
+      });
+
+      final valueIds = templateAttributeValueResult
+          .map((attr) => attr['product_attribute_value_id'][0] as int)
+          .toSet()
+          .toList();
+      final attributeValues = await client.callKw({
+        'model': 'product.attribute.value',
+        'method': 'search_read',
+        'args': [
+          [
+            ['id', 'in', valueIds]
+          ]
+        ],
+        'kwargs': {
+          'fields': ['id', 'name'],
+        },
+      });
+
+      final productAttributeValueResult = await client.callKw({
+        'model': 'product.product',
+        'method': 'search_read',
+        'args': [
+          [
+            ['product_tmpl_id', 'in', templateIds]
+          ]
+        ],
+        'kwargs': {
+          'fields': ['id', 'name', 'product_template_attribute_value_ids'],
+        },
+      });
+
+      final attributeNameMap = {
+        for (var attr in attributeNames) attr['id']: attr['name'] as String
+      };
+      final attributeValueMap = {
+        for (var val in attributeValues) val['id']: val['name'] as String
+      };
+
+      final templateAttributeValueMap =
+      <int, Map<int, Map<int, Map<String, dynamic>>>>{};
+      for (var attrVal in templateAttributeValueResult) {
+        final templateId = attrVal['product_tmpl_id'][0] as int;
+        final attributeId = attrVal['attribute_id'][0] as int;
+        final valueId = attrVal['product_attribute_value_id'][0] as int;
+        final priceExtra = (attrVal['price_extra'] as num?)?.toDouble() ?? 0.0;
+
+        templateAttributeValueMap.putIfAbsent(templateId, () => {});
+        templateAttributeValueMap[templateId]!
+            .putIfAbsent(attributeId, () => {});
+        templateAttributeValueMap[templateId]![attributeId]!
+            .putIfAbsent(valueId, () => {});
+        templateAttributeValueMap[templateId]![attributeId]![valueId] = {
+          'name': attributeValueMap[valueId] ?? 'Unknown',
+          'price_extra': priceExtra,
+        };
+      };
+
+      final productAttributeValueMap = <int, Map<String, String>>{};
+      for (var productAttr in productAttributeValueResult) {
+        final productId = productAttr['id'] as int;
+        final productName = productAttr['name'] as String;
+        final valueIds =
+        productAttr['product_template_attribute_value_ids'] as List;
+        final selectedVariants = <String, String>{};
+
+        for (var valueId in valueIds) {
+          final attrValue = templateAttributeValueResult.firstWhere(
+                (av) => av['product_attribute_value_id'][0] == valueId,
+            orElse: () => null,
+          );
+          if (attrValue != null) {
+            final attributeId = attrValue['attribute_id'][0] as int;
+            final valueName = (attributeValueMap[valueId] ?? 'Unknown').trim();
+            final attributeName =
+            (attributeNameMap[attributeId] ?? 'Unknown').trim();
+            selectedVariants[attributeName] = valueName;
+          }
+        }
+
+        if (selectedVariants.isEmpty && valueIds.isEmpty) {
+          final templateId = productResult.firstWhere(
+                  (p) => p['id'] == productId)['product_tmpl_id'][0] as int;
+          final templateAttributes = <int, List<ProductAttribute>>{};
+
+          final attributes = templateAttributes[templateId] ?? [];
+          for (var attr in attributes) {
+            for (var value in attr.values) {
+              if (productName.toLowerCase().contains(value.toLowerCase())) {
+                selectedVariants[attr.name] = value;
+                developer.log(
+                    'Inferred selectedVariants for product $productId: ${attr.name}=$value from name=$productName');
+              }
+            }
+          }
+        }
+
+        if (selectedVariants.isNotEmpty) {
+          productAttributeValueMap[productId] = selectedVariants;
+        }
+      }
+
+      final templateAttributes = <int, List<ProductAttribute>>{};
+      for (var attrLine in attributeLineResult) {
+        final templateId = attrLine['product_tmpl_id'][0] as int;
+        final attributeId = attrLine['attribute_id'][0] as int;
+        final valueIds = attrLine['value_ids'] as List;
+
+        final attributeName = attributeNameMap[attributeId] ?? 'Unknown';
+        final values = valueIds
+            .map((id) => (attributeValueMap[id] ?? 'Unknown').trim())
+            .toList()
+            .cast<String>();
+        final extraCosts = <String, double>{
+          for (var id in valueIds)
+            (attributeValueMap[id as int] ?? 'Unknown').trim():
+            (templateAttributeValueMap[templateId]?[attributeId]?[id as int]
+            ?['price_extra'] as num?)
+                ?.toDouble() ??
+                0.0
+        };
+
+        templateAttributes.putIfAbsent(templateId, () => []).add(
+          ProductAttribute(
+            name: attributeName,
+            values: values,
+            extraCost: extraCosts,
+          ),
+        );
+      }
+
+      final List<Product> fetchedProducts = productResult.map((productData) {
+        String? imageUrl;
+        final imageData = productData['image_1920'];
+
+        if (imageData != false && imageData is String && imageData.isNotEmpty) {
+          try {
+            base64Decode(imageData);
+            imageUrl = 'data:image/jpeg;base64,$imageData';
+          } catch (e) {
+            developer.log(
+                "Invalid base64 image data for product ${productData['id']}: $e");
+            imageUrl = null;
+          }
+        }
+
+        final templateId = productData['product_tmpl_id'][0] as int;
+        final attributes = templateAttributes[templateId] ?? [];
+        final productId = productData['id'] as int;
+        final selectedVariants = productAttributeValueMap[productId];
+
+        String? categoryName;
+        final categId = productData['categ_id'];
+        if (categId != false && categId is List && categId.length == 2) {
+          categoryName = categId[1] as String;
+        } else {
+          categoryName = 'Uncategorized';
+        }
+
+        return Product(
+          id: productData['id'].toString(),
+          name: productData['name'] is String
+              ? productData['name']
+              : 'Unnamed Product',
+          price: (productData['list_price'] as num?)?.toDouble() ?? 0.0,
+          vanInventory: (productData['qty_available'] as num?)?.toInt() ?? 0,
+          imageUrl: imageUrl,
+          defaultCode: productData['default_code'] is String
+              ? productData['default_code']
+              : '',
+          sellerIds: productData['seller_ids'] is List
+              ? productData['seller_ids']
+              : [],
+          taxesIds:
+          productData['taxes_id'] is List ? productData['taxes_id'] : [],
+          category: categoryName,
+          propertyStockProduction:
+          productData['property_stock_production'] ?? false,
+          propertyStockInventory:
+          productData['property_stock_inventory'] ?? false,
+          attributes: attributes.isNotEmpty ? attributes : null,
+          variantCount: productData['product_variant_count'] as int? ?? 0,
+          selectedVariants: selectedVariants,
+          productTemplateAttributeValueIds: List<int>.from(
+              productData['product_template_attribute_value_ids'] ?? []),
+        );
+      }).toList();
+
+      if (!isLoadMore) {
+        _categoryProducts[category] = fetchedProducts;
+      } else {
+        _categoryProducts[category] = [
+          ...(_categoryProducts[category] ?? []),
+          ...fetchedProducts
+        ];
+      }
+
+      _categoryHasMoreData[category] = fetchedProducts.length == _pageSize;
+      _categoryCurrentPage[category] = (_categoryCurrentPage[category] ?? 0) + 1;
+
+      developer.log(
+          'SalesOrderProvider: Fetch completed for category=$category, products=${_categoryProducts[category]?.length ?? 0}, page=${_categoryCurrentPage[category]}, hasMoreData=${_categoryHasMoreData[category]}');
+    } catch (e, stackTrace) {
+      developer.log('SalesOrderProvider: Error in fetchProducts for category=$category: $e\n$stackTrace');
+    } finally {
+      _isLoading = false;
+      _categoryIsLoadingMore[category] = false;
+      notifyListeners();
+    }
+  }
+  Future<List<String>> fetchCategories() async {
+    try {
+      final client = await SessionManager.getActiveClient();
+      if (client == null) {
+        throw Exception('No active Odoo session found.');
+      }
+
+      final result = await client.callKw({
+        'model': 'product.category',
+        'method': 'search_read',
+        'args': [[]],
+        'kwargs': {
+          'fields': ['name'],
+        },
+      });
+
+      final categories = (result as List).map((category) => category['name'] as String).toList();
+      categories.sort();
+      developer.log('Fetched ${categories.length} categories: $categories');
+      return ['All Products', ...categories];
+    } catch (e) {
+      developer.log('Error fetching categories: $e');
+      return ['All Products', 'Uncategorized'];
+    }
+  }
+  void resetProductPagination({required String category}) {
+    _categoryCurrentPage[category] = 0;
+    _categoryHasMoreData[category] = true;
+    _categoryProducts[category]?.clear();
+    _searchQuery = '';
+    notifyListeners();
+  }
   Future<void> fetchTodaysOrders({
     bool isLoadMore = false,
     String searchQuery = '',
@@ -710,7 +1097,8 @@ class SalesOrderProvider with ChangeNotifier {
     String sortBy = 'date_desc',
   }) async {
     if (isLoadMore && (!_hasMoreData || _isLoadingMore)) return;
-    developer.log('SalesOrderProvider: Starting fetchTodaysOrders, isLoadMore=$isLoadMore');
+    developer.log(
+        'SalesOrderProvider: Starting fetchTodaysOrders, isLoadMore=$isLoadMore');
     if (!isLoadMore) {
       _isLoading = true;
       _todaysOrders.clear();
@@ -743,15 +1131,27 @@ class SalesOrderProvider with ChangeNotifier {
       final endOfDay = startOfDay.add(Duration(days: 1));
 
       List<dynamic> domain = [
-        ['date_order', '>=', startDate?.toIso8601String() ?? startOfDay.toIso8601String()],
-        ['date_order', '<', endDate?.toIso8601String() ?? endOfDay.toIso8601String()],
+        [
+          'date_order',
+          '>=',
+          startDate?.toIso8601String() ?? startOfDay.toIso8601String()
+        ],
+        [
+          'date_order',
+          '<',
+          endDate?.toIso8601String() ?? endOfDay.toIso8601String()
+        ],
         ['name', 'not like', 'TCK%'],
       ];
 
       if (selectedStatuses.isNotEmpty) {
         domain.add(['state', 'in', selectedStatuses]);
       } else {
-        domain.add(['state', 'in', ['sale', 'done']]);
+        domain.add([
+          'state',
+          'in',
+          ['sale', 'done']
+        ]);
       }
 
       if (searchQuery.isNotEmpty) {
@@ -823,13 +1223,15 @@ class SalesOrderProvider with ChangeNotifier {
           'SalesOrderProvider: Fetch completed, todaysOrders=${_todaysOrders.length}, page=$_currentPage, hasMoreData=$_hasMoreData');
     } catch (e, stackTrace) {
       _error = 'Failed to fetch today\'s orders: $e';
-      developer.log('SalesOrderProvider: Error in fetchTodaysOrders: $e\n$stackTrace');
+      developer.log(
+          'SalesOrderProvider: Error in fetchTodaysOrders: $e\n$stackTrace');
     } finally {
       _isLoading = false;
       _isLoadingMore = false;
       notifyListeners();
     }
   }
+
   void resetPagination() {
     _currentPage = 0;
     _hasMoreData = true;
@@ -849,7 +1251,6 @@ class SalesOrderProvider with ChangeNotifier {
       return sum + (order['amount_total'] as num?)!.toDouble() ?? 0.0;
     });
   }
-
 
   static final Map<String, List<String>> _cachedFields = {};
 
