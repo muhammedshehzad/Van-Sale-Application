@@ -875,6 +875,7 @@ class _DashboardPageState extends State<DashboardPage>
       _isRefreshing = true;
     });
     try {
+      _initFuture = _initializeService();
       final stats = await _odooService.getDashboardStats();
       final customers = await _odooService.getTodayCustomers();
       final orders = await _odooService.getRecentSaleOrders();
@@ -912,13 +913,12 @@ class _DashboardPageState extends State<DashboardPage>
   Future<void> _handleRefresh() async {
     await _refreshData();
     if (mounted) {
+      await Future.delayed(const Duration(seconds: 2));
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Dashboard refreshed')),
       );
     }
-    return Future.delayed(const Duration(seconds: 1));
   }
-
   void _showRevenueDetailsDialog() {
     showDialog(
       context: context,

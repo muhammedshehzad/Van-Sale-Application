@@ -642,7 +642,7 @@ class _CustomersListState extends State<CustomersList> {
             shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(_cardBorderRadius)),
             child: Padding(
-              padding: EdgeInsets.all(_standardPadding),
+              padding: EdgeInsets.symmetric(horizontal: _standardPadding,vertical: _standardPadding+25),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
