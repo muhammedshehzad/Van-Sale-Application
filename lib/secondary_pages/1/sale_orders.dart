@@ -547,18 +547,15 @@ class _SaleOrdersListState extends State<SaleOrdersList>
   }
 
   Widget _buildOrdersListShimmer() {
-    return Shimmer.fromColors(
-      baseColor: Colors.grey[300]!,
-      highlightColor: Colors.grey[100]!,
-      child: ListView.builder(
-        itemCount: 5,
-        padding: EdgeInsets.symmetric(vertical: _smallPadding),
-        itemBuilder: (context, index) {
-          return Card(
-            margin: EdgeInsets.symmetric(
-              horizontal: _smallPadding,
-              vertical: _smallPadding,
-            ),
+    return ListView.builder(
+      itemCount: 5,
+      padding: EdgeInsets.symmetric(vertical: _smallPadding),
+      itemBuilder: (context, index) {
+        return Shimmer.fromColors(
+          baseColor: Colors.grey[300]!,
+          highlightColor: Colors.grey[100]!,
+          child: Card(
+            margin: EdgeInsets.symmetric(vertical: _smallPadding),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(_cardBorderRadius),
             ),
@@ -567,104 +564,157 @@ class _SaleOrdersListState extends State<SaleOrdersList>
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  // Order ID and Status row
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       Container(
-                        width: 100,
+                        width: 120,
                         height: 16,
-                        color: Colors.white,
+                        color: Colors.white, // Placeholder for Order ID text
                       ),
                       Container(
-                        width: 80,
-                        height: 24,
+                        width: 85,
+                        height: 26,
                         decoration: BoxDecoration(
                           color: Colors.white,
                           borderRadius: BorderRadius.circular(12),
-                        ),
+                        ), // Placeholder for status badge
                       ),
                     ],
                   ),
                   SizedBox(height: _smallPadding),
+
+                  // Customer row with icon
                   Row(
                     children: [
                       Container(
                         width: 16,
                         height: 16,
-                        color: Colors.white,
+                        color: Colors.white, // Placeholder for store icon
                       ),
                       SizedBox(width: _tinyPadding),
-                      Container(
-                        width: 150,
-                        height: 14,
-                        color: Colors.white,
+                      Expanded(
+                        child: Container(
+                          height: 14,
+                          color: Colors.white, // Placeholder for customer name
+                        ),
                       ),
                     ],
                   ),
                   SizedBox(height: _tinyPadding),
+
+                  // Date row with icon
                   Row(
                     children: [
                       Container(
                         width: 16,
                         height: 16,
-                        color: Colors.white,
+                        color: Colors.white, // Placeholder for calendar icon
                       ),
                       SizedBox(width: _tinyPadding),
                       Container(
-                        width: 120,
+                        width: 140,
                         height: 14,
-                        color: Colors.white,
+                        color: Colors.white, // Placeholder for date text
                       ),
                     ],
                   ),
                   SizedBox(height: _smallPadding),
+
+                  // Status badges row (Delivery and Invoice)
                   Wrap(
                     spacing: _smallPadding,
                     runSpacing: _smallPadding,
+                    alignment: WrapAlignment.start,
                     children: [
+                      // Delivery badge placeholder
                       Container(
-                        width: 120,
-                        height: 24,
+                        padding: EdgeInsets.symmetric(
+                          horizontal: _smallPadding,
+                          vertical: _tinyPadding,
+                        ),
                         decoration: BoxDecoration(
                           color: Colors.white,
                           borderRadius: BorderRadius.circular(6),
+                          border: Border.all(color: Colors.grey[300]!),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              width: 14,
+                              height: 14,
+                              color: Colors.white, // Placeholder for icon
+                            ),
+                            SizedBox(width: _tinyPadding),
+                            Container(
+                              width: 60,
+                              height: 12,
+                              color: Colors.white, // Placeholder for text
+                            ),
+                          ],
                         ),
                       ),
+                      // Invoice badge placeholder
                       Container(
-                        width: 100,
-                        height: 24,
+                        padding: EdgeInsets.symmetric(
+                          horizontal: _smallPadding,
+                          vertical: _tinyPadding,
+                        ),
                         decoration: BoxDecoration(
                           color: Colors.white,
                           borderRadius: BorderRadius.circular(6),
+                          border: Border.all(color: Colors.grey[300]!),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              width: 14,
+                              height: 14,
+                              color: Colors.white, // Placeholder for icon
+                            ),
+                            SizedBox(width: _tinyPadding),
+                            Container(
+                              width: 60,
+                              height: 12,
+                              color: Colors.white, // Placeholder for text
+                            ),
+                          ],
                         ),
                       ),
                     ],
                   ),
                   SizedBox(height: _standardPadding - _tinyPadding),
+
+                  // Total amount and button row
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
                       Container(
-                        width: 80,
+                        width: 100,
                         height: 18,
-                        color: Colors.white,
+                        color: Colors.white, // Placeholder for total amount
                       ),
                       Container(
-                        width: 120,
+                        width: 110,
                         height: 36,
                         decoration: BoxDecoration(
                           color: Colors.white,
                           borderRadius: BorderRadius.circular(8),
-                        ),
+                          border: Border.all(color: Colors.grey[300]!),
+                        ), // Placeholder for button
                       ),
                     ],
                   ),
                 ],
               ),
             ),
-          );
-        },
-      ),
+          ),
+        );
+      },
     );
   }
 
@@ -753,12 +803,21 @@ class _SaleOrdersListState extends State<SaleOrdersList>
               ),
             ),
           ),
+          SizedBox(height: 8),
           Expanded(
             child: FutureBuilder<List<Map<String, dynamic>>>(
               future: _orderHistoryFuture,
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
-                  return _buildOrdersListShimmer();
+                  // Show shimmer in TabBarView structure to match the loaded state
+                  return TabBarView(
+                    controller: _tabController,
+                    children: [
+                      _buildOrdersListShimmer(), // Active tab shimmer
+                      _buildOrdersListShimmer(), // Completed tab shimmer
+                      _buildOrdersListShimmer(), // Canceled tab shimmer
+                    ],
+                  );
                 }
                 if (snapshot.hasError) {
                   return Center(

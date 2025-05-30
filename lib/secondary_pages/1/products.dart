@@ -307,17 +307,56 @@ class _ProductsPageState extends State<ProductsPage> {
     return Scaffold(
       resizeToAvoidBottomInset: false,
       backgroundColor: backgroundColor,
-      body: Stack(
+      body: Column(
         children: [
-          Container(
-            width: MediaQuery.of(context).size.width,
-            height: MediaQuery.of(context).size.height,
+          // Search TextField (outside shimmer)
+          Padding(
             padding: const EdgeInsets.only(left: 16, right: 16, top: 16),
-            child: RefreshIndicator(
-              onRefresh: _refreshProducts,
-              color: primaryColor,
-              child:
-                  _isLoading ? const ProductPageShimmer() : buildProductsList(),
+            child: TextField(
+              controller: searchController,
+              decoration: InputDecoration(
+                hintText: 'Search products...',
+                hintStyle: const TextStyle(color: Colors.grey),
+                prefixIcon: const Icon(Icons.search, color: Colors.grey),
+                suffixIcon: searchController.text.isNotEmpty
+                    ? IconButton(
+                        icon: const Icon(Icons.clear, color: Colors.grey),
+                        onPressed: () {
+                          searchController.clear();
+                          _filterProductTemplates('');
+                        },
+                      )
+                    : null,
+                filled: true,
+                fillColor: Colors.white,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: BorderSide.none,
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: BorderSide(color: Colors.grey[300]!),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: BorderSide(color: primaryColor),
+                ),
+              ),
+              onChanged: _filterProductTemplates,
+            ),
+          ),
+          // Product list with shimmer when loading
+          Expanded(
+            child: Container(
+              width: MediaQuery.of(context).size.width,
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: RefreshIndicator(
+                onRefresh: _refreshProducts,
+                color: primaryColor,
+                child: _isLoading
+                    ? const ProductPageShimmer()
+                    : buildProductsList(),
+              ),
             ),
           ),
         ],
@@ -705,38 +744,6 @@ class _ProductsPageState extends State<ProductsPage> {
       length: categories.length,
       child: Column(
         children: [
-          TextField(
-            controller: searchController,
-            decoration: InputDecoration(
-              hintText: 'Search products...',
-              hintStyle: const TextStyle(color: Colors.grey),
-              prefixIcon: const Icon(Icons.search, color: Colors.grey),
-              suffixIcon: searchController.text.isNotEmpty
-                  ? IconButton(
-                      icon: const Icon(Icons.clear, color: Colors.grey),
-                      onPressed: () {
-                        searchController.clear();
-                        _filterProductTemplates('');
-                      },
-                    )
-                  : null,
-              filled: true,
-              fillColor: Colors.white,
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(10),
-                borderSide: BorderSide.none,
-              ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(10),
-                borderSide: BorderSide(color: Colors.grey[300]!),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(10),
-                borderSide: BorderSide(color: primaryColor),
-              ),
-            ),
-            onChanged: _filterProductTemplates,
-          ),
           TabBar(
             isScrollable: true,
             labelColor: const Color(0xFF1F2C54),
@@ -800,14 +807,12 @@ class _ProductsPageState extends State<ProductsPage> {
                                 });
 
                                 // Start 15-second timeout
-                                _timeoutTimer
-                                    ?.cancel(); // Cancel any existing timer
+                                _timeoutTimer?.cancel();
                                 _timeoutTimer =
                                     Timer(const Duration(seconds: 15), () {
                                   if (mounted) {
                                     setState(() {
-                                      _clickedTileId =
-                                          null; // Reset clicked state on timeout
+                                      _clickedTileId = null;
                                     });
                                     developer.log(
                                         'buildProductsList: 15-second timeout reached for template ${template['id']}');
@@ -816,15 +821,13 @@ class _ProductsPageState extends State<ProductsPage> {
 
                                 try {
                                   if (template['variants'].length > 1) {
-                                    // Get cached client to avoid repeated initialization
                                     final odooClient =
                                         await SessionManager.getActiveClient();
 
                                     if (odooClient == null) {
                                       if (mounted) {
                                         setState(() {
-                                          _clickedTileId =
-                                              null; // Reset on error
+                                          _clickedTileId = null;
                                         });
                                         _timeoutTimer?.cancel();
                                         ScaffoldMessenger.of(context)
@@ -861,14 +864,12 @@ class _ProductsPageState extends State<ProductsPage> {
                                           selectedAttributes);
                                       if (mounted) {
                                         setState(() {
-                                          _clickedTileId =
-                                              null; // Reset after dialog
+                                          _clickedTileId = null;
                                         });
                                         _timeoutTimer?.cancel();
                                       }
                                     }
                                   } else {
-                                    // Single variant case
                                     final variant =
                                         template['variants'][0] as Product;
                                     Map<String, String>? selectedAttributes;
@@ -894,8 +895,7 @@ class _ProductsPageState extends State<ProductsPage> {
                                       );
                                       if (mounted) {
                                         setState(() {
-                                          _clickedTileId =
-                                              null; // Reset after navigation
+                                          _clickedTileId = null;
                                         });
                                         _timeoutTimer?.cancel();
                                         _refreshProducts();
@@ -905,7 +905,7 @@ class _ProductsPageState extends State<ProductsPage> {
                                 } catch (e) {
                                   if (mounted) {
                                     setState(() {
-                                      _clickedTileId = null; // Reset on error
+                                      _clickedTileId = null;
                                     });
                                     _timeoutTimer?.cancel();
                                     developer.log(
@@ -1220,67 +1220,41 @@ class ProductPageShimmer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final deviceSize = MediaQuery.of(context).size;
-    return Scaffold(
-      backgroundColor: Colors.grey[100],
-      body: Stack(
-        children: [
-          Container(
-            width: deviceSize.width,
-            height: deviceSize.height,
-            // padding: const EdgeInsets.only(left: 16, right: 16, top: 16),
-            child: Column(
-              children: [
-                // Shimmer for Search Bar
-                Shimmer.fromColors(
-                  baseColor: Colors.grey[300]!,
-                  highlightColor: Colors.grey[100]!,
-                  child: Container(
-                    height: 50,
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: Colors.grey[300]!),
-                    ),
+    return Column(
+      children: [
+        // Shimmer for Tab Bar
+        Shimmer.fromColors(
+          baseColor: Colors.grey[300]!,
+          highlightColor: Colors.grey[100]!,
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: List.generate(
+                4, // Number of shimmer tabs
+                (index) => Container(
+                  width: 140,
+                  height: 30,
+                  margin:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(8),
                   ),
                 ),
-                const SizedBox(height: 16),
-                // Shimmer for Tab Bar
-                Shimmer.fromColors(
-                  baseColor: Colors.grey[300]!,
-                  highlightColor: Colors.grey[100]!,
-                  child: SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Row(
-                      children: List.generate(
-                        4, // Number of shimmer tabs
-                        (index) => Container(
-                          width: 100,
-                          height: 30,
-                          margin: const EdgeInsets.symmetric(horizontal: 8),
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                // Shimmer for Product List
-                Expanded(
-                  child: ListView.builder(
-                    physics: const AlwaysScrollableScrollPhysics(),
-                    itemCount: 8, // Number of shimmer cards
-                    itemBuilder: (context, index) => _buildProductCardShimmer(),
-                  ),
-                ),
-              ],
+              ),
             ),
           ),
-        ],
-      ),
+        ),
+        const SizedBox(height: 8),
+        // Shimmer for Product List
+        Expanded(
+          child: ListView.builder(
+            physics: const AlwaysScrollableScrollPhysics(),
+            itemCount: 8, // Number of shimmer cards
+            itemBuilder: (context, index) => _buildProductCardShimmer(),
+          ),
+        ),
+      ],
     );
   }
 
