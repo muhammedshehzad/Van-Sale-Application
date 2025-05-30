@@ -76,16 +76,15 @@ class SaleOrder {
     }
 
     return SaleOrder(
-      id: json['id'],
-      name: json['name'],
-      date: DateTime.parse(json['date_order']),
-      total: json['amount_total'].toDouble(),
-      state: json['state'],
+      id: json['id'] ?? 0,
+      name: json['name'] ?? '',
+      date: DateTime.tryParse(json['date_order'] ?? '') ?? DateTime.now(),
+      total: (json['amount_total'] ?? 0.0).toDouble(),
+      state: json['state'] ?? 'draft',
       invoiceStatus: invoiceStatus,
       deliveryStatus: deliveryStatus,
       partnerId: json['partner_id'] ?? [0, 'Unknown'],
-    );
-  }
+    );  }
 
   String get stateFormatted {
     switch (state) {
@@ -784,36 +783,66 @@ class _DashboardPageState extends State<DashboardPage>
     try {
       final lastCacheDate = prefs.getString('last_cache_date');
       final today = DateTime.now().toIso8601String().split('T')[0];
+
+      // Clear cache if it's a new day
       if (lastCacheDate != today && !_hasClearedCache) {
-        await prefs.remove('cached_dashboard_stats');
-        await prefs.remove('cached_customers');
-        await prefs.remove('cached_sale_orders');
-        await prefs.remove('cached_low_stock_products');
+        await Future.wait([
+          prefs.remove('cached_dashboard_stats'),
+          prefs.remove('cached_customers'),
+          prefs.remove('cached_sale_orders'),
+          prefs.remove('cached_low_stock_products'),
+        ]);
         await prefs.setString('last_cache_date', today);
         _hasClearedCache = true;
         debugPrint('Cleared stale cache for date: $today');
       }
 
-      final statsJson = prefs.getString('cached_dashboard_stats');
-      if (statsJson != null) {
-        _cachedStats = DashboardStats.fromJson(jsonDecode(statsJson));
+      // Load dashboard stats with null safety
+      try {
+        final statsJson = prefs.getString('cached_dashboard_stats');
+        if (statsJson != null && statsJson.isNotEmpty) {
+          _cachedStats = DashboardStats.fromJson(jsonDecode(statsJson));
+        }
+      } catch (e) {
+        debugPrint('Error loading dashboard stats: $e');
       }
-      final customersJson = prefs.getString('cached_customers');
-      if (customersJson != null) {}
-      final ordersJson = prefs.getString('cached_sale_orders');
-      if (ordersJson != null) {
-        final ordersList = jsonDecode(ordersJson) as List;
-        _cachedOrders = ordersList
-            .map((json) => SaleOrder.fromJson(json as Map<String, dynamic>))
-            .toList();
+
+      // Load customers with null safety
+      try {
+        final customersJson = prefs.getString('cached_customers');
+        if (customersJson != null && customersJson.isNotEmpty) {
+          // Add customer parsing logic here if needed
+        }
+      } catch (e) {
+        debugPrint('Error loading customers: $e');
       }
-      final lowStockProductsJson = prefs.getString('cached_low_stock_products');
-      if (lowStockProductsJson != null) {
-        final productsList = jsonDecode(lowStockProductsJson) as List;
-        _lowStockProducts = productsList
-            .map((json) => Product.fromJson(json as Map<String, dynamic>))
-            .toList();
+
+      // Load orders with null safety
+      try {
+        final ordersJson = prefs.getString('cached_sale_orders');
+        if (ordersJson != null && ordersJson.isNotEmpty) {
+          final ordersList = jsonDecode(ordersJson) as List;
+          _cachedOrders = ordersList
+              .map((json) => SaleOrder.fromJson(json as Map<String, dynamic>))
+              .toList();
+        }
+      } catch (e) {
+        debugPrint('Error loading sale orders: $e');
       }
+
+      // Load low stock products with null safety
+      try {
+        final lowStockProductsJson = prefs.getString('cached_low_stock_products');
+        if (lowStockProductsJson != null && lowStockProductsJson.isNotEmpty) {
+          final productsList = jsonDecode(lowStockProductsJson) as List;
+          _lowStockProducts = productsList
+              .map((json) => Product.fromJson(json as Map<String, dynamic>))
+              .toList();
+        }
+      } catch (e) {
+        debugPrint('Error loading low stock products: $e');
+      }
+
       if (_isMounted) {
         setState(() {});
       }
@@ -821,7 +850,6 @@ class _DashboardPageState extends State<DashboardPage>
       debugPrint('Error loading cached data: $e');
     }
   }
-
   Future<void> _saveCachedData({
     required DashboardStats stats,
     required List<Customer> customers,
@@ -838,7 +866,7 @@ class _DashboardPageState extends State<DashboardPage>
           jsonEncode(orders.map((o) => o.toJson()).toList()));
       await prefs.setString('cached_low_stock_products',
           jsonEncode(lowStockProducts.map((p) => p.toJson()).toList()));
-      debugPrint('Saved cached stats: $statsJson');
+      // debugPrint('Saved cached stats: $statsJson');
     } catch (e) {
       debugPrint('Error saving cached data: $e');
     }

@@ -25,128 +25,146 @@ class ProductsPage extends StatefulWidget {
   _ProductsPageState createState() => _ProductsPageState();
 }
 
-class _ProductsPageState extends State<ProductsPage> {
+class _ProductsPageState extends State<ProductsPage>
+    with SingleTickerProviderStateMixin {
+  final SalesOrderProvider _salesProvider = SalesOrderProvider();
   List<Map<String, dynamic>> filteredProductTemplates = [];
   TextEditingController searchController = TextEditingController();
   Map<String, bool> selectedProducts = {};
   Map<String, int> quantities = {};
   Map<String, List<Map<String, dynamic>>> productAttributes = {};
-  bool _isLoading = false;
-  String? _clickedTileId; // Track the clicked tile
+  bool _isLoading = true;
+  bool _isLoadingMore = false;
+  bool _hasMoreData = true;
+  String? _clickedTileId;
   Timer? _timeoutTimer;
+  Timer? _debounce;
+  final ScrollController _scrollController = ScrollController();
+  Map<String, List<Map<String, dynamic>>> _categoryProductTemplates = {};
+  Map<String, ScrollController> _scrollControllers = {};
+  Map<String, bool> _categoryIsLoadingMore = {};
+  Map<String, bool> _categoryHasMoreData = {};
+  TabController? _tabController;
 
   @override
   void initState() {
     super.initState();
-    developer.log(
-        'initState: Initial availableProducts count: ${widget.availableProducts.length}');
-    if (widget.availableProducts.isEmpty) {
-      setState(() {
-        _isLoading = true;
-      });
-      _refreshProducts();
-    } else {
-      _initializeProductTemplates();
-      _restoreDraftState();
-    }
-  }
-
-  void _initializeProductTemplates() {
-    final templateMap = <String, Map<String, dynamic>>{};
-    for (var product in widget.availableProducts) {
-      developer.log('Product: ${product.name}, Category: ${product.category}');
-      final templateName = product.name.split(' [').first.trim();
-      final templateId = templateName.hashCode.toString();
-      if (!templateMap.containsKey(templateId)) {
-        templateMap[templateId] = {
-          'id': templateId,
-          'name': templateName,
-          'defaultCode': product.defaultCode,
-          'price': product.price,
-          'vanInventory': 0,
-          'imageUrl': product.imageUrl,
-          'category': product.category ?? 'Uncategorized', // Fallback
-          'attributes': product.attributes,
-          'variants': <Product>[],
-          'variantCount': product.variantCount,
-        };
-      }
-      templateMap[templateId]!['variants'].add(product);
-      templateMap[templateId]!['vanInventory'] += product.vanInventory;
-      if (product.attributes != null && product.attributes!.isNotEmpty) {
-        templateMap[templateId]!['attributes'] = product.attributes;
-      }
-    }
-    setState(() {
-      filteredProductTemplates = templateMap.values.toList();
-      developer.log(
-          'initState: Initialized ${filteredProductTemplates.length} product templates');
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _initializeCategoriesAndProducts();
     });
   }
 
-  void _restoreDraftState() {
-    final salesProvider =
-        Provider.of<SalesOrderProvider>(context, listen: false);
-    developer.log(
-        'restoreDraftState: Draft order ID: ${salesProvider.draftOrderId}');
-    if (salesProvider.draftOrderId != null) {
+  Future<List<String>> _initializeCategoriesAndProducts() async {
+    setState(() {
+      _isLoading = true;
+    });
+    List<String> categoriesWithProducts = [];
+    try {
+      final allCategories =
+          await Provider.of<SalesOrderProvider>(context, listen: false)
+              .fetchCategories();
+      Map<String, List<dynamic>> categoryProducts = {};
+      for (var category in allCategories) {
+        await Provider.of<SalesOrderProvider>(context, listen: false)
+            .fetchProducts(
+          category: category,
+          searchQuery: searchController.text,
+        );
+        final products = Provider.of<SalesOrderProvider>(context, listen: false)
+                .categoryProducts[category] ??
+            [];
+        if (products.isNotEmpty) {
+          categoriesWithProducts.add(category);
+        }
+      }
+      developer.log(
+          'Initializing ${categoriesWithProducts.length} categories with products: $categoriesWithProducts');
       setState(() {
-        selectedProducts.clear();
-        quantities.clear();
-        productAttributes.clear();
-        developer.log(
-            'restoreDraftState: Cleared selections, quantities, and attributes');
-        for (var product in salesProvider.draftSelectedProducts) {
-          selectedProducts[product.id] = true;
-          final attrQuantities =
-              salesProvider.draftProductAttributes[product.id];
-          if (attrQuantities != null && attrQuantities.isNotEmpty) {
-            quantities[product.id] = attrQuantities.fold<int>(
-                0, (sum, comb) => sum + (comb['quantity'] as int));
-            productAttributes[product.id] = List.from(attrQuantities);
-            developer.log(
-                'restoreDraftState: Added product ${product.id} with attributes, quantity: ${quantities[product.id]}');
-          } else {
-            quantities[product.id] =
-                salesProvider.draftQuantities[product.id] ?? 1;
-            developer.log(
-                'restoreDraftState: Added product ${product.id} without attributes, quantity: ${quantities[product.id]}');
+        _tabController?.dispose();
+        _tabController =
+            TabController(length: categoriesWithProducts.length, vsync: this);
+      });
+      for (var category in categoriesWithProducts) {
+        if (!_scrollControllers.containsKey(category)) {
+          _scrollControllers[category] = ScrollController()
+            ..addListener(() => _onScroll(category));
+          _categoryIsLoadingMore[category] = false;
+          _categoryHasMoreData[category] = true;
+        }
+        await _initializeProducts(category);
+      }
+      _tabController?.addListener(() {
+        if (!_tabController!.indexIsChanging) {
+          final category = categoriesWithProducts[_tabController!.index];
+          if (_categoryProductTemplates[category]?.isEmpty ?? true) {
+            _initializeProducts(category);
           }
         }
-        _filterProductTemplates('');
       });
-    } else {
-      for (var template in filteredProductTemplates) {
-        selectedProducts[template['id']] = false;
-        quantities[template['id']] = 1;
-      }
-      developer.log(
-          'restoreDraftState: No draft order, initialized ${filteredProductTemplates.length} templates');
+    } catch (e) {
+      developer.log('Error initializing categories and products: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to load categories and products: $e')),
+      );
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
+      developer.log('Initialization complete, _isLoading set to false');
+    }
+    return categoriesWithProducts;
+  }
+
+  void _onScroll(String category) {
+    final controller = _scrollControllers[category]!;
+    if (controller.position.pixels >=
+            controller.position.maxScrollExtent - 200 &&
+        !(_categoryIsLoadingMore[category] ?? false) &&
+        (_categoryHasMoreData[category] ?? true)) {
+      _loadMoreData(category);
     }
   }
 
-  void _filterProductTemplates(String query) {
+  Future<void> _loadMoreData(String category) async {
+    if (!(_categoryHasMoreData[category] ?? true) ||
+        (_categoryIsLoadingMore[category] ?? false)) return;
     setState(() {
-      if (query.isEmpty) {
-        filteredProductTemplates = _groupProducts(widget.availableProducts);
-        developer.log(
-            'filterProductTemplates: Query empty, showing all ${filteredProductTemplates.length} templates');
-      } else {
-        filteredProductTemplates = _groupProducts(widget.availableProducts)
-            .where((template) =>
-                template['name'].toLowerCase().contains(query.toLowerCase()) ||
-                (template['defaultCode']
-                        ?.toLowerCase()
-                        ?.contains(query.toLowerCase()) ??
-                    false))
-            .toList();
-        developer.log(
-            'filterProductTemplates: Query "$query", filtered to ${filteredProductTemplates.length} templates');
-      }
+      _categoryIsLoadingMore[category] = true;
+    });
+    await Provider.of<SalesOrderProvider>(context, listen: false).fetchProducts(
+      isLoadMore: true,
+      searchQuery: searchController.text,
+      category: category,
+    );
+    _updateProductTemplates(category);
+    setState(() {
+      _categoryIsLoadingMore[category] = false;
     });
   }
 
-  List<Map<String, dynamic>> _groupProducts(List<Product> products) {
+  Future<void> _initializeProducts(String category) async {
+    developer.log('Initializing products for category: $category');
+    try {
+      await Provider.of<SalesOrderProvider>(context, listen: false)
+          .fetchProducts(
+        category: category,
+        searchQuery: searchController.text,
+      );
+      _updateProductTemplates(category);
+      _restoreDraftState(category);
+      developer.log('Products initialized for category: $category');
+    } catch (e) {
+      developer.log('Error initializing products for category $category: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to load products for $category: $e')),
+      );
+    }
+  }
+
+  void _updateProductTemplates(String category) {
+    final products = Provider.of<SalesOrderProvider>(context, listen: false)
+            .categoryProducts[category] ??
+        [];
     final templateMap = <String, Map<String, dynamic>>{};
     for (var product in products) {
       final templateName = product.name.split(' [').first.trim();
@@ -159,7 +177,7 @@ class _ProductsPageState extends State<ProductsPage> {
           'price': product.price,
           'vanInventory': 0,
           'imageUrl': product.imageUrl,
-          'category': product.category,
+          'category': product.category ?? 'Uncategorized',
           'attributes': product.attributes,
           'variants': <Product>[],
           'variantCount': product.variantCount,
@@ -171,195 +189,437 @@ class _ProductsPageState extends State<ProductsPage> {
         templateMap[templateId]!['attributes'] = product.attributes;
       }
     }
-    return templateMap.values.toList();
+    setState(() {
+      _categoryProductTemplates[category] = templateMap.values.toList();
+      developer.log(
+          'updateProductTemplates: Initialized ${_categoryProductTemplates[category]?.length ?? 0} product templates for category $category');
+    });
   }
 
-  void clearSelections() {
-    setState(() {
-      for (var template in filteredProductTemplates) {
-        selectedProducts[template['id']] = false;
-        quantities[template['id']] = 1;
-      }
-      productAttributes.clear();
-      searchController.clear();
-      filteredProductTemplates = _groupProducts(widget.availableProducts);
-      developer.log(
-          'clearSelections: Cleared all selections, reset filteredProductTemplates to ${filteredProductTemplates.length}');
-    });
+  void _restoreDraftState(String category) {
     final salesProvider =
         Provider.of<SalesOrderProvider>(context, listen: false);
-    salesProvider.clearDraft();
-  }
-
-  Future<void> _refreshProducts() async {
-    if (!mounted) return;
-    setState(() {
-      _isLoading = true; // Start loading
-    });
-    try {
-      final saleorderProvider =
-          Provider.of<SalesOrderProvider>(context, listen: false);
-      developer.log('refreshProducts: Starting product refresh');
-      await saleorderProvider.loadProducts();
-      if (!mounted) return;
+    if (salesProvider.draftOrderId != null) {
       setState(() {
-        widget.availableProducts.clear();
-        widget.availableProducts.addAll(saleorderProvider.products);
-        filteredProductTemplates = _groupProducts(widget.availableProducts);
-        searchController.clear();
         selectedProducts.clear();
         quantities.clear();
         productAttributes.clear();
-        for (var template in filteredProductTemplates) {
-          selectedProducts[template['id']] = false;
-          quantities[template['id']] = 1;
+        for (var product in salesProvider.draftSelectedProducts) {
+          selectedProducts[product.id] = true;
+          final attrQuantities =
+              salesProvider.draftProductAttributes[product.id];
+          if (attrQuantities != null && attrQuantities.isNotEmpty) {
+            quantities[product.id] = attrQuantities.fold<int>(
+                0, (sum, comb) => sum + (comb['quantity'] as int));
+            productAttributes[product.id] = List.from(attrQuantities);
+          } else {
+            quantities[product.id] =
+                salesProvider.draftQuantities[product.id] ?? 1;
+          }
         }
-        developer.log(
-            'refreshProducts: Refreshed, availableProducts: ${widget.availableProducts.length}, filteredProductTemplates: ${filteredProductTemplates.length}');
-        _restoreDraftState();
-        _isLoading = false; // Stop loading
       });
-      if (!mounted) return;
+    } else {
+      for (var template in _categoryProductTemplates[category] ?? []) {
+        selectedProducts[template['id']] = false;
+        quantities[template['id']] = 1;
+      }
+    }
+  }
+
+  Future<void> _refreshProducts() async {
+    setState(() {
+      _isLoading = true;
+    });
+    try {
+      final allCategories =
+          await Provider.of<SalesOrderProvider>(context, listen: false)
+              .fetchCategories();
+
+      // Filter categories with products
+      List<String> categoriesWithProducts = [];
+      for (var category in allCategories) {
+        Provider.of<SalesOrderProvider>(context, listen: false)
+            .resetProductPagination(category: category);
+        await Provider.of<SalesOrderProvider>(context, listen: false)
+            .fetchProducts(
+          category: category,
+          searchQuery: searchController.text,
+        );
+        final products = Provider.of<SalesOrderProvider>(context, listen: false)
+                .categoryProducts[category] ??
+            [];
+        if (products.isNotEmpty) {
+          categoriesWithProducts.add(category);
+          _updateProductTemplates(category);
+          _restoreDraftState(category);
+        }
+      }
+
+      // Update tab controller with new categories
+      setState(() {
+        _tabController?.dispose();
+        _tabController =
+            TabController(length: categoriesWithProducts.length, vsync: this);
+      });
+
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Products refreshed successfully'),
           backgroundColor: Colors.green,
-          behavior: SnackBarBehavior.floating,
         ),
       );
     } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _isLoading = false; // Stop loading on error
-      });
-      developer.log('refreshProducts: Error refreshing products: $e');
+      developer.log('Error refreshing products: $e');
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to refresh products: $e'),
-          backgroundColor: Colors.red,
-          behavior: SnackBarBehavior.floating,
-        ),
+        SnackBar(content: Text('Failed to refresh products: $e')),
       );
-    }
-  }
-
-  void _updateProductList(SalesOrderProvider salesProvider,
-      OrderPickingProvider orderPickingProvider) {
-    if (orderPickingProvider.needsProductRefresh) {
+    } finally {
       setState(() {
-        _isLoading = true; // Start loading
-        widget.availableProducts.clear();
-        widget.availableProducts.addAll(salesProvider.products);
-        filteredProductTemplates = _groupProducts(widget.availableProducts);
-        searchController.clear();
-        selectedProducts.clear();
-        quantities.clear();
-        productAttributes.clear();
-        for (var template in filteredProductTemplates) {
-          selectedProducts[template['id']] = false;
-          quantities[template['id']] = 1;
-        }
-        developer.log(
-            'updateProductList: Updated availableProducts: ${widget.availableProducts.length}, filteredProductTemplates: ${filteredProductTemplates.length}');
-        _restoreDraftState();
-        _isLoading = false; // Stop loading
+        _isLoading = false;
       });
-      orderPickingProvider.resetProductRefreshFlag();
-    } else {
-      developer.log('updateProductList: No refresh needed');
     }
   }
 
   @override
-  void didUpdateWidget(ProductsPage oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    final salesProvider =
-        Provider.of<SalesOrderProvider>(context, listen: false);
-    final orderPickingProvider =
-        Provider.of<OrderPickingProvider>(context, listen: false);
-
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      developer.log(
-          'didUpdateWidget: Checking for product refresh, needsRefresh: ${orderPickingProvider.needsProductRefresh}');
-      if (orderPickingProvider.needsProductRefresh) {
-        _updateProductList(salesProvider, orderPickingProvider);
-      }
-    });
+  void dispose() {
+    searchController.dispose();
+    _timeoutTimer?.cancel();
+    _debounce?.cancel();
+    _tabController?.dispose();
+    _scrollControllers.forEach((_, controller) => controller.dispose());
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final salesProvider =
-        Provider.of<SalesOrderProvider>(context, listen: false);
-    final orderPickingProvider =
-        Provider.of<OrderPickingProvider>(context, listen: false);
+    final salesProvider = Provider.of<SalesOrderProvider>(context);
+    final orderPickingProvider = Provider.of<OrderPickingProvider>(context);
 
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      developer.log(
-          'build: Checking for product refresh, needsRefresh: ${orderPickingProvider.needsProductRefresh}');
-      if (orderPickingProvider.needsProductRefresh) {
-        _updateProductList(salesProvider, orderPickingProvider);
-      }
-    });
+    if (orderPickingProvider.needsProductRefresh) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _refreshProducts();
+        orderPickingProvider.resetProductRefreshFlag();
+      });
+    }
 
-    developer.log(
-        'build: Rendering with availableProducts: ${widget.availableProducts.length}, filteredProductTemplates: ${filteredProductTemplates.length}');
     return Scaffold(
       resizeToAvoidBottomInset: false,
-      backgroundColor: backgroundColor,
+      backgroundColor: Colors.grey[100],
       body: Column(
         children: [
-          // Search TextField (outside shimmer)
-          Padding(
-            padding: const EdgeInsets.only(left: 16, right: 16, top: 16),
-            child: TextField(
-              controller: searchController,
-              decoration: InputDecoration(
-                hintText: 'Search products...',
-                hintStyle: const TextStyle(color: Colors.grey),
-                prefixIcon: const Icon(Icons.search, color: Colors.grey),
-                suffixIcon: searchController.text.isNotEmpty
-                    ? IconButton(
-                        icon: const Icon(Icons.clear, color: Colors.grey),
-                        onPressed: () {
-                          searchController.clear();
-                          _filterProductTemplates('');
-                        },
-                      )
-                    : null,
-                filled: true,
-                fillColor: Colors.white,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: BorderSide.none,
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: BorderSide(color: Colors.grey[300]!),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: BorderSide(color: primaryColor),
-                ),
-              ),
-              onChanged: _filterProductTemplates,
-            ),
-          ),
-          // Product list with shimmer when loading
+          _buildSearchBar(),
           Expanded(
-            child: Container(
-              width: MediaQuery.of(context).size.width,
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: RefreshIndicator(
-                onRefresh: _refreshProducts,
-                color: primaryColor,
-                child: _isLoading
-                    ? const ProductPageShimmer()
-                    : buildProductsList(),
-              ),
+            child: RefreshIndicator(
+              onRefresh: _refreshProducts,
+              color: primaryColor,
+              child:
+                  _isLoading ? const ProductPageShimmer() : buildProductsList(),
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildSearchBar() {
+    return Padding(
+      padding: const EdgeInsets.only(left: 16, right: 16, top: 16, bottom: 0),
+      child: TextField(
+        controller: searchController,
+        decoration: InputDecoration(
+          hintText: 'Search by Product Name or SKU',
+          hintStyle: const TextStyle(color: Colors.grey),
+          prefixIcon: const Icon(Icons.search, color: Colors.grey),
+          suffixIcon: searchController.text.isNotEmpty
+              ? IconButton(
+                  icon: const Icon(Icons.clear, color: Colors.grey),
+                  onPressed: () {
+                    searchController.clear();
+                    Provider.of<SalesOrderProvider>(context, listen: false)
+                        .resetProductPagination(
+                            category: _tabController?.index != null
+                                ? _tabController!.index.toString()
+                                : 'All Products');
+                    _initializeProducts(
+                      _tabController?.index != null
+                          ? _tabController!.index.toString()
+                          : 'All Products',
+                    );
+                  },
+                )
+              : null,
+          filled: true,
+          fillColor: Colors.white,
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(10),
+            borderSide: BorderSide.none,
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(10),
+            borderSide: BorderSide(color: Colors.grey[300]!),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(10),
+            borderSide: const BorderSide(color: primaryColor),
+          ),
+        ),
+        onChanged: (value) {
+          if (_debounce?.isActive ?? false) _debounce!.cancel();
+          _debounce = Timer(const Duration(milliseconds: 500), () {
+            Provider.of<SalesOrderProvider>(context, listen: false)
+                .resetProductPagination(
+                    category: _tabController?.index != null
+                        ? _tabController!.index.toString()
+                        : 'All Products');
+            _initializeProducts(
+              _tabController?.index != null
+                  ? _tabController!.index.toString()
+                  : 'All Products',
+            );
+          });
+        },
+      ),
+    );
+  }
+
+  Widget buildProductsList() {
+    final categories = _categoryProductTemplates.keys.toList()..sort();
+
+    if (categories.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.inventory_2_outlined, size: 48, color: Colors.grey[400]),
+            const SizedBox(height: 8),
+            Text(
+              searchController.text.isNotEmpty
+                  ? 'No products found for "${searchController.text}"'
+                  : 'No products available',
+              style: TextStyle(
+                color: Colors.grey[600],
+                fontStyle: FontStyle.italic,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            TextButton.icon(
+              onPressed: _refreshProducts,
+              icon: Icon(Icons.refresh, color: primaryColor),
+              label: Text('Refresh', style: TextStyle(color: primaryColor)),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Column(
+      children: [
+        TabBar(
+          isScrollable: true,
+          labelColor: primaryColor,
+          controller: _tabController,
+          unselectedLabelColor: Colors.grey,
+          labelStyle: const TextStyle(fontWeight: FontWeight.bold),
+          unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.w500),
+          tabs: categories
+              .map((category) => Tab(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                      child: Text(category),
+                    ),
+                  ))
+              .toList(),
+        ),
+        Expanded(
+          child: Padding(
+            padding: const EdgeInsets.only(left: 16.0, right: 16, top: 12),
+            child: TabBarView(
+              controller: _tabController,
+              children: categories.map((category) {
+                final filteredByCategory =
+                    _categoryProductTemplates[category] ?? [];
+
+                return filteredByCategory.isEmpty
+                    ? Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.inventory_2_outlined,
+                                size: 48, color: Colors.grey[400]),
+                            const SizedBox(height: 8),
+                            Text(
+                              searchController.text.isNotEmpty
+                                  ? 'No products found for "${searchController.text}"'
+                                  : 'No products in this category',
+                              style: TextStyle(
+                                  color: Colors.grey[600],
+                                  fontStyle: FontStyle.italic),
+                              textAlign: TextAlign.center,
+                            ),
+                            TextButton.icon(
+                              onPressed: _refreshProducts,
+                              icon: Icon(Icons.refresh, color: primaryColor),
+                              label: Text(
+                                'Refresh',
+                                style: TextStyle(color: primaryColor),
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
+                    : ListView.builder(
+                        controller: _scrollControllers[category],
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        itemCount: filteredByCategory.length + 1,
+                        itemBuilder: (context, index) {
+                          if (index < filteredByCategory.length) {
+                            final template = filteredByCategory[index];
+                            return GestureDetector(
+                              onTap: () async {
+                                setState(() {
+                                  _clickedTileId = template['id'];
+                                });
+                                _timeoutTimer?.cancel();
+                                _timeoutTimer =
+                                    Timer(const Duration(seconds: 15), () {
+                                  if (mounted) {
+                                    setState(() {
+                                      _clickedTileId = null;
+                                    });
+                                  }
+                                });
+
+                                try {
+                                  if (template['variants'].length > 1) {
+                                    final odooClient =
+                                        await SessionManager.getActiveClient();
+                                    if (odooClient == null) {
+                                      setState(() {
+                                        _clickedTileId = null;
+                                      });
+                                      _timeoutTimer?.cancel();
+                                      ScaffoldMessenger.of(context)
+                                          .showSnackBar(
+                                        const SnackBar(
+                                          content: Text(
+                                              'Unable to load variants: Session not initialized'),
+                                          backgroundColor: Colors.red,
+                                        ),
+                                      );
+                                      return;
+                                    }
+                                    final firstVariant =
+                                        template['variants'][0] as Product;
+                                    Map<String, String>? selectedAttributes;
+                                    if (firstVariant
+                                            .selectedVariants?.isNotEmpty ==
+                                        true) {
+                                      selectedAttributes =
+                                          firstVariant.selectedVariants;
+                                    }
+                                    if (context.mounted) {
+                                      await _showVariantsDialog(
+                                          context,
+                                          template,
+                                          odooClient,
+                                          selectedAttributes);
+                                      if (mounted) {
+                                        setState(() {
+                                          _clickedTileId = null;
+                                        });
+                                        _timeoutTimer?.cancel();
+                                      }
+                                    }
+                                  } else {
+                                    final variant =
+                                        template['variants'][0] as Product;
+                                    Map<String, String>? selectedAttributes;
+                                    if (variant.selectedVariants?.isNotEmpty ==
+                                        true) {
+                                      selectedAttributes =
+                                          variant.selectedVariants;
+                                    }
+                                    if (context.mounted) {
+                                      await Navigator.push(
+                                        context,
+                                        SlidingPageTransitionRL(
+                                          page: ProductDetailsPage(
+                                            productId: variant.id,
+                                            selectedAttributes:
+                                                selectedAttributes,
+                                          ),
+                                        ),
+                                      );
+                                      if (mounted) {
+                                        setState(() {
+                                          _clickedTileId = null;
+                                        });
+                                        _timeoutTimer?.cancel();
+                                        _refreshProducts();
+                                      }
+                                    }
+                                  }
+                                } catch (e) {
+                                  if (mounted) {
+                                    setState(() {
+                                      _clickedTileId = null;
+                                    });
+                                    _timeoutTimer?.cancel();
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text(
+                                            'Error loading product: ${e.toString()}'),
+                                        backgroundColor: Colors.red,
+                                      ),
+                                    );
+                                  }
+                                }
+                              },
+                              child: _buildProductCard(template),
+                            );
+                          } else if (index == filteredByCategory.length) {
+                            if (_categoryIsLoadingMore[category] ?? false) {
+                              return _buildLoadingMoreIndicator();
+                            } else if (!(_categoryHasMoreData[category] ??
+                                true)) {
+                              return _buildAllProductsFetched();
+                            } else {
+                              return const SizedBox.shrink();
+                            }
+                          }
+                          return const SizedBox.shrink();
+                        },
+                      );
+              }).toList(),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildLoadingMoreIndicator() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      child: Center(
+        child: CircularProgressIndicator(
+          valueColor: AlwaysStoppedAnimation<Color>(primaryColor),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAllProductsFetched() {
+    return Padding(
+      padding: const EdgeInsets.all(8),
+      child: Center(
+        child: Text(
+          'All products are fetched',
+          style: TextStyle(
+              color: Colors.grey[600],
+              fontSize: 14,
+              fontStyle: FontStyle.italic),
+        ),
       ),
     );
   }
@@ -725,215 +985,6 @@ class _ProductsPageState extends State<ProductsPage> {
     return [name, ''];
   }
 
-  Widget buildProductsList() {
-    List<String> categories = filteredProductTemplates
-        .where((p) => p['category'] != null)
-        .map((p) => p['category'] as String)
-        .toSet()
-        .toList()
-      ..sort();
-
-    if (categories.isEmpty) {
-      categories = ['All Products'];
-    }
-
-    developer.log(
-        'buildProductsList: Categories: ${categories.length}, filteredProductTemplates: ${filteredProductTemplates.length}');
-
-    return DefaultTabController(
-      length: categories.length,
-      child: Column(
-        children: [
-          TabBar(
-            isScrollable: true,
-            labelColor: const Color(0xFF1F2C54),
-            unselectedLabelColor: Colors.grey,
-            labelStyle: const TextStyle(fontWeight: FontWeight.bold),
-            unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.w500),
-            tabs: categories
-                .map((category) => Tab(
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 8.0),
-                        child: Text(category),
-                      ),
-                    ))
-                .toList(),
-          ),
-          const SizedBox(height: 10),
-          Expanded(
-            child: TabBarView(
-              children: categories.map((category) {
-                final filteredByCategory = category == 'All Products'
-                    ? filteredProductTemplates
-                    : filteredProductTemplates
-                        .where((p) => p['category'] == category)
-                        .toList();
-                developer.log(
-                    'buildProductsList: Category "$category" has ${filteredByCategory.length} templates');
-
-                return filteredByCategory.isEmpty
-                    ? Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(Icons.inventory_2_outlined,
-                                size: 48, color: Colors.grey[400]),
-                            const SizedBox(height: 8),
-                            Text(
-                              searchController.text.isNotEmpty
-                                  ? 'No products found for "${searchController.text}"'
-                                  : 'No products in this category',
-                              style: TextStyle(
-                                  color: Colors.grey[600],
-                                  fontStyle: FontStyle.italic),
-                              textAlign: TextAlign.center,
-                            ),
-                          ],
-                        ),
-                      )
-                    : RefreshIndicator(
-                        onRefresh: _refreshProducts,
-                        color: const Color(0xFF1F2C54),
-                        child: ListView.builder(
-                          physics: const AlwaysScrollableScrollPhysics(),
-                          itemCount: filteredByCategory.length,
-                          itemBuilder: (context, index) {
-                            final template = filteredByCategory[index];
-                            return GestureDetector(
-                              onTap: () async {
-                                // Set the clicked tile
-                                setState(() {
-                                  _clickedTileId = template['id'];
-                                });
-
-                                // Start 15-second timeout
-                                _timeoutTimer?.cancel();
-                                _timeoutTimer =
-                                    Timer(const Duration(seconds: 15), () {
-                                  if (mounted) {
-                                    setState(() {
-                                      _clickedTileId = null;
-                                    });
-                                    developer.log(
-                                        'buildProductsList: 15-second timeout reached for template ${template['id']}');
-                                  }
-                                });
-
-                                try {
-                                  if (template['variants'].length > 1) {
-                                    final odooClient =
-                                        await SessionManager.getActiveClient();
-
-                                    if (odooClient == null) {
-                                      if (mounted) {
-                                        setState(() {
-                                          _clickedTileId = null;
-                                        });
-                                        _timeoutTimer?.cancel();
-                                        ScaffoldMessenger.of(context)
-                                            .showSnackBar(
-                                          const SnackBar(
-                                            content: Text(
-                                                'Unable to load variants: Session not initialized'),
-                                            backgroundColor: Colors.red,
-                                            behavior: SnackBarBehavior.floating,
-                                          ),
-                                        );
-                                      }
-                                      developer.log(
-                                          'buildProductsList: Error: Failed to initialize OdooClient');
-                                      return;
-                                    }
-
-                                    final firstVariant =
-                                        template['variants'][0] as Product;
-                                    Map<String, String>? selectedAttributes;
-
-                                    if (firstVariant
-                                            .selectedVariants?.isNotEmpty ==
-                                        true) {
-                                      selectedAttributes =
-                                          firstVariant.selectedVariants;
-                                    }
-
-                                    if (context.mounted) {
-                                      await _showVariantsDialog(
-                                          context,
-                                          template,
-                                          odooClient,
-                                          selectedAttributes);
-                                      if (mounted) {
-                                        setState(() {
-                                          _clickedTileId = null;
-                                        });
-                                        _timeoutTimer?.cancel();
-                                      }
-                                    }
-                                  } else {
-                                    final variant =
-                                        template['variants'][0] as Product;
-                                    Map<String, String>? selectedAttributes;
-
-                                    if (variant.selectedVariants?.isNotEmpty ==
-                                        true) {
-                                      selectedAttributes =
-                                          variant.selectedVariants;
-                                    }
-
-                                    if (context.mounted) {
-                                      developer.log(
-                                          'buildProductsList: Navigating to ProductDetailsPage for productId ${variant.id}');
-                                      await Navigator.push(
-                                        context,
-                                        SlidingPageTransitionRL(
-                                          page: ProductDetailsPage(
-                                            productId: variant.id,
-                                            selectedAttributes:
-                                                selectedAttributes,
-                                          ),
-                                        ),
-                                      );
-                                      if (mounted) {
-                                        setState(() {
-                                          _clickedTileId = null;
-                                        });
-                                        _timeoutTimer?.cancel();
-                                        _refreshProducts();
-                                      }
-                                    }
-                                  }
-                                } catch (e) {
-                                  if (mounted) {
-                                    setState(() {
-                                      _clickedTileId = null;
-                                    });
-                                    _timeoutTimer?.cancel();
-                                    developer.log(
-                                        'buildProductsList: Error during navigation: $e');
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(
-                                        content: Text(
-                                            'Error loading product: ${e.toString()}'),
-                                        backgroundColor: Colors.red,
-                                        behavior: SnackBarBehavior.floating,
-                                      ),
-                                    );
-                                  }
-                                }
-                              },
-                              child: _buildProductCard(template),
-                            );
-                          },
-                        ),
-                      );
-              }).toList(),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildProductCard(Map<String, dynamic> template) {
     final imageUrl = template['imageUrl'] as String?;
     Uint8List? imageBytes;
@@ -1148,13 +1199,6 @@ class _ProductsPageState extends State<ProductsPage> {
           ),
         ));
   }
-
-  @override
-  void dispose() {
-    searchController.dispose();
-    _timeoutTimer?.cancel(); // Cancel timer on dispose
-    super.dispose();
-  }
 }
 
 Future<List<Map<String, String>>> _fetchVariantAttributes(
@@ -1259,113 +1303,118 @@ class ProductPageShimmer extends StatelessWidget {
   }
 
   Widget _buildProductCardShimmer() {
-    return Card(
-      color: Colors.white,
-      elevation: 1,
-      margin: const EdgeInsets.only(bottom: 12),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
+    return Padding(
+      padding: const EdgeInsets.symmetric(
+        horizontal: 16.0,
       ),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Shimmer for Product Image
-            Shimmer.fromColors(
-              baseColor: Colors.grey[300]!,
-              highlightColor: Colors.grey[100]!,
-              child: Container(
-                width: 60,
-                height: 60,
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(8),
+      child: Card(
+        color: Colors.white,
+        elevation: 1,
+        margin: const EdgeInsets.only(bottom: 12),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Shimmer for Product Image
+              Shimmer.fromColors(
+                baseColor: Colors.grey[300]!,
+                highlightColor: Colors.grey[100]!,
+                child: Container(
+                  width: 60,
+                  height: 70,
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(width: 12),
-            // Shimmer for Product Details
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Shimmer for Product Name
-                  Shimmer.fromColors(
-                    baseColor: Colors.grey[300]!,
-                    highlightColor: Colors.grey[100]!,
-                    child: Container(
-                      width: double.infinity,
-                      height: 16,
-                      color: Colors.white,
+              const SizedBox(width: 12),
+              // Shimmer for Product Details
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Shimmer for Product Name
+                    Shimmer.fromColors(
+                      baseColor: Colors.grey[300]!,
+                      highlightColor: Colors.grey[100]!,
+                      child: Container(
+                        width: double.infinity,
+                        height: 16,
+                        color: Colors.white,
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 8),
-                  // Shimmer for SKU and Price
-                  Row(
-                    children: [
-                      Shimmer.fromColors(
-                        baseColor: Colors.grey[300]!,
-                        highlightColor: Colors.grey[100]!,
-                        child: Container(
-                          width: 80,
-                          height: 14,
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(4),
+                    const SizedBox(height: 8),
+                    // Shimmer for SKU and Price
+                    Row(
+                      children: [
+                        Shimmer.fromColors(
+                          baseColor: Colors.grey[300]!,
+                          highlightColor: Colors.grey[100]!,
+                          child: Container(
+                            width: 80,
+                            height: 14,
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(4),
+                            ),
                           ),
                         ),
-                      ),
-                      const SizedBox(width: 8),
-                      Shimmer.fromColors(
-                        baseColor: Colors.grey[300]!,
-                        highlightColor: Colors.grey[100]!,
-                        child: Container(
-                          width: 60,
-                          height: 14,
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(4),
+                        const SizedBox(width: 8),
+                        Shimmer.fromColors(
+                          baseColor: Colors.grey[300]!,
+                          highlightColor: Colors.grey[100]!,
+                          child: Container(
+                            width: 60,
+                            height: 14,
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(4),
+                            ),
                           ),
                         ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  // Shimmer for Stock and Variants
-                  Row(
-                    children: [
-                      Shimmer.fromColors(
-                        baseColor: Colors.grey[300]!,
-                        highlightColor: Colors.grey[100]!,
-                        child: Container(
-                          width: 80,
-                          height: 14,
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(4),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    // Shimmer for Stock and Variants
+                    Row(
+                      children: [
+                        Shimmer.fromColors(
+                          baseColor: Colors.grey[300]!,
+                          highlightColor: Colors.grey[100]!,
+                          child: Container(
+                            width: 80,
+                            height: 14,
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(4),
+                            ),
                           ),
                         ),
-                      ),
-                      const SizedBox(width: 8),
-                      Shimmer.fromColors(
-                        baseColor: Colors.grey[300]!,
-                        highlightColor: Colors.grey[100]!,
-                        child: Container(
-                          width: 60,
-                          height: 14,
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(4),
+                        const SizedBox(width: 8),
+                        Shimmer.fromColors(
+                          baseColor: Colors.grey[300]!,
+                          highlightColor: Colors.grey[100]!,
+                          child: Container(
+                            width: 60,
+                            height: 14,
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(4),
+                            ),
                           ),
                         ),
-                      ),
-                    ],
-                  ),
-                ],
+                      ],
+                    ),
+                  ],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
