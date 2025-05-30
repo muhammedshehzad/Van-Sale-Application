@@ -1416,46 +1416,49 @@ class _CustomerDetailsPageState extends State<CustomerDetailsPage>
                                           maxLines: 1,
                                         ),
                                         const SizedBox(height: 6),
-                                        Row(
-                                          children: [
-                                            Icon(Icons.calendar_today,
-                                                size: 16,
-                                                color: Colors.grey[600]),
-                                            const SizedBox(width: 4),
-                                            Expanded(
-                                              child: Text(
-                                                'Customer since $_customerSince',
-                                                style: TextStyle(
-                                                    color: Colors.grey[600],
-                                                    fontSize: 14),
-                                                overflow: TextOverflow.ellipsis,
+                                        if (_customerSince != 'Unknown')
+                                          Row(
+                                            children: [
+                                              Icon(Icons.calendar_today,
+                                                  size: 16,
+                                                  color: Colors.grey[600]),
+                                              const SizedBox(width: 4),
+                                              Expanded(
+                                                child: Text(
+                                                  'Customer since $_customerSince',
+                                                  style: TextStyle(
+                                                      color: Colors.grey[600],
+                                                      fontSize: 14),
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                ),
                                               ),
-                                            ),
-                                          ],
-                                        ),
+                                            ],
+                                          ),
                                         const SizedBox(height: 4),
-                                        Row(
-                                          children: [
-                                            Icon(Icons.location_on,
-                                                size: 16,
-                                                color: Colors.grey[600]),
-                                            const SizedBox(width: 4),
-                                            Expanded(
-                                              child: Text(
-                                                _customerDetails['city'] !=
-                                                        false
-                                                    ? _safeString(
-                                                        _customerDetails[
-                                                            'city'])
-                                                    : 'Unknown Location',
-                                                style: TextStyle(
-                                                    color: Colors.grey[600],
-                                                    fontSize: 14),
-                                                overflow: TextOverflow.ellipsis,
+                                        if (_customerDetails['city'] != false &&
+                                            _safeString(
+                                                    _customerDetails['city'])
+                                                .isNotEmpty)
+                                          Row(
+                                            children: [
+                                              Icon(Icons.location_on,
+                                                  size: 16,
+                                                  color: Colors.grey[600]),
+                                              const SizedBox(width: 4),
+                                              Expanded(
+                                                child: Text(
+                                                  _safeString(
+                                                      _customerDetails['city']),
+                                                  style: TextStyle(
+                                                      color: Colors.grey[600],
+                                                      fontSize: 14),
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                ),
                                               ),
-                                            ),
-                                          ],
-                                        ),
+                                            ],
+                                          ),
                                         if (detailedCustomer != null &&
                                             detailedCustomer!.parentName !=
                                                 null &&

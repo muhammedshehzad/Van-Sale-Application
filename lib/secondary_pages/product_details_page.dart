@@ -772,10 +772,10 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
             children: [
               Row(
                 children: [
-                  Icon(Icons.delete_rounded, color: primaryColor, size: 32),
+                  Icon(Icons.archive_outlined, color: primaryColor, size: 32),
                   const SizedBox(width: 16),
                   const Text(
-                    'Deleting Product',
+                    'Archiving Product',
                     style: TextStyle(
                       fontSize: 18,
                       fontWeight: FontWeight.w600,
@@ -791,7 +791,7 @@ class _ProductDetailsPageState extends State<ProductDetailsPage>
               ),
               const SizedBox(height: 16),
               Text(
-                'Please wait while we delete the product.',
+                'Please wait while we archive the product.',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   fontSize: 14,
