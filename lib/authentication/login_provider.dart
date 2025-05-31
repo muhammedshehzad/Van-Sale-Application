@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:odoo_rpc/odoo_rpc.dart';
 import 'package:provider/provider.dart';
@@ -121,6 +123,7 @@ class LoginProvider with ChangeNotifier {
       }
     }
   }
+
   Future<void> addShared(String selectedDatabase) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('isLoggedIn', true);
@@ -170,37 +173,127 @@ class LoginProvider with ChangeNotifier {
 
     try {
       String baseUrl = urlController.text.trim();
-      if (!baseUrl.startsWith('http://') && !baseUrl.startsWith('https://')) {
-        baseUrl = 'http://$baseUrl';
+      if (baseUrl.isEmpty) {
+        errorMessage = 'Please enter a server URL.';
+        isLoadingDatabases = false;
+        notifyListeners();
+        return;
       }
+      if (!baseUrl.startsWith('http://') && !baseUrl.startsWith('https://')) {
+        baseUrl = 'https://$baseUrl'; // Default to HTTPS for security
+      }
+
       print('Fetching databases from: $baseUrl');
       client = OdooClient(baseUrl);
-      final response = await client!.callRPC('/web/database/list', 'call', {});
+
+      // Add timeout for database fetch operation
+      final response = await Future.any([
+        client!.callRPC('/web/database/list', 'call', {}),
+        Future.delayed(Duration(seconds: 30))
+            .then((_) => throw TimeoutException('Database fetch timeout')),
+      ]);
+
       print('Database list response: $response');
       final dbList = response as List<dynamic>;
 
-      final uniqueDbList = dbList.toSet().toList();
-      dropdownItems = uniqueDbList
-          .map((db) => DropdownMenuItem<String>(
-        value: db.toString(),
-        child: Text(db.toString()),
-      ))
-          .toList();
-      urlCheck = true;
-      errorMessage = null;
+      if (dbList.isEmpty) {
+        errorMessage =
+            'No databases found on the server. Please check the server URL or contact your administrator.';
+        urlCheck = false;
+      } else {
+        final uniqueDbList = dbList.toSet().toList();
+        dropdownItems = uniqueDbList
+            .map((db) => DropdownMenuItem<String>(
+                  value: db.toString(),
+                  child: Text(db.toString()),
+                ))
+            .toList();
+        urlCheck = true;
+        errorMessage = null;
 
-      if (database == null && uniqueDbList.isNotEmpty) {
-        database = uniqueDbList.first.toString();
-        print('Auto-selected database: $database');
+        if (database == null && uniqueDbList.isNotEmpty) {
+          database = uniqueDbList.first.toString();
+          print('Auto-selected database: $database');
+        }
       }
-    } catch (e) {
-      errorMessage = 'Error fetching database list: $e';
-      print('Database fetch error: $e');
+    } on OdooException catch (e) {
+      errorMessage = _mapOdooErrorToUserMessage(e);
+      print('Odoo error: $e');
       database = null;
       urlCheck = false;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        // Access context safely using a post-frame callback
+        if (formKey.currentContext != null) {
+          ScaffoldMessenger.of(formKey.currentContext!).showSnackBar(
+            SnackBar(
+              content: Text(errorMessage!),
+              backgroundColor: Colors.redAccent,
+              duration: Duration(seconds: 5),
+              action: SnackBarAction(
+                label: 'Retry',
+                textColor: Colors.white,
+                onPressed: () => fetchDatabaseList(),
+              ),
+            ),
+          );
+        }
+      });
+    } on TimeoutException catch (_) {
+      errorMessage = 'Database fetch operation timed out. Please try again.';
+      print('Timeout error: Database fetch operation exceeded 30 seconds');
+    } on Exception catch (e) {
+      errorMessage = _mapGeneralErrorToUserMessage(e);
+      print('General error: $e');
+      database = null;
+      urlCheck = false;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (formKey.currentContext != null) {
+          ScaffoldMessenger.of(formKey.currentContext!).showSnackBar(
+            SnackBar(
+              content: Text(errorMessage!),
+              backgroundColor: Colors.redAccent,
+              duration: Duration(seconds: 5),
+              action: SnackBarAction(
+                label: 'Retry',
+                textColor: Colors.white,
+                onPressed: () => fetchDatabaseList(),
+              ),
+            ),
+          );
+        }
+      });
     } finally {
       isLoadingDatabases = false;
       notifyListeners();
+    }
+  }
+
+// Helper method to map Odoo exceptions to user-friendly messages
+  String _mapOdooErrorToUserMessage(OdooException e) {
+    if (e.message.contains('Connection refused') ||
+        e.message.contains('Failed host lookup')) {
+      return 'The server appears to be offline or not running. Please verify if the server is running.';
+    } else if (e.message.contains('Connection timed out')) {
+      return 'Connection timed out. The server might be overloaded or not responding.';
+    } else if (e.message.contains('404') || e.message.contains('Not Found')) {
+      return 'The server URL is invalid or the server is not reachable. Please verify the URL.';
+    } else if (e.message.contains('Connection')) {
+      return 'Unable to establish connection. Please check your internet connection.';
+    } else {
+      return 'An error occurred while fetching databases. Please try again or contact your administrator.';
+    }
+  }
+
+// Helper method to map general exceptions to user-friendly messages
+  String _mapGeneralErrorToUserMessage(Exception e) {
+    if (e.toString().contains('SocketException')) {
+      return 'Server connection failed. Please verify if the server is running and accessible.';
+    } else if (e.toString().contains('Network')) {
+      return 'Network connectivity issue. Please check your internet connection.';
+    } else if (e.toString().contains('FormatException')) {
+      return 'Invalid URL format. Please enter a valid URL (e.g., https://example.com).';
+    } else {
+      return 'An unexpected error occurred. Please try again or contact support.';
     }
   }
 
@@ -233,7 +326,7 @@ class LoginProvider with ChangeNotifier {
         "error",
         errorMessage!,
         "Select",
-            () {
+        () {
           print("Select database-pressed");
         },
       );
@@ -335,12 +428,14 @@ class AppEntryPoint extends StatelessWidget {
                 // All modules installed, go to main screen
                 return MultiProvider(
                   providers: [
-                    ChangeNotifierProvider(create: (_) => OrderPickingProvider()),
+                    ChangeNotifierProvider(
+                        create: (_) => OrderPickingProvider()),
                   ],
                   child: Builder(
                     builder: (context) {
                       WidgetsBinding.instance.addPostFrameCallback((_) {
-                        Provider.of<OrderPickingProvider>(context, listen: false)
+                        Provider.of<OrderPickingProvider>(context,
+                                listen: false)
                             .showProductSelectionPage(context, datasync);
                       });
                       return Container(); // Temporary container, navigation happens in callback

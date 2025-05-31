@@ -831,7 +831,7 @@ class _InvoiceListPageState extends State<InvoiceListPage> {
                     horizontal: _standardPadding, vertical: _smallPadding),
               ),
               onPressed: _initializeAndFetch,
-              icon: const Icon(Icons.refresh),
+              icon: const Icon(Icons.refresh,color: Colors.white,),
               label: const Text('Retry'),
             ),
           ],

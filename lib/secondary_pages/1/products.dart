@@ -55,6 +55,7 @@ class _ProductsPageState extends State<ProductsPage>
   }
 
   Future<List<String>> _initializeCategoriesAndProducts() async {
+    if (!mounted) return [];
     setState(() {
       _isLoading = true;
     });
@@ -79,6 +80,7 @@ class _ProductsPageState extends State<ProductsPage>
       }
       developer.log(
           'Initializing ${categoriesWithProducts.length} categories with products: $categoriesWithProducts');
+      if (!mounted) return [];
       setState(() {
         _tabController?.dispose();
         _tabController =
@@ -93,6 +95,7 @@ class _ProductsPageState extends State<ProductsPage>
         }
         await _initializeProducts(category);
       }
+      if (!mounted) return [];
       _tabController?.addListener(() {
         if (!_tabController!.indexIsChanging) {
           final category = categoriesWithProducts[_tabController!.index];
@@ -103,10 +106,12 @@ class _ProductsPageState extends State<ProductsPage>
       });
     } catch (e) {
       developer.log('Error initializing categories and products: $e');
+      if (!mounted) return [];
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Failed to load categories and products: $e')),
       );
     } finally {
+      if (!mounted) return [];
       setState(() {
         _isLoading = false;
       });

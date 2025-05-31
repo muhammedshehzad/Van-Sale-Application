@@ -644,8 +644,11 @@ class SalesOrderProvider with ChangeNotifier {
 
   // Getters
   Map<String, List<Product>> get categoryProducts => _categoryProducts;
+
   String get searchQuery => _searchQuery;
+
   bool get isLoading => _isLoading;
+
   int get totalOrders => _totalOrders;
   List<Product> _products = [];
   List<OrderItem> _orderItems = [];
@@ -664,6 +667,7 @@ class SalesOrderProvider with ChangeNotifier {
   bool _isLoadingMore = false;
   static const int _pageSize = 10;
   int _totalProducts = 0;
+
   int get currentPage => _currentPage;
 
   bool get hasMoreData => _hasMoreData;
@@ -674,7 +678,9 @@ class SalesOrderProvider with ChangeNotifier {
   String? _error;
   final currencyFormat = NumberFormat.currency(symbol: '\$');
   final Map<String, int> _temporaryInventory = {};
+
   int get totalProducts => _totalProducts;
+
   bool isOrderIdConfirmed(String orderId) {
     return _confirmedOrderIds.contains(orderId);
   }
@@ -690,7 +696,6 @@ class SalesOrderProvider with ChangeNotifier {
   String? get customerName => _customerName;
 
   SalesOrder? get salesOrder => _salesOrder;
-
 
   String? get draftOrderId => _draftOrderId;
 
@@ -716,8 +721,11 @@ class SalesOrderProvider with ChangeNotifier {
     String searchQuery = '',
     required String category, // Make category required
   }) async {
-    if (isLoadMore && (!_categoryHasMoreData[category]! || _categoryIsLoadingMore[category]!)) return;
-    developer.log('SalesOrderProvider: Starting fetchProducts, category=$category, isLoadMore=$isLoadMore, searchQuery=$searchQuery');
+    if (isLoadMore &&
+        (!_categoryHasMoreData[category]! || _categoryIsLoadingMore[category]!))
+      return;
+    developer.log(
+        'SalesOrderProvider: Starting fetchProducts, category=$category, isLoadMore=$isLoadMore, searchQuery=$searchQuery');
 
     if (!isLoadMore) {
       _isLoading = true;
@@ -884,7 +892,7 @@ class SalesOrderProvider with ChangeNotifier {
       };
 
       final templateAttributeValueMap =
-      <int, Map<int, Map<int, Map<String, dynamic>>>>{};
+          <int, Map<int, Map<int, Map<String, dynamic>>>>{};
       for (var attrVal in templateAttributeValueResult) {
         final templateId = attrVal['product_tmpl_id'][0] as int;
         final attributeId = attrVal['attribute_id'][0] as int;
@@ -900,33 +908,34 @@ class SalesOrderProvider with ChangeNotifier {
           'name': attributeValueMap[valueId] ?? 'Unknown',
           'price_extra': priceExtra,
         };
-      };
+      }
+      ;
 
       final productAttributeValueMap = <int, Map<String, String>>{};
       for (var productAttr in productAttributeValueResult) {
         final productId = productAttr['id'] as int;
         final productName = productAttr['name'] as String;
         final valueIds =
-        productAttr['product_template_attribute_value_ids'] as List;
+            productAttr['product_template_attribute_value_ids'] as List;
         final selectedVariants = <String, String>{};
 
         for (var valueId in valueIds) {
           final attrValue = templateAttributeValueResult.firstWhere(
-                (av) => av['product_attribute_value_id'][0] == valueId,
+            (av) => av['product_attribute_value_id'][0] == valueId,
             orElse: () => null,
           );
           if (attrValue != null) {
             final attributeId = attrValue['attribute_id'][0] as int;
             final valueName = (attributeValueMap[valueId] ?? 'Unknown').trim();
             final attributeName =
-            (attributeNameMap[attributeId] ?? 'Unknown').trim();
+                (attributeNameMap[attributeId] ?? 'Unknown').trim();
             selectedVariants[attributeName] = valueName;
           }
         }
 
         if (selectedVariants.isEmpty && valueIds.isEmpty) {
           final templateId = productResult.firstWhere(
-                  (p) => p['id'] == productId)['product_tmpl_id'][0] as int;
+              (p) => p['id'] == productId)['product_tmpl_id'][0] as int;
           final templateAttributes = <int, List<ProductAttribute>>{};
 
           final attributes = templateAttributes[templateId] ?? [];
@@ -960,19 +969,19 @@ class SalesOrderProvider with ChangeNotifier {
         final extraCosts = <String, double>{
           for (var id in valueIds)
             (attributeValueMap[id as int] ?? 'Unknown').trim():
-            (templateAttributeValueMap[templateId]?[attributeId]?[id as int]
-            ?['price_extra'] as num?)
-                ?.toDouble() ??
-                0.0
+                (templateAttributeValueMap[templateId]?[attributeId]?[id as int]
+                            ?['price_extra'] as num?)
+                        ?.toDouble() ??
+                    0.0
         };
 
         templateAttributes.putIfAbsent(templateId, () => []).add(
-          ProductAttribute(
-            name: attributeName,
-            values: values,
-            extraCost: extraCosts,
-          ),
-        );
+              ProductAttribute(
+                name: attributeName,
+                values: values,
+                extraCost: extraCosts,
+              ),
+            );
       }
 
       final List<Product> fetchedProducts = productResult.map((productData) {
@@ -1018,12 +1027,12 @@ class SalesOrderProvider with ChangeNotifier {
               ? productData['seller_ids']
               : [],
           taxesIds:
-          productData['taxes_id'] is List ? productData['taxes_id'] : [],
+              productData['taxes_id'] is List ? productData['taxes_id'] : [],
           category: categoryName,
           propertyStockProduction:
-          productData['property_stock_production'] ?? false,
+              productData['property_stock_production'] ?? false,
           propertyStockInventory:
-          productData['property_stock_inventory'] ?? false,
+              productData['property_stock_inventory'] ?? false,
           attributes: attributes.isNotEmpty ? attributes : null,
           variantCount: productData['product_variant_count'] as int? ?? 0,
           selectedVariants: selectedVariants,
@@ -1042,18 +1051,21 @@ class SalesOrderProvider with ChangeNotifier {
       }
 
       _categoryHasMoreData[category] = fetchedProducts.length == _pageSize;
-      _categoryCurrentPage[category] = (_categoryCurrentPage[category] ?? 0) + 1;
+      _categoryCurrentPage[category] =
+          (_categoryCurrentPage[category] ?? 0) + 1;
 
       developer.log(
           'SalesOrderProvider: Fetch completed for category=$category, products=${_categoryProducts[category]?.length ?? 0}, page=${_categoryCurrentPage[category]}, hasMoreData=${_categoryHasMoreData[category]}');
     } catch (e, stackTrace) {
-      developer.log('SalesOrderProvider: Error in fetchProducts for category=$category: $e\n$stackTrace');
+      developer.log(
+          'SalesOrderProvider: Error in fetchProducts for category=$category: $e\n$stackTrace');
     } finally {
       _isLoading = false;
       _categoryIsLoadingMore[category] = false;
       notifyListeners();
     }
   }
+
   Future<List<String>> fetchCategories() async {
     try {
       final client = await SessionManager.getActiveClient();
@@ -1070,7 +1082,9 @@ class SalesOrderProvider with ChangeNotifier {
         },
       });
 
-      final categories = (result as List).map((category) => category['name'] as String).toList();
+      final categories = (result as List)
+          .map((category) => category['name'] as String)
+          .toList();
       categories.sort();
       developer.log('Fetched ${categories.length} categories: $categories');
       return ['All Products', ...categories];
@@ -1079,6 +1093,7 @@ class SalesOrderProvider with ChangeNotifier {
       return ['All Products', 'Uncategorized'];
     }
   }
+
   void resetProductPagination({required String category}) {
     _categoryCurrentPage[category] = 0;
     _categoryHasMoreData[category] = true;
@@ -1086,6 +1101,7 @@ class SalesOrderProvider with ChangeNotifier {
     _searchQuery = '';
     notifyListeners();
   }
+
   Future<void> fetchTodaysOrders({
     bool isLoadMore = false,
     String searchQuery = '',

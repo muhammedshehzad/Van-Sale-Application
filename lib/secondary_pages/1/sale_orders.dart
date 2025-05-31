@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:latest_van_sale_application/assets/widgets%20and%20consts/page_transition.dart';
@@ -6,6 +7,7 @@ import 'package:latest_van_sale_application/secondary_pages/sale_order_details_p
 import 'package:shimmer/shimmer.dart';
 import '../../authentication/cyllo_session_model.dart';
 import '../../providers/order_picking_provider.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
 
 class SaleOrdersList extends StatefulWidget {
   const SaleOrdersList({Key? key}) : super(key: key);
@@ -37,6 +39,9 @@ class _SaleOrdersListState extends State<SaleOrdersList>
   final ScrollController _scrollController = ScrollController();
   int _totalOrders = 0;
   bool _isActivePage = true; // Track if this page is active
+  bool _isOffline = false;
+  StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
+  Timer? _retryTimer;
 
   @override
   void initState() {
@@ -59,6 +64,7 @@ class _SaleOrdersListState extends State<SaleOrdersList>
       });
     });
     _scrollController.addListener(_onScroll);
+    _setupConnectivityListener();
   }
 
   @override
@@ -84,6 +90,8 @@ class _SaleOrdersListState extends State<SaleOrdersList>
     _tabController.dispose();
     _scrollController.dispose();
     _debounce?.cancel();
+    _connectivitySubscription?.cancel();
+    _retryTimer?.cancel();
     super.dispose();
   }
 
@@ -145,11 +153,51 @@ class _SaleOrdersListState extends State<SaleOrdersList>
     });
   }
 
+  Future<List<Map<String, dynamic>>> _loadOrders({bool isLoadMore = false}) async {
+    try {
+      await _checkConnectivity();
+      if (_isOffline) {
+        setState(() {
+          _allOrders = _cachedOrders;
+          _filteredOrders = List.from(_cachedOrders);
+        });
+        return _cachedOrders;
+      }
+
+      const cacheDuration = Duration(seconds: 30);
+      if (!isLoadMore &&
+          _cachedOrders.isNotEmpty &&
+          _lastFetchTime != null &&
+          DateTime.now().difference(_lastFetchTime!) < cacheDuration) {
+        setState(() {
+          _allOrders = _cachedOrders;
+          _filteredOrders = List.from(_cachedOrders);
+        });
+        return _cachedOrders;
+      }
+
+      final orders = await _fetchSaleOrderHistory(context, isLoadMore: isLoadMore);
+      if (!isLoadMore) {
+        _cachedOrders = List.from(orders);
+        _lastFetchTime = DateTime.now();
+      }
+      return orders;
+    } catch (e) {
+      debugPrint('Error loading orders: $e');
+      setState(() {
+        _allOrders = _cachedOrders;
+        _filteredOrders = List.from(_cachedOrders);
+      });
+      return _cachedOrders;
+    }
+  }
+
   Future<List<Map<String, dynamic>>> _fetchSaleOrderHistory(
       BuildContext context,
       {bool isLoadMore = false}) async {
     debugPrint(
         'Fetching sale order history, page: $_currentPage, query: $_searchQuery');
+    
     try {
       final client = await SessionManager.getActiveClient();
       if (client == null) {
@@ -225,19 +273,25 @@ class _SaleOrdersListState extends State<SaleOrdersList>
               'Duplicate draft order detected: ID $orderId, Name ${order['name']}');
         }
       }
+
       setState(() {
         _totalOrders = totalCount;
         if (!isLoadMore) {
           _cachedOrders = uniqueOrders;
+          _allOrders = uniqueOrders;
+          _filteredOrders = List.from(uniqueOrders);
         } else {
           for (var order in uniqueOrders) {
             if (!_cachedOrders.any((o) => o['id'] == order['id'])) {
               _cachedOrders.add(order);
+              _allOrders.add(order);
+              _filteredOrders.add(order);
             }
           }
         }
         _hasMoreData = uniqueOrders.length == _pageSize;
       });
+
       debugPrint(
           'Successfully fetched ${uniqueOrders.length} unique orders, total: $_totalOrders');
 
@@ -253,34 +307,6 @@ class _SaleOrdersListState extends State<SaleOrdersList>
       );
       return _cachedOrders;
     }
-  }
-
-  Future<List<Map<String, dynamic>>> _loadOrders(
-      {bool isLoadMore = false}) async {
-    const cacheDuration = Duration(seconds: 30);
-    if (!isLoadMore &&
-        _cachedOrders.isNotEmpty &&
-        _lastFetchTime != null &&
-        DateTime.now().difference(_lastFetchTime!) < cacheDuration) {
-      return _cachedOrders;
-    }
-
-    final orders =
-        await _fetchSaleOrderHistory(context, isLoadMore: isLoadMore);
-    _lastFetchTime = DateTime.now();
-    setState(() {
-      if (!isLoadMore) {
-        _allOrders = orders;
-      } else {
-        for (var order in orders) {
-          if (!_allOrders.any((o) => o['id'] == order['id'])) {
-            _allOrders.add(order);
-          }
-        }
-      }
-      _filteredOrders = List.from(_allOrders);
-    });
-    return orders;
   }
 
   String _safeString(dynamic value) {
@@ -720,145 +746,161 @@ class _SaleOrdersListState extends State<SaleOrdersList>
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: EdgeInsets.only(
-          left: _standardPadding,
-          right: _standardPadding,
-          top: _standardPadding),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+    return Scaffold(
+      body: Column(
         children: [
-          Container(
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(_cardBorderRadius),
-              border: Border.all(color: Colors.grey[300]!),
-            ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(_cardBorderRadius),
-              child: TabBar(
-                controller: _tabController,
-                labelColor: primaryColor,
-                unselectedLabelColor: Colors.grey[600],
-                indicatorSize: TabBarIndicatorSize.tab,
-                indicatorPadding: EdgeInsets.symmetric(horizontal: 10.0),
-                indicator: BoxDecoration(
-                  border: Border(
-                    bottom: BorderSide(
-                      color: primaryColor,
-                      width: 3.0,
-                    ),
-                  ),
-                ),
-                tabs: const [
-                  Tab(text: 'Active', height: 40),
-                  Tab(text: 'Completed', height: 40),
-                  Tab(text: 'Canceled', height: 40),
-                ],
-              ),
-            ),
-          ),
-          SizedBox(height: _standardPadding),
-          TextField(
-            controller: _searchController,
-            decoration: InputDecoration(
-              hintText: 'Search by order ID, customer...',
-              hintStyle: TextStyle(color: Colors.grey[600]),
-              prefixIcon: const Icon(Icons.search, color: Colors.grey),
-              suffixIcon: _searchController.text.isNotEmpty
-                  ? IconButton(
-                      icon: const Icon(Icons.clear, color: Colors.grey),
-                      onPressed: () {
-                        _searchController.clear();
-                        setState(() {
-                          _searchQuery = '';
-                          _currentPage = 0;
-                          _hasMoreData = true;
-                          _cachedOrders.clear();
-                          _lastFetchTime = null;
-                          _allOrders.clear();
-                          _filteredOrders.clear();
-                          _orderHistoryFuture = _loadOrders();
-                        });
-                      },
-                    )
-                  : null,
-              filled: true,
-              fillColor: Colors.white,
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(10),
-                borderSide: BorderSide.none,
-              ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(10),
-                borderSide: BorderSide(color: Colors.grey[300]!),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(10),
-                borderSide: BorderSide(color: primaryColor),
-              ),
-              contentPadding: EdgeInsets.symmetric(
-                vertical: _standardPadding,
-                horizontal: _standardPadding,
-              ),
-            ),
-          ),
-          SizedBox(height: 8),
+          if (_isOffline) _buildOfflineBanner(),
           Expanded(
-            child: FutureBuilder<List<Map<String, dynamic>>>(
-              future: _orderHistoryFuture,
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  // Show shimmer in TabBarView structure to match the loaded state
-                  return TabBarView(
-                    controller: _tabController,
-                    children: [
-                      _buildOrdersListShimmer(), // Active tab shimmer
-                      _buildOrdersListShimmer(), // Completed tab shimmer
-                      _buildOrdersListShimmer(), // Canceled tab shimmer
-                    ],
-                  );
-                }
-                if (snapshot.hasError) {
-                  return Center(
-                    child: Padding(
-                      padding: EdgeInsets.all(_standardPadding),
-                      child: Text(
-                        'Error loading orders: ${snapshot.error}',
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(color: Colors.red),
+            child: RefreshIndicator(
+              onRefresh: () async {
+                _retryTimer?.cancel();
+                _orderHistoryFuture = _loadOrders();
+              },
+              color: const Color(0xFFC13030),
+              child: Padding(
+                padding: EdgeInsets.only(
+                    left: _standardPadding,
+                    right: _standardPadding,
+                    top: _standardPadding),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Container(
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(_cardBorderRadius),
+                        border: Border.all(color: Colors.grey[300]!),
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(_cardBorderRadius),
+                        child: TabBar(
+                          controller: _tabController,
+                          labelColor: primaryColor,
+                          unselectedLabelColor: Colors.grey[600],
+                          indicatorSize: TabBarIndicatorSize.tab,
+                          indicatorPadding: EdgeInsets.symmetric(horizontal: 10.0),
+                          indicator: BoxDecoration(
+                            border: Border(
+                              bottom: BorderSide(
+                                color: primaryColor,
+                                width: 3.0,
+                              ),
+                            ),
+                          ),
+                          tabs: const [
+                            Tab(text: 'Active', height: 40),
+                            Tab(text: 'Completed', height: 40),
+                            Tab(text: 'Canceled', height: 40),
+                          ],
+                        ),
                       ),
                     ),
-                  );
-                }
-                if (!snapshot.hasData || snapshot.data!.isEmpty) {
-                  return Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.history, size: 48, color: Colors.grey[400]),
-                        SizedBox(height: _smallPadding),
-                        Text(
-                          _searchQuery.isNotEmpty
-                              ? 'No sale orders found for "$_searchQuery"'
-                              : 'No sale orders found',
-                          style: TextStyle(
-                              color: Colors.grey[600],
-                              fontStyle: FontStyle.italic),
+                    SizedBox(height: _standardPadding),
+                    TextField(
+                      controller: _searchController,
+                      decoration: InputDecoration(
+                        hintText: 'Search by order ID, customer...',
+                        hintStyle: TextStyle(color: Colors.grey[600]),
+                        prefixIcon: const Icon(Icons.search, color: Colors.grey),
+                        suffixIcon: _searchController.text.isNotEmpty
+                            ? IconButton(
+                                icon: const Icon(Icons.clear, color: Colors.grey),
+                                onPressed: () {
+                                  _searchController.clear();
+                                  setState(() {
+                                    _searchQuery = '';
+                                    _currentPage = 0;
+                                    _hasMoreData = true;
+                                    _cachedOrders.clear();
+                                    _lastFetchTime = null;
+                                    _allOrders.clear();
+                                    _filteredOrders.clear();
+                                    _orderHistoryFuture = _loadOrders();
+                                  });
+                                },
+                              )
+                            : null,
+                        filled: true,
+                        fillColor: Colors.white,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(10),
+                          borderSide: BorderSide.none,
                         ),
-                      ],
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(10),
+                          borderSide: BorderSide(color: Colors.grey[300]!),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(10),
+                          borderSide: BorderSide(color: primaryColor),
+                        ),
+                        contentPadding: EdgeInsets.symmetric(
+                          vertical: _standardPadding,
+                          horizontal: _standardPadding,
+                        ),
+                      ),
                     ),
-                  );
-                }
-                return TabBarView(
-                  controller: _tabController,
-                  children: [
-                    _buildOrdersList("Active"),
-                    _buildOrdersList("Completed"),
-                    _buildOrdersList("Canceled"),
+                    SizedBox(height: 8),
+                    Expanded(
+                      child: FutureBuilder<List<Map<String, dynamic>>>(
+                        future: _orderHistoryFuture,
+                        builder: (context, snapshot) {
+                          if (snapshot.connectionState == ConnectionState.waiting) {
+                            // Show shimmer in TabBarView structure to match the loaded state
+                            return TabBarView(
+                              controller: _tabController,
+                              children: [
+                                _buildOrdersListShimmer(), // Active tab shimmer
+                                _buildOrdersListShimmer(), // Completed tab shimmer
+                                _buildOrdersListShimmer(), // Canceled tab shimmer
+                              ],
+                            );
+                          }
+                          if (snapshot.hasError) {
+                            return Center(
+                              child: Padding(
+                                padding: EdgeInsets.all(_standardPadding),
+                                child: Text(
+                                  'Error loading orders: ${snapshot.error}',
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(color: Colors.red),
+                                ),
+                              ),
+                            );
+                          }
+                          if (!snapshot.hasData || snapshot.data!.isEmpty) {
+                            return Center(
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(Icons.history, size: 48, color: Colors.grey[400]),
+                                  SizedBox(height: _smallPadding),
+                                  Text(
+                                    _searchQuery.isNotEmpty
+                                        ? 'No sale orders found for "$_searchQuery"'
+                                        : 'No sale orders found',
+                                    style: TextStyle(
+                                        color: Colors.grey[600],
+                                        fontStyle: FontStyle.italic),
+                                  ),
+                                ],
+                              ),
+                            );
+                          }
+                          return TabBarView(
+                            controller: _tabController,
+                            children: [
+                              _buildOrdersList("Active"),
+                              _buildOrdersList("Completed"),
+                              _buildOrdersList("Canceled"),
+                            ],
+                          );
+                        },
+                      ),
+                    ),
                   ],
-                );
-              },
+                ),
+              ),
             ),
           ),
         ],
@@ -989,6 +1031,87 @@ class _SaleOrdersListState extends State<SaleOrdersList>
       default:
         return status.capitalize();
     }
+  }
+
+  void _setupConnectivityListener() {
+    _connectivitySubscription = Connectivity().onConnectivityChanged.listen((List<ConnectivityResult> results) {
+      if (mounted) {
+        setState(() {
+          _isOffline = results.contains(ConnectivityResult.none);
+        });
+        
+        if (!results.contains(ConnectivityResult.none)) {
+          // Internet is back, try to refresh data
+          _retryTimer?.cancel();
+          _orderHistoryFuture = _loadOrders();
+        } else {
+          // No internet, start retry timer
+          _startRetryTimer();
+        }
+      }
+    });
+  }
+
+  Future<void> _checkConnectivity() async {
+    final connectivityResult = await Connectivity().checkConnectivity();
+    if (mounted) {
+      setState(() {
+        _isOffline = connectivityResult.contains(ConnectivityResult.none);
+      });
+    }
+  }
+
+  void _startRetryTimer() {
+    _retryTimer?.cancel();
+    _retryTimer = Timer.periodic(const Duration(seconds: 30), (timer) {
+      _orderHistoryFuture = _loadOrders();
+    });
+  }
+
+  Widget _buildOfflineBanner() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+      decoration: BoxDecoration(
+        color: Colors.red[50],
+        border: Border(
+          bottom: BorderSide(
+            color: Colors.red[200]!,
+            width: 1,
+          ),
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.wifi_off, color: Colors.red[700], size: 20),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'You are currently offline. Some features may be limited.',
+              style: TextStyle(
+                color: Colors.red[700],
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+          TextButton.icon(
+            onPressed: () {
+              _retryTimer?.cancel();
+              _orderHistoryFuture = _loadOrders();
+            },
+            icon: Icon(Icons.refresh, color: Colors.red[700], size: 18),
+            label: Text(
+              'Retry',
+              style: TextStyle(
+                color: Colors.red[700],
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 

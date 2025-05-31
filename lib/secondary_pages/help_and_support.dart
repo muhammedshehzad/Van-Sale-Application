@@ -242,7 +242,10 @@ class _HelpSupportPageState extends State<HelpSupportPage> {
               ),
             ))
           : _errorMessage != null
-              ? Center(child: Text(_errorMessage!))
+              ? Center(child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Text(_errorMessage!),
+              ))
               : ListView(
                   children: [
                     Container(
