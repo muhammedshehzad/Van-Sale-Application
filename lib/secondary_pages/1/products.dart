@@ -55,14 +55,15 @@ class _ProductsPageState extends State<ProductsPage>
   }
 
   Future<List<String>> _initializeCategoriesAndProducts() async {
+    if (!mounted) return [];
     setState(() {
       _isLoading = true;
     });
     List<String> categoriesWithProducts = [];
     try {
       final allCategories =
-      await Provider.of<SalesOrderProvider>(context, listen: false)
-          .fetchCategories();
+          await Provider.of<SalesOrderProvider>(context, listen: false)
+              .fetchCategories();
       Map<String, List<dynamic>> categoryProducts = {};
       for (var category in allCategories) {
         await Provider.of<SalesOrderProvider>(context, listen: false)
@@ -71,7 +72,7 @@ class _ProductsPageState extends State<ProductsPage>
           searchQuery: searchController.text,
         );
         final products = Provider.of<SalesOrderProvider>(context, listen: false)
-            .categoryProducts[category] ??
+                .categoryProducts[category] ??
             [];
         if (products.isNotEmpty) {
           categoriesWithProducts.add(category);
@@ -79,6 +80,7 @@ class _ProductsPageState extends State<ProductsPage>
       }
       developer.log(
           'Initializing ${categoriesWithProducts.length} categories with products: $categoriesWithProducts');
+      if (!mounted) return [];
       setState(() {
         _tabController?.dispose();
         _tabController =
@@ -93,6 +95,7 @@ class _ProductsPageState extends State<ProductsPage>
         }
         await _initializeProducts(category);
       }
+      if (!mounted) return [];
       _tabController?.addListener(() {
         if (!_tabController!.indexIsChanging) {
           final category = categoriesWithProducts[_tabController!.index];
@@ -103,10 +106,12 @@ class _ProductsPageState extends State<ProductsPage>
       });
     } catch (e) {
       developer.log('Error initializing categories and products: $e');
+      if (!mounted) return [];
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Failed to load categories and products: $e')),
       );
     } finally {
+      if (!mounted) return [];
       setState(() {
         _isLoading = false;
       });
@@ -118,7 +123,7 @@ class _ProductsPageState extends State<ProductsPage>
   void _onScroll(String category) {
     final controller = _scrollControllers[category]!;
     if (controller.position.pixels >=
-        controller.position.maxScrollExtent - 200 &&
+            controller.position.maxScrollExtent - 200 &&
         !(_categoryIsLoadingMore[category] ?? false) &&
         (_categoryHasMoreData[category] ?? true)) {
       _loadMoreData(category);
@@ -163,7 +168,7 @@ class _ProductsPageState extends State<ProductsPage>
 
   void _updateProductTemplates(String category) {
     final products = Provider.of<SalesOrderProvider>(context, listen: false)
-        .categoryProducts[category] ??
+            .categoryProducts[category] ??
         [];
     final templateMap = <String, Map<String, dynamic>>{};
     for (var product in products) {
@@ -198,7 +203,7 @@ class _ProductsPageState extends State<ProductsPage>
 
   void _restoreDraftState(String category) {
     final salesProvider =
-    Provider.of<SalesOrderProvider>(context, listen: false);
+        Provider.of<SalesOrderProvider>(context, listen: false);
     if (salesProvider.draftOrderId != null) {
       setState(() {
         selectedProducts.clear();
@@ -207,7 +212,7 @@ class _ProductsPageState extends State<ProductsPage>
         for (var product in salesProvider.draftSelectedProducts) {
           selectedProducts[product.id] = true;
           final attrQuantities =
-          salesProvider.draftProductAttributes[product.id];
+              salesProvider.draftProductAttributes[product.id];
           if (attrQuantities != null && attrQuantities.isNotEmpty) {
             quantities[product.id] = attrQuantities.fold<int>(
                 0, (sum, comb) => sum + (comb['quantity'] as int));
@@ -232,8 +237,8 @@ class _ProductsPageState extends State<ProductsPage>
     });
     try {
       final allCategories =
-      await Provider.of<SalesOrderProvider>(context, listen: false)
-          .fetchCategories();
+          await Provider.of<SalesOrderProvider>(context, listen: false)
+              .fetchCategories();
 
       // Filter categories with products
       List<String> categoriesWithProducts = [];
@@ -246,7 +251,7 @@ class _ProductsPageState extends State<ProductsPage>
           searchQuery: searchController.text,
         );
         final products = Provider.of<SalesOrderProvider>(context, listen: false)
-            .categoryProducts[category] ??
+                .categoryProducts[category] ??
             [];
         if (products.isNotEmpty) {
           categoriesWithProducts.add(category);
@@ -313,7 +318,7 @@ class _ProductsPageState extends State<ProductsPage>
               onRefresh: _refreshProducts,
               color: primaryColor,
               child:
-              _isLoading ? const ProductPageShimmer() : buildProductsList(),
+                  _isLoading ? const ProductPageShimmer() : buildProductsList(),
             ),
           ),
         ],
@@ -332,21 +337,21 @@ class _ProductsPageState extends State<ProductsPage>
           prefixIcon: const Icon(Icons.search, color: Colors.grey),
           suffixIcon: searchController.text.isNotEmpty
               ? IconButton(
-            icon: const Icon(Icons.clear, color: Colors.grey),
-            onPressed: () {
-              searchController.clear();
-              Provider.of<SalesOrderProvider>(context, listen: false)
-                  .resetProductPagination(
-                  category: _tabController?.index != null
-                      ? _tabController!.index.toString()
-                      : 'All Products');
-              _initializeProducts(
-                _tabController?.index != null
-                    ? _tabController!.index.toString()
-                    : 'All Products',
-              );
-            },
-          )
+                  icon: const Icon(Icons.clear, color: Colors.grey),
+                  onPressed: () {
+                    searchController.clear();
+                    Provider.of<SalesOrderProvider>(context, listen: false)
+                        .resetProductPagination(
+                            category: _tabController?.index != null
+                                ? _tabController!.index.toString()
+                                : 'All Products');
+                    _initializeProducts(
+                      _tabController?.index != null
+                          ? _tabController!.index.toString()
+                          : 'All Products',
+                    );
+                  },
+                )
               : null,
           filled: true,
           fillColor: Colors.white,
@@ -368,9 +373,9 @@ class _ProductsPageState extends State<ProductsPage>
           _debounce = Timer(const Duration(milliseconds: 500), () {
             Provider.of<SalesOrderProvider>(context, listen: false)
                 .resetProductPagination(
-                category: _tabController?.index != null
-                    ? _tabController!.index.toString()
-                    : 'All Products');
+                    category: _tabController?.index != null
+                        ? _tabController!.index.toString()
+                        : 'All Products');
             _initializeProducts(
               _tabController?.index != null
                   ? _tabController!.index.toString()
@@ -423,11 +428,11 @@ class _ProductsPageState extends State<ProductsPage>
           unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.w500),
           tabs: categories
               .map((category) => Tab(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8.0),
-              child: Text(category),
-            ),
-          ))
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                      child: Text(category),
+                    ),
+                  ))
               .toList(),
         ),
         Expanded(
@@ -441,155 +446,155 @@ class _ProductsPageState extends State<ProductsPage>
 
                 return filteredByCategory.isEmpty
                     ? Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.inventory_2_outlined,
-                          size: 48, color: Colors.grey[400]),
-                      const SizedBox(height: 8),
-                      Text(
-                        searchController.text.isNotEmpty
-                            ? 'No products found for "${searchController.text}"'
-                            : 'No products in this category',
-                        style: TextStyle(
-                            color: Colors.grey[600],
-                            fontStyle: FontStyle.italic),
-                        textAlign: TextAlign.center,
-                      ),
-                      TextButton.icon(
-                        onPressed: _refreshProducts,
-                        icon: Icon(Icons.refresh, color: primaryColor),
-                        label: Text(
-                          'Refresh',
-                          style: TextStyle(color: primaryColor),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.inventory_2_outlined,
+                                size: 48, color: Colors.grey[400]),
+                            const SizedBox(height: 8),
+                            Text(
+                              searchController.text.isNotEmpty
+                                  ? 'No products found for "${searchController.text}"'
+                                  : 'No products in this category',
+                              style: TextStyle(
+                                  color: Colors.grey[600],
+                                  fontStyle: FontStyle.italic),
+                              textAlign: TextAlign.center,
+                            ),
+                            TextButton.icon(
+                              onPressed: _refreshProducts,
+                              icon: Icon(Icons.refresh, color: primaryColor),
+                              label: Text(
+                                'Refresh',
+                                style: TextStyle(color: primaryColor),
+                              ),
+                            ),
+                          ],
                         ),
-                      ),
-                    ],
-                  ),
-                )
+                      )
                     : ListView.builder(
-                  controller: _scrollControllers[category],
-                  physics: const AlwaysScrollableScrollPhysics(),
-                  itemCount: filteredByCategory.length + 1,
-                  itemBuilder: (context, index) {
-                    if (index < filteredByCategory.length) {
-                      final template = filteredByCategory[index];
-                      return GestureDetector(
-                        onTap: () async {
-                          setState(() {
-                            _clickedTileId = template['id'];
-                          });
-                          _timeoutTimer?.cancel();
-                          _timeoutTimer =
-                              Timer(const Duration(seconds: 15), () {
-                                if (mounted) {
-                                  setState(() {
-                                    _clickedTileId = null;
-                                  });
-                                }
-                              });
-
-                          try {
-                            if (template['variants'].length > 1) {
-                              final odooClient =
-                              await SessionManager.getActiveClient();
-                              if (odooClient == null) {
+                        controller: _scrollControllers[category],
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        itemCount: filteredByCategory.length + 1,
+                        itemBuilder: (context, index) {
+                          if (index < filteredByCategory.length) {
+                            final template = filteredByCategory[index];
+                            return GestureDetector(
+                              onTap: () async {
                                 setState(() {
-                                  _clickedTileId = null;
+                                  _clickedTileId = template['id'];
                                 });
                                 _timeoutTimer?.cancel();
-                                ScaffoldMessenger.of(context)
-                                    .showSnackBar(
-                                  const SnackBar(
-                                    content: Text(
-                                        'Unable to load variants: Session not initialized'),
-                                    backgroundColor: Colors.red,
-                                  ),
-                                );
-                                return;
-                              }
-                              final firstVariant =
-                              template['variants'][0] as Product;
-                              Map<String, String>? selectedAttributes;
-                              if (firstVariant
-                                  .selectedVariants?.isNotEmpty ==
-                                  true) {
-                                selectedAttributes =
-                                    firstVariant.selectedVariants;
-                              }
-                              if (context.mounted) {
-                                await _showVariantsDialog(
-                                    context,
-                                    template,
-                                    odooClient,
-                                    selectedAttributes);
-                                if (mounted) {
-                                  setState(() {
-                                    _clickedTileId = null;
-                                  });
-                                  _timeoutTimer?.cancel();
+                                _timeoutTimer =
+                                    Timer(const Duration(seconds: 15), () {
+                                  if (mounted) {
+                                    setState(() {
+                                      _clickedTileId = null;
+                                    });
+                                  }
+                                });
+
+                                try {
+                                  if (template['variants'].length > 1) {
+                                    final odooClient =
+                                        await SessionManager.getActiveClient();
+                                    if (odooClient == null) {
+                                      setState(() {
+                                        _clickedTileId = null;
+                                      });
+                                      _timeoutTimer?.cancel();
+                                      ScaffoldMessenger.of(context)
+                                          .showSnackBar(
+                                        const SnackBar(
+                                          content: Text(
+                                              'Unable to load variants: Session not initialized'),
+                                          backgroundColor: Colors.red,
+                                        ),
+                                      );
+                                      return;
+                                    }
+                                    final firstVariant =
+                                        template['variants'][0] as Product;
+                                    Map<String, String>? selectedAttributes;
+                                    if (firstVariant
+                                            .selectedVariants?.isNotEmpty ==
+                                        true) {
+                                      selectedAttributes =
+                                          firstVariant.selectedVariants;
+                                    }
+                                    if (context.mounted) {
+                                      await _showVariantsDialog(
+                                          context,
+                                          template,
+                                          odooClient,
+                                          selectedAttributes);
+                                      if (mounted) {
+                                        setState(() {
+                                          _clickedTileId = null;
+                                        });
+                                        _timeoutTimer?.cancel();
+                                      }
+                                    }
+                                  } else {
+                                    final variant =
+                                        template['variants'][0] as Product;
+                                    Map<String, String>? selectedAttributes;
+                                    if (variant.selectedVariants?.isNotEmpty ==
+                                        true) {
+                                      selectedAttributes =
+                                          variant.selectedVariants;
+                                    }
+                                    if (context.mounted) {
+                                      await Navigator.push(
+                                        context,
+                                        SlidingPageTransitionRL(
+                                          page: ProductDetailsPage(
+                                            productId: variant.id,
+                                            selectedAttributes:
+                                                selectedAttributes,
+                                          ),
+                                        ),
+                                      );
+                                      if (mounted) {
+                                        setState(() {
+                                          _clickedTileId = null;
+                                        });
+                                        _timeoutTimer?.cancel();
+                                        _refreshProducts();
+                                      }
+                                    }
+                                  }
+                                } catch (e) {
+                                  if (mounted) {
+                                    setState(() {
+                                      _clickedTileId = null;
+                                    });
+                                    _timeoutTimer?.cancel();
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text(
+                                            'Error loading product: ${e.toString()}'),
+                                        backgroundColor: Colors.red,
+                                      ),
+                                    );
+                                  }
                                 }
-                              }
+                              },
+                              child: _buildProductCard(template),
+                            );
+                          } else if (index == filteredByCategory.length) {
+                            if (_categoryIsLoadingMore[category] ?? false) {
+                              return _buildLoadingMoreIndicator();
+                            } else if (!(_categoryHasMoreData[category] ??
+                                true)) {
+                              return _buildAllProductsFetched();
                             } else {
-                              final variant =
-                              template['variants'][0] as Product;
-                              Map<String, String>? selectedAttributes;
-                              if (variant.selectedVariants?.isNotEmpty ==
-                                  true) {
-                                selectedAttributes =
-                                    variant.selectedVariants;
-                              }
-                              if (context.mounted) {
-                                await Navigator.push(
-                                  context,
-                                  SlidingPageTransitionRL(
-                                    page: ProductDetailsPage(
-                                      productId: variant.id,
-                                      selectedAttributes:
-                                      selectedAttributes,
-                                    ),
-                                  ),
-                                );
-                                if (mounted) {
-                                  setState(() {
-                                    _clickedTileId = null;
-                                  });
-                                  _timeoutTimer?.cancel();
-                                  _refreshProducts();
-                                }
-                              }
-                            }
-                          } catch (e) {
-                            if (mounted) {
-                              setState(() {
-                                _clickedTileId = null;
-                              });
-                              _timeoutTimer?.cancel();
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text(
-                                      'Error loading product: ${e.toString()}'),
-                                  backgroundColor: Colors.red,
-                                ),
-                              );
+                              return const SizedBox.shrink();
                             }
                           }
+                          return const SizedBox.shrink();
                         },
-                        child: _buildProductCard(template),
                       );
-                    } else if (index == filteredByCategory.length) {
-                      if (_categoryIsLoadingMore[category] ?? false) {
-                        return _buildLoadingMoreIndicator();
-                      } else if (!(_categoryHasMoreData[category] ??
-                          true)) {
-                        return _buildAllProductsFetched();
-                      } else {
-                        return const SizedBox.shrink();
-                      }
-                    }
-                    return const SizedBox.shrink();
-                  },
-                );
               }).toList(),
             ),
           ),
@@ -625,13 +630,13 @@ class _ProductsPageState extends State<ProductsPage>
   }
 
   Future<void> _showVariantsDialog(
-      BuildContext context,
-      Map<String, dynamic> template,
-      OdooClient odooClient,
-      Map<String, String>? selectedAttributes,
-      ) async {
+    BuildContext context,
+    Map<String, dynamic> template,
+    OdooClient odooClient,
+    Map<String, String>? selectedAttributes,
+  ) async {
     final variants =
-    (template['variants'] as List<dynamic>).cast<Product>().toList();
+        (template['variants'] as List<dynamic>).cast<Product>().toList();
     if (variants.isEmpty) return;
 
     final deviceSize = MediaQuery.of(context).size;
@@ -712,7 +717,7 @@ class _ProductsPageState extends State<ProductsPage>
                         final variantAttributes = snapshot.data ?? [];
 
                         final uniqueVariants =
-                        <String, Map<Product, List<Map<String, String>>>>{};
+                            <String, Map<Product, List<Map<String, String>>>>{};
                         for (var entry in variantAttributes) {
                           final variant = entry.keys.first;
                           final attrs = entry.values.first;
@@ -736,7 +741,7 @@ class _ProductsPageState extends State<ProductsPage>
                           ),
                           itemBuilder: (context, index) {
                             final entry =
-                            uniqueVariants.values.elementAt(index);
+                                uniqueVariants.values.elementAt(index);
                             final variant = entry.keys.first;
                             final attributes = entry.values.first;
                             return _buildVariantListItem(
@@ -792,7 +797,7 @@ class _ProductsPageState extends State<ProductsPage>
     bool isSelected = false;
     if (selectedAttributes != null) {
       isSelected = attributes.every((attr) =>
-      selectedAttributes[attr['attribute_name']] == attr['value_name']);
+          selectedAttributes[attr['attribute_name']] == attr['value_name']);
     }
 
     return InkWell(
@@ -801,9 +806,9 @@ class _ProductsPageState extends State<ProductsPage>
         // Construct selectedAttributes from attributes list
         final variantAttributes = Map<String, String>.fromEntries(
           attributes.map((attr) => MapEntry(
-            attr['attribute_name']!,
-            attr['value_name']!,
-          )),
+                attr['attribute_name']!,
+                attr['value_name']!,
+              )),
         );
         // Debug: Log navigation and attributes
         developer.log(
@@ -838,51 +843,51 @@ class _ProductsPageState extends State<ProductsPage>
                 borderRadius: BorderRadius.circular(8),
                 child: imageUrl != null && imageUrl.isNotEmpty
                     ? (imageUrl.startsWith('http')
-                    ? CachedNetworkImage(
-                  imageUrl: imageUrl,
-                  httpHeaders: {
-                    "Cookie":
-                    "session_id=${Provider.of<CylloSessionModel>(context, listen: false).sessionId}",
-                  },
-                  width: 60,
-                  height: 60,
-                  fit: BoxFit.cover,
-                  progressIndicatorBuilder:
-                      (context, url, downloadProgress) => SizedBox(
-                    width: 60,
-                    height: 60,
-                    child: Center(
-                      child: CircularProgressIndicator(
-                        value: downloadProgress.progress,
-                        strokeWidth: 2,
-                        color: primaryColor,
-                      ),
-                    ),
-                  ),
-                  errorWidget: (context, url, error) {
-                    return const Icon(
-                      Icons.inventory_2_rounded,
-                      color: primaryColor,
-                      size: 24,
-                    );
-                  },
-                )
-                    : Image.memory(
-                  imageBytes!,
-                  fit: BoxFit.cover,
-                  errorBuilder: (context, error, stackTrace) {
-                    return const Icon(
-                      Icons.inventory_2_rounded,
-                      color: primaryColor,
-                      size: 24,
-                    );
-                  },
-                ))
+                        ? CachedNetworkImage(
+                            imageUrl: imageUrl,
+                            httpHeaders: {
+                              "Cookie":
+                                  "session_id=${Provider.of<CylloSessionModel>(context, listen: false).sessionId}",
+                            },
+                            width: 60,
+                            height: 60,
+                            fit: BoxFit.cover,
+                            progressIndicatorBuilder:
+                                (context, url, downloadProgress) => SizedBox(
+                              width: 60,
+                              height: 60,
+                              child: Center(
+                                child: CircularProgressIndicator(
+                                  value: downloadProgress.progress,
+                                  strokeWidth: 2,
+                                  color: primaryColor,
+                                ),
+                              ),
+                            ),
+                            errorWidget: (context, url, error) {
+                              return const Icon(
+                                Icons.inventory_2_rounded,
+                                color: primaryColor,
+                                size: 24,
+                              );
+                            },
+                          )
+                        : Image.memory(
+                            imageBytes!,
+                            fit: BoxFit.cover,
+                            errorBuilder: (context, error, stackTrace) {
+                              return const Icon(
+                                Icons.inventory_2_rounded,
+                                color: primaryColor,
+                                size: 24,
+                              );
+                            },
+                          ))
                     : const Icon(
-                  Icons.inventory_2_rounded,
-                  color: primaryColor,
-                  size: 24,
-                ),
+                        Icons.inventory_2_rounded,
+                        color: primaryColor,
+                        size: 24,
+                      ),
               ),
             ),
             const SizedBox(width: 12),
@@ -905,7 +910,7 @@ class _ProductsPageState extends State<ProductsPage>
                     Text(
                       attributes
                           .map((attr) =>
-                      '${attr['attribute_name']}: ${attr['value_name']}')
+                              '${attr['attribute_name']}: ${attr['value_name']}')
                           .join(', '),
                       style: TextStyle(color: Colors.grey[600], fontSize: 12),
                     ),
@@ -1013,7 +1018,7 @@ class _ProductsPageState extends State<ProductsPage>
           borderRadius: BorderRadius.circular(12),
           side: isClicked
               ? const BorderSide(
-              color: Colors.blue, width: 2) // Add border when clicked
+                  color: Colors.blue, width: 2) // Add border when clicked
               : BorderSide.none,
         ),
         child: Padding(
@@ -1035,68 +1040,68 @@ class _ProductsPageState extends State<ProductsPage>
                       borderRadius: BorderRadius.circular(8),
                       child: imageUrl != null && imageUrl.isNotEmpty
                           ? (imageUrl.startsWith('http')
-                          ? CachedNetworkImage(
-                        imageUrl: imageUrl,
-                        httpHeaders: {
-                          "Cookie":
-                          "session_id=${Provider.of<CylloSessionModel>(context, listen: false).sessionId}",
-                        },
-                        width: 60,
-                        height: 60,
-                        fit: BoxFit.cover,
-                        progressIndicatorBuilder:
-                            (context, url, downloadProgress) =>
-                            SizedBox(
-                              width: 60,
-                              height: 60,
-                              child: Center(
-                                child: CircularProgressIndicator(
-                                  value: downloadProgress.progress,
-                                  strokeWidth: 2,
-                                  color: primaryColor,
-                                ),
-                              ),
-                            ),
-                        imageBuilder: (context, imageProvider) {
-                          developer.log(
-                              "Image loaded successfully for template: ${template['name']}");
-                          return Container(
-                            decoration: BoxDecoration(
-                              image: DecorationImage(
-                                image: imageProvider,
-                                fit: BoxFit.cover,
-                              ),
-                            ),
-                          );
-                        },
-                        errorWidget: (context, url, error) {
-                          developer.log(
-                              "Failed to load image for template ${template['name']}: $error");
-                          return const Icon(
-                            Icons.inventory_2_rounded,
-                            color: primaryColor,
-                            size: 24,
-                          );
-                        },
-                      )
-                          : Image.memory(
-                        imageBytes!,
-                        fit: BoxFit.cover,
-                        errorBuilder: (context, error, stackTrace) {
-                          developer.log(
-                              "Failed to load image for template ${template['name']}: $error");
-                          return const Icon(
-                            Icons.inventory_2_rounded,
-                            color: primaryColor,
-                            size: 24,
-                          );
-                        },
-                      ))
+                              ? CachedNetworkImage(
+                                  imageUrl: imageUrl,
+                                  httpHeaders: {
+                                    "Cookie":
+                                        "session_id=${Provider.of<CylloSessionModel>(context, listen: false).sessionId}",
+                                  },
+                                  width: 60,
+                                  height: 60,
+                                  fit: BoxFit.cover,
+                                  progressIndicatorBuilder:
+                                      (context, url, downloadProgress) =>
+                                          SizedBox(
+                                    width: 60,
+                                    height: 60,
+                                    child: Center(
+                                      child: CircularProgressIndicator(
+                                        value: downloadProgress.progress,
+                                        strokeWidth: 2,
+                                        color: primaryColor,
+                                      ),
+                                    ),
+                                  ),
+                                  imageBuilder: (context, imageProvider) {
+                                    developer.log(
+                                        "Image loaded successfully for template: ${template['name']}");
+                                    return Container(
+                                      decoration: BoxDecoration(
+                                        image: DecorationImage(
+                                          image: imageProvider,
+                                          fit: BoxFit.cover,
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                  errorWidget: (context, url, error) {
+                                    developer.log(
+                                        "Failed to load image for template ${template['name']}: $error");
+                                    return const Icon(
+                                      Icons.inventory_2_rounded,
+                                      color: primaryColor,
+                                      size: 24,
+                                    );
+                                  },
+                                )
+                              : Image.memory(
+                                  imageBytes!,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (context, error, stackTrace) {
+                                    developer.log(
+                                        "Failed to load image for template ${template['name']}: $error");
+                                    return const Icon(
+                                      Icons.inventory_2_rounded,
+                                      color: primaryColor,
+                                      size: 24,
+                                    );
+                                  },
+                                ))
                           : const Icon(
-                        Icons.inventory_2_rounded,
-                        color: primaryColor,
-                        size: 24,
-                      ),
+                              Icons.inventory_2_rounded,
+                              color: primaryColor,
+                              size: 24,
+                            ),
                     ),
                   ),
                   const SizedBox(width: 12),
@@ -1112,7 +1117,7 @@ class _ProductsPageState extends State<ProductsPage>
                             color: isClicked
                                 ? Colors.blue[900]
                                 : Colors
-                                .black87, // Change text color when clicked
+                                    .black87, // Change text color when clicked
                           ),
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
@@ -1140,7 +1145,7 @@ class _ProductsPageState extends State<ProductsPage>
                               "\$${(template['price'] as double).toStringAsFixed(2)}",
                               style: TextStyle(
                                 color:
-                                isClicked ? Colors.blue[700] : primaryColor,
+                                    isClicked ? Colors.blue[700] : primaryColor,
                                 // Change price color when clicked
                                 fontWeight: FontWeight.bold,
                               ),
@@ -1202,9 +1207,9 @@ class _ProductsPageState extends State<ProductsPage>
 }
 
 Future<List<Map<String, String>>> _fetchVariantAttributes(
-    OdooClient odooClient,
-    List<int> attributeValueIds,
-    ) async {
+  OdooClient odooClient,
+  List<int> attributeValueIds,
+) async {
   try {
     final attributeValueResult = await odooClient.callKw({
       'model': 'product.template.attribute.value',
@@ -1275,11 +1280,11 @@ class ProductPageShimmer extends StatelessWidget {
             child: Row(
               children: List.generate(
                 4, // Number of shimmer tabs
-                    (index) => Container(
+                (index) => Container(
                   width: 140,
                   height: 30,
                   margin:
-                  const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
                   decoration: BoxDecoration(
                     color: Colors.white,
                     borderRadius: BorderRadius.circular(8),

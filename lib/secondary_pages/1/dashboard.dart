@@ -22,6 +22,7 @@ import '../product_details_page.dart';
 import '../stock_check_page.dart';
 import '../todays_sales_page.dart';
 import 'invoice_list_page.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
 
 class SaleOrder {
   final int id;
@@ -84,7 +85,8 @@ class SaleOrder {
       invoiceStatus: invoiceStatus,
       deliveryStatus: deliveryStatus,
       partnerId: json['partner_id'] ?? [0, 'Unknown'],
-    );  }
+    );
+  }
 
   String get stateFormatted {
     switch (state) {
@@ -107,6 +109,7 @@ class SaleOrder {
     return partnerId.length > 1 ? partnerId[1].toString() : 'Unknown';
   }
 }
+
 class DashboardStats {
   final int todaySales;
   final int pendingDeliveries;
@@ -738,13 +741,15 @@ class OdooService {
 }
 
 class DashboardPage extends StatefulWidget {
+  const DashboardPage({Key? key}) : super(key: key);
+
   @override
   _DashboardPageState createState() => _DashboardPageState();
 }
 
 class _DashboardPageState extends State<DashboardPage>
     with SingleTickerProviderStateMixin {
-  final OdooService _odooService = OdooService();
+  bool _isOffline = false;
   bool _isRefreshing = false;
   late Future<bool> _initFuture;
   DashboardStats? _cachedStats;
@@ -755,18 +760,92 @@ class _DashboardPageState extends State<DashboardPage>
   String? _userImageBase64;
   bool _hasClearedCache = false;
   List<Product>? _lowStockProducts;
+  Timer? _retryTimer;
+  final OdooService _odooService = OdooService();
+  StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
 
   @override
   void initState() {
     super.initState();
     _isMounted = true;
     _initFuture = _initializeService();
+    _setupConnectivityListener();
   }
 
   @override
   void dispose() {
     _isMounted = false;
+    _retryTimer?.cancel();
+    _connectivitySubscription?.cancel();
     super.dispose();
+  }
+
+  void _setupConnectivityListener() {
+    _connectivitySubscription = Connectivity()
+        .onConnectivityChanged
+        .listen((List<ConnectivityResult> results) {
+      if (_isMounted) {
+        setState(() {
+          _isOffline = results.contains(ConnectivityResult.none);
+        });
+
+        if (!results.contains(ConnectivityResult.none)) {
+          // Internet is back, try to refresh data
+          _retryTimer?.cancel();
+          _initializeService();
+        } else {
+          // No internet, start retry timer
+          _startRetryTimer();
+        }
+      }
+    });
+  }
+
+  Future<void> _checkConnectivity() async {
+    final connectivityResult = await Connectivity().checkConnectivity();
+    if (_isMounted) {
+      setState(() {
+        _isOffline = connectivityResult.contains(ConnectivityResult.none);
+      });
+    }
+  }
+
+  Future<bool> _initializeService() async {
+    try {
+      await _checkConnectivity();
+      if (_isOffline) {
+        if (_isMounted) {
+          setState(() {
+            _isInitialLoad = false;
+          });
+        }
+        return false;
+      }
+
+      final initialized = await _odooService.initFromStorage();
+      if (initialized) {
+        await _loadUsername();
+        await _loadCachedData();
+        await _refreshData();
+      }
+      if (_isMounted) {
+        setState(() {
+          _isInitialLoad = false;
+          _isOffline = false;
+        });
+      }
+      return initialized;
+    } catch (e) {
+      debugPrint('Initialization error: $e');
+      if (_isMounted) {
+        setState(() {
+          _isInitialLoad = false;
+          _isOffline = true;
+        });
+        _startRetryTimer();
+      }
+      return false;
+    }
   }
 
   Future<void> _loadUsername() async {
@@ -784,7 +863,6 @@ class _DashboardPageState extends State<DashboardPage>
       final lastCacheDate = prefs.getString('last_cache_date');
       final today = DateTime.now().toIso8601String().split('T')[0];
 
-      // Clear cache if it's a new day
       if (lastCacheDate != today && !_hasClearedCache) {
         await Future.wait([
           prefs.remove('cached_dashboard_stats'),
@@ -794,53 +872,30 @@ class _DashboardPageState extends State<DashboardPage>
         ]);
         await prefs.setString('last_cache_date', today);
         _hasClearedCache = true;
-        debugPrint('Cleared stale cache for date: $today');
       }
 
-      // Load dashboard stats with null safety
-      try {
-        final statsJson = prefs.getString('cached_dashboard_stats');
-        if (statsJson != null && statsJson.isNotEmpty) {
-          _cachedStats = DashboardStats.fromJson(jsonDecode(statsJson));
-        }
-      } catch (e) {
-        debugPrint('Error loading dashboard stats: $e');
+      // Load cached dashboard stats
+      final statsJson = prefs.getString('cached_dashboard_stats');
+      if (statsJson != null && statsJson.isNotEmpty) {
+        _cachedStats = DashboardStats.fromJson(jsonDecode(statsJson));
       }
 
-      // Load customers with null safety
-      try {
-        final customersJson = prefs.getString('cached_customers');
-        if (customersJson != null && customersJson.isNotEmpty) {
-          // Add customer parsing logic here if needed
-        }
-      } catch (e) {
-        debugPrint('Error loading customers: $e');
+      // Load cached sale orders
+      final ordersJson = prefs.getString('cached_sale_orders');
+      if (ordersJson != null && ordersJson.isNotEmpty) {
+        final ordersList = jsonDecode(ordersJson) as List;
+        _cachedOrders = ordersList
+            .map((json) => SaleOrder.fromJson(json as Map<String, dynamic>))
+            .toList();
       }
 
-      // Load orders with null safety
-      try {
-        final ordersJson = prefs.getString('cached_sale_orders');
-        if (ordersJson != null && ordersJson.isNotEmpty) {
-          final ordersList = jsonDecode(ordersJson) as List;
-          _cachedOrders = ordersList
-              .map((json) => SaleOrder.fromJson(json as Map<String, dynamic>))
-              .toList();
-        }
-      } catch (e) {
-        debugPrint('Error loading sale orders: $e');
-      }
-
-      // Load low stock products with null safety
-      try {
-        final lowStockProductsJson = prefs.getString('cached_low_stock_products');
-        if (lowStockProductsJson != null && lowStockProductsJson.isNotEmpty) {
-          final productsList = jsonDecode(lowStockProductsJson) as List;
-          _lowStockProducts = productsList
-              .map((json) => Product.fromJson(json as Map<String, dynamic>))
-              .toList();
-        }
-      } catch (e) {
-        debugPrint('Error loading low stock products: $e');
+      // Load cached low stock products
+      final lowStockJson = prefs.getString('cached_low_stock_products');
+      if (lowStockJson != null && lowStockJson.isNotEmpty) {
+        final productsList = jsonDecode(lowStockJson) as List;
+        _lowStockProducts = productsList
+            .map((json) => Product.fromJson(json as Map<String, dynamic>))
+            .toList();
       }
 
       if (_isMounted) {
@@ -850,50 +905,42 @@ class _DashboardPageState extends State<DashboardPage>
       debugPrint('Error loading cached data: $e');
     }
   }
-  Future<void> _saveCachedData({
-    required DashboardStats stats,
-    required List<Customer> customers,
-    required List<SaleOrder> orders,
-    required List<Product> lowStockProducts,
-  }) async {
+
+  Future<void> _cacheData() async {
     final prefs = await SharedPreferences.getInstance();
     try {
-      final statsJson = jsonEncode(stats.toJson());
-      await prefs.setString('cached_dashboard_stats', statsJson);
-      await prefs.setString('cached_customers',
-          jsonEncode(customers.map((c) => c.toJson()).toList()));
-      await prefs.setString('cached_sale_orders',
-          jsonEncode(orders.map((o) => o.toJson()).toList()));
-      await prefs.setString('cached_low_stock_products',
-          jsonEncode(lowStockProducts.map((p) => p.toJson()).toList()));
-      // debugPrint('Saved cached stats: $statsJson');
-    } catch (e) {
-      debugPrint('Error saving cached data: $e');
-    }
-  }
+      // Cache dashboard stats
+      if (_cachedStats != null) {
+        await prefs.setString(
+          'cached_dashboard_stats',
+          jsonEncode(_cachedStats!.toJson()),
+        );
+      }
 
-  Future<bool> _initializeService() async {
-    try {
-      final initialized = await _odooService.initFromStorage();
-      if (initialized) {
-        await _loadUsername();
-        await _loadCachedData();
-        await _refreshData();
+      // Cache sale orders
+      if (_cachedOrders != null) {
+        await prefs.setString(
+          'cached_sale_orders',
+          jsonEncode(_cachedOrders!.map((order) => order.toJson()).toList()),
+        );
       }
-      if (_isMounted) {
-        setState(() {
-          _isInitialLoad = false;
-        });
+
+      // Cache low stock products
+      if (_lowStockProducts != null) {
+        await prefs.setString(
+          'cached_low_stock_products',
+          jsonEncode(
+              _lowStockProducts!.map((product) => product.toJson()).toList()),
+        );
       }
-      return initialized;
+
+      // Update last cache date
+      await prefs.setString(
+        'last_cache_date',
+        DateTime.now().toIso8601String().split('T')[0],
+      );
     } catch (e) {
-      debugPrint('Initialization error: $e');
-      if (_isMounted) {
-        setState(() {
-          _isInitialLoad = false;
-        });
-      }
-      return false;
+      debugPrint('Error caching data: $e');
     }
   }
 
@@ -903,54 +950,89 @@ class _DashboardPageState extends State<DashboardPage>
       _isRefreshing = true;
     });
     try {
-      _initFuture = _initializeService();
       final stats = await _odooService.getDashboardStats();
-      final customers = await _odooService.getTodayCustomers();
       final orders = await _odooService.getRecentSaleOrders();
       final lowStockProducts = await _odooService.getLowStockProducts();
-      await _saveCachedData(
-        stats: stats,
-        customers: customers,
-        orders: orders,
-        lowStockProducts: lowStockProducts,
-      );
+
       if (_isMounted) {
         setState(() {
           _cachedStats = stats;
           _cachedOrders = orders;
           _lowStockProducts = lowStockProducts;
           _isRefreshing = false;
+          _isOffline = false;
         });
+        // Cache the new data
+        await _cacheData();
       }
     } catch (e) {
       debugPrint('Error refreshing data: $e');
       if (_isMounted) {
         setState(() {
           _isRefreshing = false;
+          _isOffline = true;
         });
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Failed to refresh dashboard. Please try again.'),
-            backgroundColor: Colors.red,
-          ),
-        );
       }
     }
   }
 
-  Future<void> _handleRefresh() async {
-    await _refreshData();
-    if (mounted) {
-      await Future.delayed(const Duration(seconds: 2));
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Dashboard refreshed')),
-      );
-    }
+  void _startRetryTimer() {
+    _retryTimer?.cancel();
+    _retryTimer = Timer.periodic(const Duration(seconds: 30), (timer) {
+      _initializeService();
+    });
   }
+
   void _showRevenueDetailsDialog() {
     showDialog(
       context: context,
       builder: (context) => RevenueDetailsDialog(odooService: _odooService),
+    );
+  }
+
+  Widget _buildOfflineBanner() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+      decoration: BoxDecoration(
+        color: Colors.red[50],
+        border: Border(
+          bottom: BorderSide(
+            color: Colors.red[200]!,
+            width: 1,
+          ),
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.wifi_off, color: Colors.red[700], size: 20),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'You are currently offline. Some features may be limited.',
+              style: TextStyle(
+                color: Colors.red[700],
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+          TextButton.icon(
+            onPressed: () {
+              _retryTimer?.cancel();
+              _initializeService();
+            },
+            icon: Icon(Icons.refresh, color: Colors.red[700], size: 18),
+            label: Text(
+              'Retry',
+              style: TextStyle(
+                color: Colors.red[700],
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -960,54 +1042,22 @@ class _DashboardPageState extends State<DashboardPage>
       return _buildDashboardShimmer();
     }
 
-    return FutureBuilder<bool>(
-      future: _initFuture,
-      builder: (context, snapshot) {
-        if (snapshot.hasError) {
-          return Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Text(
-                  'Failed to initialize. Please try again.',
-                  style: TextStyle(fontSize: 16, color: Colors.grey),
-                ),
-                const SizedBox(height: 16),
-                ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFFC13030),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                  onPressed: () {
-                    if (_isMounted) {
-                      setState(() {
-                        _initFuture = _initializeService();
-                      });
-                    }
-                  },
-                  child: const Text('Retry',
-                      style: TextStyle(color: Colors.white)),
-                ),
-                const SizedBox(height: 8),
-                TextButton(
-                  onPressed: () {
-                    Navigator.pushReplacement(
-                      context,
-                      MaterialPageRoute(builder: (context) => Login()),
-                    );
-                  },
-                  child: const Text('Log In',
-                      style: TextStyle(color: Color(0xFFC13030))),
-                ),
-              ],
+    return Scaffold(
+      body: Column(
+        children: [
+          if (_isOffline) _buildOfflineBanner(),
+          Expanded(
+            child: RefreshIndicator(
+              onRefresh: () async {
+                _retryTimer?.cancel();
+                await _initializeService();
+              },
+              color: const Color(0xFFC13030),
+              child: _buildDashboard(),
             ),
-          );
-        }
-
-        return _buildDashboard();
-      },
+          ),
+        ],
+      ),
     );
   }
 
@@ -2092,6 +2142,20 @@ class _DashboardPageState extends State<DashboardPage>
         ),
       ),
     );
+  }
+
+  Future<void> _handleRefresh() async {
+    await _refreshData();
+    if (mounted) {
+      await Future.delayed(const Duration(seconds: 2));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Dashboard refreshed'),
+          behavior: SnackBarBehavior.floating,
+          duration: Duration(seconds: 2),
+        ),
+      );
+    }
   }
 }
 

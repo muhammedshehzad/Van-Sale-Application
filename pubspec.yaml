@@ -59,6 +59,7 @@ dependencies:
   animate_do: ^4.2.0
   dropdown_search: ^6.0.2
   html: ^0.15.6
+  connectivity_plus: ^6.1.4
 
 dev_dependencies:
   flutter_test:

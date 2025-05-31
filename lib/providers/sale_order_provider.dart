@@ -719,7 +719,7 @@ class SalesOrderProvider with ChangeNotifier {
   Future<void> fetchProducts({
     bool isLoadMore = false,
     String searchQuery = '',
-    required String category,
+    required String category, // Make category required
   }) async {
     if (isLoadMore &&
         (!_categoryHasMoreData[category]! || _categoryIsLoadingMore[category]!))
@@ -760,7 +760,13 @@ class SalesOrderProvider with ChangeNotifier {
         domain.add(['default_code', 'ilike', searchQuery]);
       }
 
-      // Fetch products and count in a single call if possible
+      final countFuture = client.callKw({
+        'model': 'product.product',
+        'method': 'search_count',
+        'args': [domain],
+        'kwargs': {},
+      });
+
       final productResultFuture = client.callKw({
         'model': 'product.product',
         'method': 'search_read',
@@ -779,7 +785,6 @@ class SalesOrderProvider with ChangeNotifier {
             'product_tmpl_id',
             'attribute_line_ids',
             'product_template_attribute_value_ids',
-            'product_variant_count',
           ],
           'order': 'name asc',
           'limit': _pageSize,
@@ -787,31 +792,17 @@ class SalesOrderProvider with ChangeNotifier {
         },
       });
 
-      final countFuture = client.callKw({
-        'model': 'product.product',
-        'method': 'search_count',
-        'args': [domain],
-        'kwargs': {},
-      });
-
       final results = await Future.wait([countFuture, productResultFuture]);
       _categoryTotalProducts[category] = results[0] as int;
       final productResult = results[1] as List;
 
-      if (productResult.isEmpty) {
-        _categoryProducts[category] = [];
-        _categoryHasMoreData[category] = false;
-        notifyListeners();
-        return;
-      }
-
-      // Fetch all related data in a single batch
+      // Process products (same as before, but store in category-specific list)
       final templateIds = productResult
           .map((productData) => productData['product_tmpl_id'][0] as int)
           .toSet()
           .toList();
 
-      final attributeLineFuture = client.callKw({
+      final attributeLineResult = await client.callKw({
         'model': 'product.template.attribute.line',
         'method': 'search_read',
         'args': [
@@ -828,7 +819,24 @@ class SalesOrderProvider with ChangeNotifier {
         },
       });
 
-      final templateAttributeValueFuture = client.callKw({
+      final attributeIds = attributeLineResult
+          .map((attr) => attr['attribute_id'][0] as int)
+          .toSet()
+          .toList();
+      final attributeNames = await client.callKw({
+        'model': 'product.attribute',
+        'method': 'search_read',
+        'args': [
+          [
+            ['id', 'in', attributeIds]
+          ]
+        ],
+        'kwargs': {
+          'fields': ['id', 'name'],
+        },
+      });
+
+      final templateAttributeValueResult = await client.callKw({
         'model': 'product.template.attribute.value',
         'method': 'search_read',
         'args': [
@@ -846,31 +854,11 @@ class SalesOrderProvider with ChangeNotifier {
         },
       });
 
-      final attributeIds = (await attributeLineFuture)
-          .map((attr) => attr['attribute_id'][0] as int)
-          .toSet()
-          .toList();
-
-      final attributeNamesFuture = client.callKw({
-        'model': 'product.attribute',
-        'method': 'search_read',
-        'args': [
-          [
-            ['id', 'in', attributeIds]
-          ]
-        ],
-        'kwargs': {
-          'fields': ['id', 'name'],
-        },
-      });
-
-      final templateAttributeValueResult = await templateAttributeValueFuture;
       final valueIds = templateAttributeValueResult
           .map((attr) => attr['product_attribute_value_id'][0] as int)
           .toSet()
           .toList();
-
-      final attributeValuesFuture = client.callKw({
+      final attributeValues = await client.callKw({
         'model': 'product.attribute.value',
         'method': 'search_read',
         'args': [
@@ -883,7 +871,7 @@ class SalesOrderProvider with ChangeNotifier {
         },
       });
 
-      final productAttributeValueFuture = client.callKw({
+      final productAttributeValueResult = await client.callKw({
         'model': 'product.product',
         'method': 'search_read',
         'args': [
@@ -896,12 +884,6 @@ class SalesOrderProvider with ChangeNotifier {
         },
       });
 
-      final attributeLineResult = await attributeLineFuture;
-      final attributeNames = await attributeNamesFuture;
-      final attributeValues = await attributeValuesFuture;
-      final productAttributeValueResult = await productAttributeValueFuture;
-
-      // Process attributes and products (same as original)
       final attributeNameMap = {
         for (var attr in attributeNames) attr['id']: attr['name'] as String
       };
@@ -927,6 +909,7 @@ class SalesOrderProvider with ChangeNotifier {
           'price_extra': priceExtra,
         };
       }
+      ;
 
       final productAttributeValueMap = <int, Map<String, String>>{};
       for (var productAttr in productAttributeValueResult) {
@@ -947,6 +930,23 @@ class SalesOrderProvider with ChangeNotifier {
             final attributeName =
                 (attributeNameMap[attributeId] ?? 'Unknown').trim();
             selectedVariants[attributeName] = valueName;
+          }
+        }
+
+        if (selectedVariants.isEmpty && valueIds.isEmpty) {
+          final templateId = productResult.firstWhere(
+              (p) => p['id'] == productId)['product_tmpl_id'][0] as int;
+          final templateAttributes = <int, List<ProductAttribute>>{};
+
+          final attributes = templateAttributes[templateId] ?? [];
+          for (var attr in attributes) {
+            for (var value in attr.values) {
+              if (productName.toLowerCase().contains(value.toLowerCase())) {
+                selectedVariants[attr.name] = value;
+                developer.log(
+                    'Inferred selectedVariants for product $productId: ${attr.name}=$value from name=$productName');
+              }
+            }
           }
         }
 

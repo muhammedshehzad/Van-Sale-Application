@@ -9,6 +9,7 @@ import 'package:provider/provider.dart';
 import 'package:shimmer/shimmer.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:url_launcher/url_launcher_string.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
 import '../../assets/widgets and consts/page_transition.dart';
 import '../../assets/widgets and consts/create_order_directly_page.dart';
 import '../../authentication/cyllo_session_model.dart';
@@ -47,12 +48,16 @@ class _CustomersListState extends State<CustomersList> {
   final double _tinyPadding = 4.0;
   final double _cardBorderRadius = 10.0;
   Timer? _debounce;
+  bool _isOffline = false;
+  StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
+  Timer? _retryTimer;
 
   @override
   void initState() {
     super.initState();
     _isLoading = true;
     _loadCustomers();
+    _setupConnectivityListener();
     _searchController.addListener(() {
       if (_debounce?.isActive ?? false) _debounce!.cancel();
       _debounce = Timer(const Duration(milliseconds: 500), () {
@@ -92,10 +97,12 @@ class _CustomersListState extends State<CustomersList> {
 
   @override
   void dispose() {
+    _connectivitySubscription?.cancel();
+    _retryTimer?.cancel();
+    _debounce?.cancel();
     _searchController.dispose();
     _notesController.dispose();
     _scrollController.dispose();
-    _debounce?.cancel();
     super.dispose();
   }
 
@@ -120,21 +127,68 @@ class _CustomersListState extends State<CustomersList> {
     });
   }
 
-  Future<void> _loadCustomers({bool isLoadMore = false}) async {
-    const cacheDuration = Duration(seconds: 30);
-    if (!isLoadMore &&
-        _cachedCustomers.isNotEmpty &&
-        _lastFetchTime != null &&
-        DateTime.now().difference(_lastFetchTime!) < cacheDuration) {
+  void _setupConnectivityListener() {
+    _connectivitySubscription = Connectivity()
+        .onConnectivityChanged
+        .listen((List<ConnectivityResult> results) {
+      if (mounted) {
+        setState(() {
+          _isOffline = results.contains(ConnectivityResult.none);
+        });
+
+        if (!results.contains(ConnectivityResult.none)) {
+          // Internet is back, try to refresh data
+          _retryTimer?.cancel();
+          _loadCustomers();
+        } else {
+          // No internet, start retry timer
+          _startRetryTimer();
+        }
+      }
+    });
+  }
+
+  Future<void> _checkConnectivity() async {
+    final connectivityResult = await Connectivity().checkConnectivity();
+    if (mounted) {
       setState(() {
-        _allCustomers = List.from(_cachedCustomers);
-        _filteredCustomers = List.from(_allCustomers);
-        _isLoading = false;
+        _isOffline = connectivityResult.contains(ConnectivityResult.none);
       });
-      return;
     }
+  }
+
+  void _startRetryTimer() {
+    _retryTimer?.cancel();
+    _retryTimer = Timer.periodic(const Duration(seconds: 30), (timer) {
+      _loadCustomers();
+    });
+  }
+
+  Future<void> _loadCustomers({bool isLoadMore = false}) async {
+    if (!mounted) return;
 
     try {
+      await _checkConnectivity();
+      if (_isOffline) {
+        setState(() {
+          _isLoading = false;
+        });
+        return;
+      }
+
+      const cacheDuration = Duration(seconds: 30);
+      if (!isLoadMore &&
+          _cachedCustomers.isNotEmpty &&
+          _lastFetchTime != null &&
+          DateTime.now().difference(_lastFetchTime!) < cacheDuration) {
+        setState(() {
+          _allCustomers = List.from(_cachedCustomers);
+          _filteredCustomers = List.from(_allCustomers);
+          _isLoading = false;
+        });
+        return;
+      }
+
       final orderPickingProvider =
           Provider.of<OrderPickingProvider>(context, listen: false);
       final client = await SessionManager.getActiveClient();
@@ -238,16 +292,20 @@ class _CustomersListState extends State<CustomersList> {
       orderPickingProvider.setCustomers(_allCustomers);
     } catch (e) {
       debugPrint('Error fetching customers: $e');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to fetch customers: $e'),
-          backgroundColor: Colors.red,
-          duration: const Duration(seconds: 3),
-        ),
-      );
-      setState(() {
-        _isLoading = false;
-      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to fetch customers: $e'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+        setState(() {
+          _isLoading = false;
+          _isOffline = true;
+        });
+        _startRetryTimer();
+      }
     }
   }
 
@@ -728,6 +786,52 @@ class _CustomersListState extends State<CustomersList> {
     );
   }
 
+  Widget _buildOfflineBanner() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+      decoration: BoxDecoration(
+        color: Colors.red[50],
+        border: Border(
+          bottom: BorderSide(
+            color: Colors.red[200]!,
+            width: 1,
+          ),
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.wifi_off, color: Colors.red[700], size: 20),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'You are currently offline. Some features may be limited.',
+              style: TextStyle(
+                color: Colors.red[700],
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+          TextButton.icon(
+            onPressed: () {
+              _retryTimer?.cancel();
+              _loadCustomers();
+            },
+            icon: Icon(Icons.refresh, color: Colors.red[700], size: 18),
+            label: Text(
+              'Retry',
+              style: TextStyle(
+                color: Colors.red[700],
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget buildCustomersList() {
     return Column(
       children: [
@@ -784,6 +888,7 @@ class _CustomersListState extends State<CustomersList> {
               ? _buildCustomersListShimmer()
               : RefreshIndicator(
                   onRefresh: () async {
+                    _retryTimer?.cancel();
                     setState(() {
                       _isLoading = true;
                       _cachedCustomers.clear();
@@ -828,7 +933,8 @@ class _CustomersListState extends State<CustomersList> {
                                 elevation: 2,
                                 shadowColor: Colors.black.withOpacity(0.1),
                                 shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(_cardBorderRadius),
+                                  borderRadius:
+                                      BorderRadius.circular(_cardBorderRadius),
                                 ),
                                 child: InkWell(
                                   onTap: () {
@@ -836,11 +942,13 @@ class _CustomersListState extends State<CustomersList> {
                                     Navigator.push(
                                       context,
                                       SlidingPageTransitionRL(
-                                        page: CustomerDetailsPage(customer: customer),
+                                        page: CustomerDetailsPage(
+                                            customer: customer),
                                       ),
                                     ).then((_) {
                                       _isActivePage = true;
-                                      if (_searchController.text != _searchQuery) {
+                                      if (_searchController.text !=
+                                          _searchQuery) {
                                         setState(() {
                                           _currentPage = 0;
                                           _hasMoreData = true;
@@ -854,12 +962,17 @@ class _CustomersListState extends State<CustomersList> {
                                       }
                                     });
                                   },
-                                  borderRadius: BorderRadius.circular(_cardBorderRadius),
+                                  borderRadius:
+                                      BorderRadius.circular(_cardBorderRadius),
                                   child: Container(
                                     decoration: BoxDecoration(
-                                      borderRadius: BorderRadius.circular(_cardBorderRadius),
+                                      borderRadius: BorderRadius.circular(
+                                          _cardBorderRadius),
                                       gradient: LinearGradient(
-                                        colors: [Colors.white, Colors.grey[50]!],
+                                        colors: [
+                                          Colors.white,
+                                          Colors.grey[50]!
+                                        ],
                                         begin: Alignment.topLeft,
                                         end: Alignment.bottomRight,
                                       ),
@@ -867,14 +980,16 @@ class _CustomersListState extends State<CustomersList> {
                                     child: Padding(
                                       padding: EdgeInsets.all(_standardPadding),
                                       child: Row(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
                                         children: [
                                           Container(
                                             decoration: BoxDecoration(
                                               shape: BoxShape.circle,
                                               boxShadow: [
                                                 BoxShadow(
-                                                  color: Colors.black.withOpacity(0.1),
+                                                  color: Colors.black
+                                                      .withOpacity(0.1),
                                                   blurRadius: 8,
                                                   offset: Offset(0, 2),
                                                 ),
@@ -882,132 +997,229 @@ class _CustomersListState extends State<CustomersList> {
                                             ),
                                             child: CircleAvatar(
                                               radius: 32,
-                                              backgroundColor: primaryColor.withOpacity(0.1),
-                                              child: customer.imageUrl != null && customer.imageUrl!.isNotEmpty
+                                              backgroundColor: Colors.grey[100],
+                                              child: customer.imageUrl !=
+                                                          null &&
+                                                      customer
+                                                          .imageUrl!.isNotEmpty
                                                   ? ClipOval(
-                                                child: customer.imageUrl!.startsWith('http')
-                                                    ? CachedNetworkImage(
-                                                  imageUrl: customer.imageUrl!,
-                                                  width: 64,
-                                                  height: 64,
-                                                  fit: BoxFit.cover,
-                                                  placeholder: (context, url) => Container(
-                                                    decoration: BoxDecoration(
-                                                      shape: BoxShape.circle,
-                                                      color: primaryColor.withOpacity(0.1),
-                                                    ),
-                                                    child: const Center(
-                                                      child: CircularProgressIndicator(
-                                                        strokeWidth: 2,
-                                                        color: primaryColor,
-                                                      ),
-                                                    ),
-                                                  ),
-                                                  errorWidget: (context, url, error) => Container(
-                                                    decoration: BoxDecoration(
-                                                      shape: BoxShape.circle,
-                                                      gradient: LinearGradient(
-                                                        colors: [primaryColor.withOpacity(0.8), primaryColor],
-                                                        begin: Alignment.topLeft,
-                                                        end: Alignment.bottomRight,
-                                                      ),
-                                                    ),
-                                                    child: Center(
-                                                      child: Text(
-                                                        customer.name.substring(0, 2).toUpperCase(),
-                                                        style: const TextStyle(
-                                                          fontSize: 22,
-                                                          fontWeight: FontWeight.bold,
-                                                          color: Colors.white,
-                                                        ),
-                                                      ),
-                                                    ),
-                                                  ),
-                                                )
-                                                    : Image.memory(
-                                                  base64Decode(customer.imageUrl!.split(',').last),
-                                                  width: 64,
-                                                  height: 64,
-                                                  fit: BoxFit.cover,
-                                                  errorBuilder: (context, error, stackTrace) => Container(
-                                                    decoration: BoxDecoration(
-                                                      shape: BoxShape.circle,
-                                                      gradient: LinearGradient(
-                                                        colors: [primaryColor.withOpacity(0.8), primaryColor],
-                                                        begin: Alignment.topLeft,
-                                                        end: Alignment.bottomRight,
-                                                      ),
-                                                    ),
-                                                    child: Center(
-                                                      child: Text(
-                                                        customer.name.substring(0, 2).toUpperCase(),
-                                                        style: const TextStyle(
-                                                          fontSize: 22,
-                                                          fontWeight: FontWeight.bold,
-                                                          color: Colors.white,
-                                                        ),
-                                                      ),
-                                                    ),
-                                                  ),
-                                                ),
-                                              )
+                                                      child: customer.imageUrl!
+                                                              .startsWith(
+                                                                  'http')
+                                                          ? CachedNetworkImage(
+                                                              imageUrl: customer
+                                                                  .imageUrl!,
+                                                              width: 64,
+                                                              height: 64,
+                                                              fit: BoxFit.cover,
+                                                              placeholder:
+                                                                  (context,
+                                                                          url) =>
+                                                                      Container(
+                                                                decoration:
+                                                                    BoxDecoration(
+                                                                  shape: BoxShape
+                                                                      .circle,
+                                                                  color: Colors
+                                                                          .grey[
+                                                                      100],
+                                                                ),
+                                                                child: Center(
+                                                                  child:
+                                                                      CircularProgressIndicator(
+                                                                    strokeWidth:
+                                                                        2,
+                                                                    color: Colors
+                                                                            .grey[
+                                                                        400],
+                                                                  ),
+                                                                ),
+                                                              ),
+                                                              errorWidget:
+                                                                  (context, url,
+                                                                          error) =>
+                                                                      Container(
+                                                                decoration:
+                                                                    BoxDecoration(
+                                                                  shape: BoxShape
+                                                                      .circle,
+                                                                  gradient:
+                                                                      LinearGradient(
+                                                                    colors: [
+                                                                      Colors.grey[
+                                                                          300]!,
+                                                                      Colors.grey[
+                                                                          400]!
+                                                                    ],
+                                                                    begin: Alignment
+                                                                        .topLeft,
+                                                                    end: Alignment
+                                                                        .bottomRight,
+                                                                  ),
+                                                                ),
+                                                                child: Center(
+                                                                  child: Text(
+                                                                    customer
+                                                                        .name
+                                                                        .substring(
+                                                                            0,
+                                                                            2)
+                                                                        .toUpperCase(),
+                                                                    style:
+                                                                        const TextStyle(
+                                                                      fontSize:
+                                                                          22,
+                                                                      fontWeight:
+                                                                          FontWeight
+                                                                              .bold,
+                                                                      color: Colors
+                                                                          .white,
+                                                                    ),
+                                                                  ),
+                                                                ),
+                                                              ),
+                                                            )
+                                                          : Image.memory(
+                                                              base64Decode(
+                                                                  customer
+                                                                      .imageUrl!
+                                                                      .split(
+                                                                          ',')
+                                                                      .last),
+                                                              width: 64,
+                                                              height: 64,
+                                                              fit: BoxFit.cover,
+                                                              errorBuilder:
+                                                                  (context,
+                                                                          error,
+                                                                          stackTrace) =>
+                                                                      Container(
+                                                                decoration:
+                                                                    BoxDecoration(
+                                                                  shape: BoxShape
+                                                                      .circle,
+                                                                  gradient:
+                                                                      LinearGradient(
+                                                                    colors: [
+                                                                      Colors.grey[
+                                                                          300]!,
+                                                                      Colors.grey[
+                                                                          400]!
+                                                                    ],
+                                                                    begin: Alignment
+                                                                        .topLeft,
+                                                                    end: Alignment
+                                                                        .bottomRight,
+                                                                  ),
+                                                                ),
+                                                                child: Center(
+                                                                  child: Text(
+                                                                    customer
+                                                                        .name
+                                                                        .substring(
+                                                                            0,
+                                                                            2)
+                                                                        .toUpperCase(),
+                                                                    style:
+                                                                        const TextStyle(
+                                                                      fontSize:
+                                                                          22,
+                                                                      fontWeight:
+                                                                          FontWeight
+                                                                              .bold,
+                                                                      color: Colors
+                                                                          .white,
+                                                                    ),
+                                                                  ),
+                                                                ),
+                                                              ),
+                                                            ),
+                                                    )
                                                   : Container(
-                                                decoration: BoxDecoration(
-                                                  shape: BoxShape.circle,
-                                                  gradient: LinearGradient(
-                                                    colors: [primaryColor.withOpacity(0.8), primaryColor],
-                                                    begin: Alignment.topLeft,
-                                                    end: Alignment.bottomRight,
-                                                  ),
-                                                ),
-                                                child: Center(
-                                                  child: Text(
-                                                    customer.name.substring(0, 2).toUpperCase(),
-                                                    style: const TextStyle(
-                                                      fontSize: 22,
-                                                      fontWeight: FontWeight.bold,
-                                                      color: Colors.white,
+                                                      decoration: BoxDecoration(
+                                                        shape: BoxShape.circle,
+                                                        gradient:
+                                                            LinearGradient(
+                                                          colors: [
+                                                            Colors.grey[300]!,
+                                                            Colors.grey[400]!
+                                                          ],
+                                                          begin:
+                                                              Alignment.topLeft,
+                                                          end: Alignment
+                                                              .bottomRight,
+                                                        ),
+                                                      ),
+                                                      child: Center(
+                                                        child: Text(
+                                                          customer.name
+                                                              .substring(0, 2)
+                                                              .toUpperCase(),
+                                                          style:
+                                                              const TextStyle(
+                                                            fontSize: 22,
+                                                            fontWeight:
+                                                                FontWeight.bold,
+                                                            color: Colors.white,
+                                                          ),
+                                                        ),
+                                                      ),
                                                     ),
-                                                  ),
-                                                ),
-                                              ),
                                             ),
                                           ),
                                           SizedBox(width: _standardPadding),
                                           Expanded(
                                             child: Column(
-                                              crossAxisAlignment: CrossAxisAlignment.start,
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.start,
                                               children: [
                                                 Row(
-                                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                                  mainAxisAlignment:
+                                                      MainAxisAlignment
+                                                          .spaceBetween,
                                                   children: [
                                                     Expanded(
                                                       child: Text(
                                                         customer.name,
                                                         style: const TextStyle(
-                                                          fontWeight: FontWeight.w600,
+                                                          fontWeight:
+                                                              FontWeight.w600,
                                                           fontSize: 18,
                                                           color: Colors.black87,
                                                         ),
                                                       ),
                                                     ),
                                                     Container(
-                                                      padding: EdgeInsets.symmetric(
-                                                        horizontal: _smallPadding + 2,
-                                                        vertical: _tinyPadding + 2,
+                                                      padding:
+                                                          EdgeInsets.symmetric(
+                                                        horizontal:
+                                                            _smallPadding + 2,
+                                                        vertical:
+                                                            _tinyPadding + 2,
                                                       ),
                                                       decoration: BoxDecoration(
-                                                        gradient: LinearGradient(
-                                                          colors: [Colors.green[400]!, Colors.green[600]!],
-                                                          begin: Alignment.topLeft,
-                                                          end: Alignment.bottomRight,
+                                                        gradient:
+                                                            LinearGradient(
+                                                          colors: [
+                                                            Colors.green[400]!,
+                                                            Colors.green[600]!
+                                                          ],
+                                                          begin:
+                                                              Alignment.topLeft,
+                                                          end: Alignment
+                                                              .bottomRight,
                                                         ),
-                                                        borderRadius: BorderRadius.circular(20),
+                                                        borderRadius:
+                                                            BorderRadius
+                                                                .circular(20),
                                                         boxShadow: [
                                                           BoxShadow(
-                                                            color: Colors.green.withOpacity(0.3),
+                                                            color: Colors.green
+                                                                .withOpacity(
+                                                                    0.3),
                                                             blurRadius: 4,
-                                                            offset: Offset(0, 2),
+                                                            offset:
+                                                                Offset(0, 2),
                                                           ),
                                                         ],
                                                       ),
@@ -1016,84 +1228,126 @@ class _CustomersListState extends State<CustomersList> {
                                                         style: TextStyle(
                                                           color: Colors.white,
                                                           fontSize: 11,
-                                                          fontWeight: FontWeight.w600,
+                                                          fontWeight:
+                                                              FontWeight.w600,
                                                           letterSpacing: 0.5,
                                                         ),
                                                       ),
                                                     ),
                                                   ],
                                                 ),
-                                                SizedBox(height: _tinyPadding + 2),
-                                                if (customer.city != null && customer.city!.isNotEmpty && customer.city != 'false') ...[
+                                                SizedBox(
+                                                    height: _tinyPadding + 2),
+                                                if (customer.city != null &&
+                                                    customer.city!.isNotEmpty &&
+                                                    customer.city !=
+                                                        'false') ...[
                                                   Row(
                                                     children: [
-                                                      Icon(Icons.location_city, size: 14, color: Colors.grey[600]),
+                                                      Icon(Icons.location_city,
+                                                          size: 14,
+                                                          color:
+                                                              Colors.grey[600]),
                                                       SizedBox(width: 4),
                                                       Text(
                                                         customer.city!,
                                                         style: TextStyle(
-                                                          color: Colors.grey[700],
+                                                          color:
+                                                              Colors.grey[700],
                                                           fontSize: 13,
-                                                          fontWeight: FontWeight.w500,
+                                                          fontWeight:
+                                                              FontWeight.w500,
                                                         ),
                                                       ),
                                                     ],
                                                   ),
-                                                  SizedBox(height: _tinyPadding),
+                                                  SizedBox(
+                                                      height: _tinyPadding),
                                                 ],
-                                                if (customer.phone != null && customer.phone!.isNotEmpty && customer.phone != 'false') ...[
+                                                if (customer.phone != null &&
+                                                    customer
+                                                        .phone!.isNotEmpty &&
+                                                    customer.phone !=
+                                                        'false') ...[
                                                   Row(
                                                     children: [
-                                                      Icon(Icons.phone, size: 14, color: Colors.grey[600]),
+                                                      Icon(Icons.phone,
+                                                          size: 14,
+                                                          color:
+                                                              Colors.grey[600]),
                                                       SizedBox(width: 4),
                                                       Text(
                                                         customer.phone!,
                                                         style: TextStyle(
-                                                          color: Colors.grey[700],
+                                                          color:
+                                                              Colors.grey[700],
                                                           fontSize: 13,
-                                                          fontWeight: FontWeight.w500,
+                                                          fontWeight:
+                                                              FontWeight.w500,
                                                         ),
                                                       ),
                                                     ],
                                                   ),
-                                                  SizedBox(height: _tinyPadding),
+                                                  SizedBox(
+                                                      height: _tinyPadding),
                                                 ],
-                                                if (customer.email != null && customer.email!.isNotEmpty && customer.email != 'false') ...[
+                                                if (customer.email != null &&
+                                                    customer
+                                                        .email!.isNotEmpty &&
+                                                    customer.email !=
+                                                        'false') ...[
                                                   Row(
                                                     children: [
-                                                      Icon(Icons.email, size: 14, color: Colors.grey[600]),
+                                                      Icon(Icons.email,
+                                                          size: 14,
+                                                          color:
+                                                              Colors.grey[600]),
                                                       SizedBox(width: 4),
                                                       Expanded(
                                                         child: Text(
                                                           customer.email!,
                                                           style: TextStyle(
-                                                            color: Colors.grey[700],
+                                                            color: Colors
+                                                                .grey[700],
                                                             fontSize: 13,
-                                                            fontWeight: FontWeight.w500,
+                                                            fontWeight:
+                                                                FontWeight.w500,
                                                           ),
-                                                          overflow: TextOverflow.ellipsis,
+                                                          overflow: TextOverflow
+                                                              .ellipsis,
                                                         ),
                                                       ),
                                                     ],
                                                   ),
-                                                  SizedBox(height: _tinyPadding),
+                                                  SizedBox(
+                                                      height: _tinyPadding),
                                                 ],
                                                 SizedBox(height: _smallPadding),
                                                 Container(
-                                                  padding: EdgeInsets.all(_tinyPadding + 2),
+                                                  padding: EdgeInsets.all(
+                                                      _tinyPadding + 2),
                                                   decoration: BoxDecoration(
                                                     color: Colors.grey[50],
-                                                    borderRadius: BorderRadius.circular(12),
-                                                    border: Border.all(color: Colors.grey[200]!),
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                            12),
+                                                    border: Border.all(
+                                                        color:
+                                                            Colors.grey[200]!),
                                                   ),
                                                   child: Row(
-                                                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                                                    mainAxisAlignment:
+                                                        MainAxisAlignment
+                                                            .spaceEvenly,
                                                     children: [
                                                       _buildCustomerActionButton(
                                                         Icons.add_shopping_cart,
                                                         'Order',
                                                         primaryColor,
-                                                            () => showCreateOrderSheet(context, customer),
+                                                        () =>
+                                                            showCreateOrderSheet(
+                                                                context,
+                                                                customer),
                                                       ),
                                                       Container(
                                                         width: 1,
@@ -1104,7 +1358,8 @@ class _CustomersListState extends State<CustomersList> {
                                                         Icons.call,
                                                         'Call',
                                                         Colors.blue[600]!,
-                                                            () => _makePhoneCall(customer.phone),
+                                                        () => _makePhoneCall(
+                                                            customer.phone),
                                                       ),
                                                       Container(
                                                         width: 1,
@@ -1115,7 +1370,9 @@ class _CustomersListState extends State<CustomersList> {
                                                         Icons.location_on,
                                                         'Map',
                                                         Colors.green[600]!,
-                                                            () => _openCustomerLocation(customer),
+                                                        () =>
+                                                            _openCustomerLocation(
+                                                                customer),
                                                       ),
                                                       Container(
                                                         width: 1,
@@ -1126,24 +1383,36 @@ class _CustomersListState extends State<CustomersList> {
                                                         Icons.history,
                                                         'History',
                                                         Colors.purple[600]!,
-                                                            () {
+                                                        () {
                                                           _isActivePage = false;
                                                           Navigator.push(
                                                             context,
                                                             SlidingPageTransitionRL(
-                                                              page: CustomerHistoryPage(customer: customer),
+                                                              page: CustomerHistoryPage(
+                                                                  customer:
+                                                                      customer),
                                                             ),
                                                           ).then((_) {
-                                                            _isActivePage = true;
-                                                            if (_searchController.text != _searchQuery) {
+                                                            _isActivePage =
+                                                                true;
+                                                            if (_searchController
+                                                                    .text !=
+                                                                _searchQuery) {
                                                               setState(() {
-                                                                _currentPage = 0;
-                                                                _hasMoreData = true;
-                                                                _cachedCustomers.clear();
-                                                                _lastFetchTime = null;
-                                                                _allCustomers.clear();
-                                                                _filteredCustomers.clear();
-                                                                _isLoading = true;
+                                                                _currentPage =
+                                                                    0;
+                                                                _hasMoreData =
+                                                                    true;
+                                                                _cachedCustomers
+                                                                    .clear();
+                                                                _lastFetchTime =
+                                                                    null;
+                                                                _allCustomers
+                                                                    .clear();
+                                                                _filteredCustomers
+                                                                    .clear();
+                                                                _isLoading =
+                                                                    true;
                                                               });
                                                               _loadCustomers();
                                                             }
@@ -1182,7 +1451,23 @@ class _CustomersListState extends State<CustomersList> {
 
   @override
   Widget build(BuildContext context) {
-    return buildCustomersList();
+    return Scaffold(
+      body: Column(
+        children: [
+          if (_isOffline) _buildOfflineBanner(),
+          Expanded(
+            child: RefreshIndicator(
+              onRefresh: () async {
+                _retryTimer?.cancel();
+                await _loadCustomers();
+              },
+              color: const Color(0xFFC13030),
+              child: buildCustomersList(),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 
